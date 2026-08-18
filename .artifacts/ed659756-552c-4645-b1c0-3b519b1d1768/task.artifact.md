@@ -1,0 +1,4 @@
+- [ ] Optimize Build Configuration (`build.gradle.kts`)
+- [ ] Configure ProGuard Rules (`proguard-rules.pro`)
+- [ ] Review Android Manifest Permissions
+- [ ] Final Build Verification

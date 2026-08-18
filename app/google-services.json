@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "64838627036",
+    "project_id": "bharatkirana",
+    "storage_bucket": "bharatkirana.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:64838627036:android:31ce777d18ec909f780e19",
+        "android_client_info": {
+          "package_name": "com.kks.bharatkirana"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyC9swr-8Cs4Dgo3bpLr2UOOmZOk7jM7SOk"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

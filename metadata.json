@@ -1,0 +1,6 @@
+{
+  "name": "Bharat Kirana",
+  "description": "Your daily grocery needs delivered fresh with fast store pickup, smart cart, counter QR checkouts, and seamless loyalty.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
