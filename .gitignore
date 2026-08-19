@@ -24,3 +24,8 @@ debug.keystore.base64
 *.keystore
 my-upload-key.jks
 
+# Never commit built release artifacts
+/app/release/
+*.aab
+*.apk
+

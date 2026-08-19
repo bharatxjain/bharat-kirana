@@ -118,16 +118,29 @@ data class UserProfile(
   val profileCompleted: Boolean = false,
   val phoneVerified: Boolean = false,
   val authPath: AuthPath? = null,
-  val fcmToken: String? = null
+  val fcmToken: String? = null,
+  // Populated from Supabase `user_profiles.role` after login. When null, we fall back
+  // to a `.env`-driven whitelist (BuildConfig.SUPER_ADMIN_EMAIL / ADMIN_EMAILS). Both
+  // are strictly UI hints — real authorization is enforced by Supabase RLS.
+  val serverRole: UserRole? = null
 ) {
   val isSuperAdmin: Boolean
-    get() = email.trim().equals("bjain539@gmail.com", ignoreCase = true)
+    get() = serverRole == UserRole.SUPER_ADMIN ||
+      (serverRole == null && email.isNotBlank() &&
+        com.kks.bharatkirana.BuildConfig.SUPER_ADMIN_EMAIL.isNotBlank() &&
+        email.trim().equals(com.kks.bharatkirana.BuildConfig.SUPER_ADMIN_EMAIL, ignoreCase = true))
 
   val isAdmin: Boolean
-    get() = isSuperAdmin || email.trim().equals("bjain5329@gmail.com", ignoreCase = true)
+    get() = isSuperAdmin ||
+      serverRole == UserRole.ADMIN ||
+      (serverRole == null && email.isNotBlank() &&
+        com.kks.bharatkirana.BuildConfig.ADMIN_EMAILS
+          .split(",")
+          .map { it.trim().lowercase() }
+          .any { it.isNotBlank() && it == email.trim().lowercase() })
 
   val isVendor: Boolean
-    get() = shopId != null
+    get() = shopId != null || serverRole == UserRole.VENDOR
 
   val role: UserRole
     get() = when {

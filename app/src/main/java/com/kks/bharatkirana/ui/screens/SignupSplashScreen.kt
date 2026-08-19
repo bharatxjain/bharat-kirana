@@ -69,7 +69,9 @@ fun SignupSplashScreen(
   onContinue: () -> Unit,
   modifier: Modifier = Modifier
 ) {
-  val isAdmin = userEmail.trim().equals("bjain5329@gmail.com", ignoreCase = true) || role.equals("Store Admin", ignoreCase = true)
+  val isAdmin = role.equals("Store Admin", ignoreCase = true) ||
+    role.equals("Admin", ignoreCase = true) ||
+    role.equals("Super Admin", ignoreCase = true)
   val scaleAnim = remember { Animatable(0.7f) }
   val progressAnim = remember { Animatable(0f) }
 

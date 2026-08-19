@@ -70,11 +70,6 @@ fun AuthScreen(
 
   if (showChoiceScreen) {
     AuthChoiceView(
-      onGoogleChoice = {
-        authPath = AuthPath.GOOGLE
-        // Simulate Google OAuth success for prototype
-        onAuthSuccess("google_user@example.com", UserRole.CUSTOMER, AuthPath.GOOGLE)
-      },
       onEmailChoice = {
         authPath = AuthPath.EMAIL
         showChoiceScreen = false
@@ -504,7 +499,6 @@ fun AuthScreen(
 
 @Composable
 fun AuthChoiceView(
-  onGoogleChoice: () -> Unit,
   onEmailChoice: () -> Unit,
   onPrivacyPolicyClick: () -> Unit,
   onTermsClick: () -> Unit,
@@ -550,27 +544,6 @@ fun AuthChoiceView(
       )
 
       Spacer(modifier = Modifier.height(48.dp))
-
-      Button(
-        onClick = onGoogleChoice,
-        modifier = Modifier.fillMaxWidth().height(56.dp),
-        colors = ButtonDefaults.buttonColors(containerColor = Color.White),
-        shape = RoundedCornerShape(16.dp),
-        border = BorderStroke(1.dp, Color(0xFFE5E7EB))
-      ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-           Icon(
-            imageVector = Icons.Default.AccountCircle,
-            contentDescription = null,
-            tint = BharatPurplePrimary,
-            modifier = Modifier.size(24.dp)
-          )
-          Spacer(modifier = Modifier.width(12.dp))
-          Text("Continue with Google", color = BharatTextPrimary, fontWeight = FontWeight.Bold)
-        }
-      }
-
-      Spacer(modifier = Modifier.height(16.dp))
 
       Button(
         onClick = onEmailChoice,

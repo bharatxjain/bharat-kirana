@@ -134,7 +134,7 @@ fun MainScreen(
           onAuthSuccess = { email: String, _: UserRole, path: AuthPath ->
             viewModel.login(email, authPath = path)
             val user = viewModel.userProfile.value
-            val isAdmin = email.trim().equals("bjain539@gmail.com", ignoreCase = true) || email.trim().equals("bjain5329@gmail.com", ignoreCase = true)
+            val isAdmin = user.isAdmin
             
             when {
               isAdmin -> viewModel.navigateTo(AppScreen.AdminDashboard)
@@ -153,12 +153,14 @@ fun MainScreen(
           userEmail = screen.userEmail,
           role = screen.role,
           onContinue = {
-            val email = screen.userEmail.trim()
-            val isAdmin = email.equals("bjain5329@gmail.com", ignoreCase = true)
-            val isVendor = email.equals("vendor@example.com", ignoreCase = true)
+            val isAdminRole = screen.role.equals("Store Admin", ignoreCase = true) ||
+              screen.role.equals("Admin", ignoreCase = true) ||
+              screen.role.equals("Super Admin", ignoreCase = true)
+            val isVendor = screen.role.equals("Vendor", ignoreCase = true) ||
+              screen.role.equals("Shop Owner", ignoreCase = true)
             
             when {
-              isAdmin -> viewModel.navigateTo(AppScreen.AdminDashboard)
+              isAdminRole -> viewModel.navigateTo(AppScreen.AdminDashboard)
               isVendor -> viewModel.navigateTo(AppScreen.VendorDashboard)
               else -> viewModel.navigateTo(AppScreen.CompleteProfile)
             }
@@ -277,7 +279,8 @@ fun MainScreen(
             onReorder = { ord -> viewModel.reorder(ord) },
             onRateShop = { shopId, rating, review ->
               viewModel.rateShop(shopId, rating, review)
-            }
+            },
+            onCancelOrder = { orderId -> viewModel.cancelOrder(orderId) }
           )
         }
       }
@@ -589,7 +592,7 @@ fun MainScreen(
                     onAuthSuccess = { email: String, _: UserRole, path: AuthPath ->
                       viewModel.login(email, authPath = path)
                       val user = viewModel.userProfile.value
-                      val isAdmin = email.trim().equals("bjain539@gmail.com", ignoreCase = true) || email.trim().equals("bjain5329@gmail.com", ignoreCase = true)
+                      val isAdmin = user.isAdmin
                       
                       when {
                         isAdmin -> viewModel.navigateTo(AppScreen.AdminDashboard)

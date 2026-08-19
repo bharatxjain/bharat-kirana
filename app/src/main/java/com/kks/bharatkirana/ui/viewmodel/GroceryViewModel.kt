@@ -593,13 +593,16 @@ class GroceryViewModel(
 
   fun login(email: String, name: String = "", mobile: String = "", authPath: AuthPath? = null) {
     val cleanEmail = email.trim()
-    val isSuperAdmin = cleanEmail.equals("bjain539@gmail.com", ignoreCase = true)
-    val isAdmin = isSuperAdmin || cleanEmail.equals("bjain5329@gmail.com", ignoreCase = true)
-    
+    // Delegate the admin check to UserProfile (which reads BuildConfig from .env).
+    // No personal emails are compiled into source.
+    val probe = UserProfile(email = cleanEmail)
+    val isSuperAdmin = probe.isSuperAdmin
+    val isAdmin = probe.isAdmin
+
     _userProfile.update {
       it.copy(
         email = cleanEmail,
-        fullName = if (name.isNotBlank()) name.trim() else if (isSuperAdmin) "Bharat Jain (Super Admin)" else if (isAdmin) "Bharat Jain" else it.fullName,
+        fullName = if (name.isNotBlank()) name.trim() else if (isSuperAdmin) "Super Admin" else if (isAdmin) "Admin" else it.fullName,
         mobileNumber = if (mobile.isNotBlank()) mobile.trim() else it.mobileNumber,
         profileCompleted = name.isNotBlank() || isSuperAdmin || isAdmin,
         authPath = authPath ?: it.authPath,
@@ -681,10 +684,13 @@ class GroceryViewModel(
   }
 
   private fun triggerAdminVerificationEmail(shop: Shop) {
+    val adminEmail = com.kks.bharatkirana.BuildConfig.SUPER_ADMIN_EMAIL
+      .ifBlank { com.kks.bharatkirana.BuildConfig.SUPPORT_EMAIL }
+    if (adminEmail.isBlank()) return
     try {
       val intent = android.content.Intent(android.content.Intent.ACTION_SENDTO).apply {
         data = android.net.Uri.parse("mailto:")
-        putExtra(android.content.Intent.EXTRA_EMAIL, arrayOf("bjain5329@gmail.com"))
+        putExtra(android.content.Intent.EXTRA_EMAIL, arrayOf(adminEmail))
         putExtra(android.content.Intent.EXTRA_SUBJECT, "New Vendor Verification: ${shop.name}")
         putExtra(android.content.Intent.EXTRA_TEXT, """
           New vendor application received!
@@ -795,6 +801,18 @@ class GroceryViewModel(
     viewModelScope.launch {
       supabaseGroceryRepo.updateOrderStatus(orderId, newStatus, supabaseAuthService.currentAccessToken)
     }
+  }
+
+  fun cancelOrder(orderId: String) {
+    val order = _orders.value.find { it.id == orderId } ?: return
+    if (order.status == OrderStatus.COMPLETED || order.status == OrderStatus.CANCELLED) return
+    updateOrderStatus(orderId, OrderStatus.CANCELLED)
+    showSystemNotification(
+      title = "Order cancelled",
+      message = "Order #${order.id} has been cancelled.",
+      channelId = "customer_notifications",
+      channelName = "Order Status"
+    )
   }
 
   fun updateProductStock(productId: String, inStock: Boolean) {

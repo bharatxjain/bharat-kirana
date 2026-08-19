@@ -415,10 +415,11 @@ class SupabaseGroceryRepo(
           throw Exception("Shop registration failed: HTTP ${shopResponse.code}")
         }
 
-        // 2. Update User Profile
+        // 2. Link the shop to this user in their profile.
+        // NOTE: role stays 'customer' here — a super admin promotes the user to
+        // 'vendor' after reviewing the registration (via the Admin Dashboard).
         val profileUrl = "${SupabaseConfig.restUrl}/profiles?id=eq.$ownerId"
         val profilePayload = JSONObject().apply {
-          put("role", "Vendor")
           put("shop_id", shop.id)
         }
         
@@ -497,7 +498,9 @@ class SupabaseGroceryRepo(
           put("full_name", userProfile.fullName)
           put("mobile_number", userProfile.mobileNumber)
           put("address", userProfile.address)
-          put("role", userProfile.role.name.lowercase())
+          // NOTE: `role` is intentionally NOT sent from the client. It is set only by
+          // a super admin via the Supabase Table Editor (or a future admin-only Edge
+          // Function). RLS on user_profiles must reject any client attempt to set role.
           put("wallet_balance", userProfile.walletBalance)
           put("loyalty_points", userProfile.loyaltyPoints)
           put("profile_completed", userProfile.profileCompleted)

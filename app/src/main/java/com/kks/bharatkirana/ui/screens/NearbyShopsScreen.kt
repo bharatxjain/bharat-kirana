@@ -43,8 +43,8 @@ fun NearbyShopsScreen(
   var selectedFilter by remember { mutableStateOf("All Shops") }
   var isMapView by remember { mutableStateOf(false) }
   
-  // New Distance Filter State
-  val distanceOptions = listOf(1, 5, 10)
+  // Distance filter: customer picks max radius to search within.
+  val distanceOptions = listOf(1, 3, 5, 10)
   var selectedDistanceKm by remember { mutableIntStateOf(5) }
 
   // Filter Logic

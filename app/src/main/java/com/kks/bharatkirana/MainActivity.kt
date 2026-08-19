@@ -11,7 +11,6 @@ import androidx.compose.ui.Modifier
 import com.kks.bharatkirana.ui.screens.MainScreen
 import com.kks.bharatkirana.ui.theme.BharatKiranaTheme
 import com.kks.bharatkirana.ui.viewmodel.GroceryViewModel
-import com.google.android.gms.ads.MobileAds
 
 class MainActivity : ComponentActivity() {
   private val viewModel: GroceryViewModel by viewModels()
@@ -19,9 +18,6 @@ class MainActivity : ComponentActivity() {
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
     enableEdgeToEdge()
-
-    // Initialize Mobile Ads SDK
-    MobileAds.initialize(this) {}
 
     // Handle deep link from Supabase Magic Link
     intent?.data?.let { uri ->

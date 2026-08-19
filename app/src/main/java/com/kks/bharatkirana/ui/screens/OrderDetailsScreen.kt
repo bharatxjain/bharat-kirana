@@ -35,15 +35,39 @@ fun OrderDetailsScreen(
   onBackClick: () -> Unit,
   onReorder: (Order) -> Unit,
   onRateShop: (String, Int, String) -> Unit = { _, _, _ -> },
+  onCancelOrder: (String) -> Unit = {},
   modifier: Modifier = Modifier
 ) {
   val subtotal = order.items.sumOf { it.totalPrice }
   val discount = if (subtotal > 200) 15 else 0
-  
+
   var ratingValue by remember { mutableIntStateOf(0) }
   var reviewText by remember { mutableStateOf("") }
   var showRatingForm by remember { mutableStateOf(order.status == OrderStatus.COMPLETED) }
   var ratingSubmitted by remember { mutableStateOf(false) }
+  var showCancelDialog by remember { mutableStateOf(false) }
+
+  val canCancel = order.status == OrderStatus.PLACED || order.status == OrderStatus.PREPARING
+
+  if (showCancelDialog) {
+    AlertDialog(
+      onDismissRequest = { showCancelDialog = false },
+      title = { Text("Cancel this order?", fontWeight = FontWeight.Bold) },
+      text = { Text("Order #${order.id} will be cancelled. You cannot undo this. The shop will be notified.") },
+      confirmButton = {
+        Button(
+          onClick = {
+            showCancelDialog = false
+            onCancelOrder(order.id)
+          },
+          colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626))
+        ) { Text("Yes, cancel") }
+      },
+      dismissButton = {
+        OutlinedButton(onClick = { showCancelDialog = false }) { Text("Keep order") }
+      }
+    )
+  }
 
   Surface(
     modifier = modifier.fillMaxSize(),
@@ -158,6 +182,21 @@ fun OrderDetailsScreen(
               color = BharatTextMuted,
               textAlign = androidx.compose.ui.text.style.TextAlign.Center
             )
+          }
+        }
+
+        if (canCancel) {
+          OutlinedButton(
+            onClick = { showCancelDialog = true },
+            modifier = Modifier
+              .fillMaxWidth()
+              .testTag("cancel_order_button"),
+            shape = RoundedCornerShape(12.dp),
+            border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFDC2626))
+          ) {
+            Icon(Icons.Default.Close, contentDescription = null, tint = Color(0xFFDC2626), modifier = Modifier.size(18.dp))
+            Spacer(modifier = Modifier.width(8.dp))
+            Text("Cancel Order", color = Color(0xFFDC2626), fontWeight = FontWeight.Bold)
           }
         }
 
