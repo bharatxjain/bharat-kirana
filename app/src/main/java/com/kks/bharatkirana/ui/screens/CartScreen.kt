@@ -25,6 +25,8 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.DeleteOutline
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.LocalOffer
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.ShoppingCart
@@ -38,9 +40,16 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -52,6 +61,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.kks.bharatkirana.data.model.CartItem
+import com.kks.bharatkirana.data.model.PromoCode
 import com.kks.bharatkirana.data.model.UserProfile
 import com.kks.bharatkirana.ui.theme.BharatBackground
 import com.kks.bharatkirana.ui.theme.BharatGreen
@@ -71,14 +81,22 @@ fun CartScreen(
   onCheckout: () -> Unit,
   onProfileClick: () -> Unit,
   onExploreProducts: () -> Unit,
+  handlingFeeRupees: Int = 5,
+  minOrderForFreeHandling: Int = 200,
+  freeHandlingDiscount: Int = 15,
+  appliedPromo: PromoCode? = null,
+  promoStatusMessage: String? = null,
+  onApplyPromo: (String) -> Unit = {},
+  onClearPromo: () -> Unit = {},
   isCheckingOut: Boolean = false,
   modifier: Modifier = Modifier
 ) {
   val itemCount = cartItems.sumOf { it.quantity }
   val itemTotal = cartItems.sumOf { it.totalPrice }
-  val discount = if (itemTotal > 200) 15 else 0
-  val handlingFee = if (itemCount > 0) 5 else 0
-  val finalTotal = (itemTotal + handlingFee - discount).coerceAtLeast(0)
+  val discount = if (itemTotal > minOrderForFreeHandling) freeHandlingDiscount else 0
+  val handlingFee = if (itemCount > 0) handlingFeeRupees else 0
+  val promoDiscount = appliedPromo?.computeDiscount(itemTotal) ?: 0
+  val finalTotal = (itemTotal + handlingFee - discount - promoDiscount).coerceAtLeast(0)
 
   Surface(
     modifier = modifier.fillMaxSize(),
@@ -348,6 +366,16 @@ fun CartScreen(
 
           // Bill Details
           item {
+            PromoCodeCard(
+              appliedPromo = appliedPromo,
+              promoDiscount = promoDiscount,
+              statusMessage = promoStatusMessage,
+              onApply = onApplyPromo,
+              onClear = onClearPromo
+            )
+          }
+
+          item {
             Card(
               shape = RoundedCornerShape(16.dp),
               colors = CardDefaults.cardColors(containerColor = Color.White),
@@ -387,6 +415,17 @@ fun CartScreen(
                   ) {
                     Text(text = "Store Discount Applied", color = BharatGreen, fontSize = 14.sp)
                     Text(text = "-₹$discount", color = BharatGreen, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                  }
+                }
+
+                if (promoDiscount > 0 && appliedPromo != null) {
+                  Spacer(modifier = Modifier.height(8.dp))
+                  Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                  ) {
+                    Text(text = "Promo (${appliedPromo.code})", color = BharatGreen, fontSize = 14.sp)
+                    Text(text = "-₹$promoDiscount", color = BharatGreen, fontWeight = FontWeight.Bold, fontSize = 14.sp)
                   }
                 }
 
@@ -488,6 +527,98 @@ fun CartScreen(
             }
           }
         }
+      }
+    }
+  }
+}
+
+@Composable
+private fun PromoCodeCard(
+  appliedPromo: PromoCode?,
+  promoDiscount: Int,
+  statusMessage: String?,
+  onApply: (String) -> Unit,
+  onClear: () -> Unit
+) {
+  Card(
+    shape = RoundedCornerShape(16.dp),
+    colors = CardDefaults.cardColors(containerColor = Color.White),
+    elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+  ) {
+    Column(modifier = Modifier.padding(16.dp)) {
+      Row(verticalAlignment = Alignment.CenterVertically) {
+        Icon(Icons.Default.LocalOffer, contentDescription = null, tint = BharatPurplePrimary, modifier = Modifier.size(18.dp))
+        Spacer(modifier = Modifier.width(8.dp))
+        Text(
+          text = "Have a promo code?",
+          style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+          color = BharatTextPrimary
+        )
+      }
+      Spacer(modifier = Modifier.height(10.dp))
+
+      if (appliedPromo != null) {
+        Row(
+          modifier = Modifier
+            .fillMaxWidth()
+            .background(color = BharatGreen.copy(alpha = 0.12f), shape = RoundedCornerShape(10.dp))
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+          verticalAlignment = Alignment.CenterVertically
+        ) {
+          Column(modifier = Modifier.weight(1f)) {
+            Text(
+              text = appliedPromo.code,
+              fontWeight = FontWeight.ExtraBold,
+              color = BharatGreen,
+              fontSize = 14.sp
+            )
+            Text(
+              text = "Saving ₹$promoDiscount",
+              fontSize = 12.sp,
+              color = BharatGreen
+            )
+          }
+          TextButton(onClick = onClear) {
+            Icon(Icons.Default.Close, contentDescription = "Remove", tint = BharatGreen, modifier = Modifier.size(16.dp))
+            Spacer(modifier = Modifier.width(4.dp))
+            Text("Remove", color = BharatGreen, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+          }
+        }
+      } else {
+        var input by remember { mutableStateOf("") }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+          OutlinedTextField(
+            value = input,
+            onValueChange = { input = it.uppercase() },
+            placeholder = { Text("e.g. DIWALI30", color = BharatTextMuted, fontSize = 13.sp) },
+            singleLine = true,
+            modifier = Modifier.weight(1f),
+            shape = RoundedCornerShape(12.dp),
+            colors = OutlinedTextFieldDefaults.colors(
+              focusedTextColor = BharatTextPrimary,
+              unfocusedTextColor = BharatTextPrimary,
+              focusedBorderColor = BharatPurplePrimary
+            )
+          )
+          Spacer(modifier = Modifier.width(8.dp))
+          Button(
+            onClick = { if (input.isNotBlank()) onApply(input); input = "" },
+            enabled = input.isNotBlank(),
+            colors = ButtonDefaults.buttonColors(containerColor = BharatPurplePrimary),
+            shape = RoundedCornerShape(12.dp)
+          ) { Text("Apply", fontWeight = FontWeight.Bold, color = Color.White) }
+        }
+      }
+
+      if (statusMessage != null) {
+        Spacer(modifier = Modifier.height(6.dp))
+        val isSuccess = statusMessage.contains("applied", ignoreCase = true)
+        Text(
+          text = statusMessage,
+          color = if (isSuccess) BharatGreen else Color(0xFFDC2626),
+          fontSize = 12.sp,
+          fontWeight = FontWeight.Medium
+        )
       }
     }
   }

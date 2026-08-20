@@ -6,7 +6,11 @@ import com.kks.bharatkirana.data.model.Order
 import com.kks.bharatkirana.data.model.OrderStatus
 import com.kks.bharatkirana.data.model.OrderTimelineItem
 import com.kks.bharatkirana.data.model.Product
+import com.kks.bharatkirana.data.model.PromoCode
+import com.kks.bharatkirana.data.model.Shop
 import com.kks.bharatkirana.data.model.UserProfile
+import com.kks.bharatkirana.data.model.UserRole
+import com.kks.bharatkirana.data.model.VendorStatus
 import com.kks.bharatkirana.data.model.WeightOption
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -106,7 +110,8 @@ class SupabaseGroceryRepo(
               inStock = inStock,
               imageUrl = imageUrls.firstOrNull() ?: obj.optString("image_url", ""),
               imageUrls = imageUrls,
-              weightOptions = weightOptions
+              weightOptions = weightOptions,
+              barcode = obj.optString("barcode", "")
             )
           )
         }
@@ -192,6 +197,7 @@ class SupabaseGroceryRepo(
           put("weight_options", weightsJson)
           put("image_urls", JSONArray(product.imageUrls))
           put("image_url", product.imageUrl)
+          if (product.barcode.isNotBlank()) put("barcode", product.barcode)
         }
 
         val request = baseRequestBuilder(url, accessToken)
@@ -335,7 +341,16 @@ class SupabaseGroceryRepo(
   /**
    * Create New Order in Supabase
    */
-  suspend fun insertOrder(order: Order, customerEmail: String, customerName: String, accessToken: String? = null): Result<Unit> =
+  suspend fun insertOrder(
+    order: Order,
+    customerEmail: String,
+    customerName: String,
+    customerMobile: String,
+    userId: String?,
+    promoCode: String? = null,
+    promoDiscount: Int = 0,
+    accessToken: String? = null
+  ): Result<Unit> =
     withContext(Dispatchers.IO) {
       runCatching {
         val url = "${SupabaseConfig.restUrl}/orders"
@@ -343,11 +358,17 @@ class SupabaseGroceryRepo(
           put("id", order.id)
           put("customer_name", customerName)
           put("customer_email", customerEmail.trim().lowercase())
-          put("customer_mobile", "98765 43210")
+          put("customer_mobile", if (customerMobile.isNotBlank()) customerMobile else "")
           put("total_amount", order.totalAmount)
           put("status", order.status.label)
           put("order_date", order.orderDate)
           put("qr_code_payload", order.qrCodePayload)
+          if (!userId.isNullOrBlank()) put("user_id", userId)
+          if (order.shopId.isNotBlank() && order.shopId != "default_shop") put("shop_id", order.shopId)
+          if (!promoCode.isNullOrBlank()) {
+            put("promo_code", promoCode)
+            put("promo_discount", promoDiscount)
+          }
         }
 
         val request = baseRequestBuilder(url, accessToken)
@@ -401,9 +422,9 @@ class SupabaseGroceryRepo(
           put("address", shop.address)
           put("phone", shop.phone)
           put("is_partner", false)
-          put("is_open", shop.isOpen)
-          put("auto_confirm", shop.autoConfirm)
-          put("packing_time", shop.packingTime)
+          put("accepting_orders", shop.isOpen)
+          put("open_time", shop.openTime)
+          put("close_time", shop.closeTime)
         }
         
         val shopRequest = baseRequestBuilder(shopUrl, accessToken)
@@ -444,9 +465,9 @@ class SupabaseGroceryRepo(
           put("owner_name", shop.ownerName)
           put("address", shop.address)
           put("phone", shop.phone)
-          put("is_open", shop.isOpen)
-          put("auto_confirm", shop.autoConfirm)
-          put("packing_time", shop.packingTime)
+          put("accepting_orders", shop.isOpen)
+          put("open_time", shop.openTime)
+          put("close_time", shop.closeTime)
           put("is_partner", shop.isPartner)
         }
 
@@ -518,6 +539,209 @@ class SupabaseGroceryRepo(
         if (!response.isSuccessful) {
           throw Exception("Profile sync failed: HTTP ${response.code}")
         }
+      }
+    }
+
+  /**
+   * Fetch the currently-logged-in user's profile (including server-side role).
+   * The role from this row is the ONLY source of truth for admin/vendor authorization.
+   */
+  suspend fun fetchProfile(userId: String, accessToken: String? = null): Result<UserProfile> =
+    withContext(Dispatchers.IO) {
+      runCatching {
+        val url = "${SupabaseConfig.restUrl}/profiles?id=eq.$userId&select=*"
+        val request = baseRequestBuilder(url, accessToken).get().build()
+        val response = client.newCall(request).execute()
+        val body = response.body?.string() ?: ""
+        if (!response.isSuccessful) throw Exception("Failed to fetch profile: HTTP ${response.code}")
+
+        val array = JSONArray(body)
+        if (array.length() == 0) throw Exception("Profile row not found")
+
+        val obj = array.getJSONObject(0)
+        val roleStr = obj.optString("role", "customer").lowercase()
+        val serverRole = when (roleStr) {
+          "super_admin" -> UserRole.SUPER_ADMIN
+          "admin" -> UserRole.ADMIN
+          "vendor" -> UserRole.VENDOR
+          else -> UserRole.CUSTOMER
+        }
+        UserProfile(
+          fullName = obj.optString("full_name", ""),
+          email = obj.optString("email", ""),
+          mobileNumber = obj.optString("mobile_number", ""),
+          address = obj.optString("address", ""),
+          loyaltyPoints = obj.optInt("loyalty_points", 0),
+          walletBalance = obj.optInt("wallet_balance", 0),
+          shopId = obj.optString("shop_id").takeIf { it.isNotBlank() },
+          profileCompleted = obj.optBoolean("profile_completed", false),
+          phoneVerified = obj.optBoolean("phone_verified", false),
+          serverRole = serverRole
+        )
+      }
+    }
+
+  /**
+   * Fetch all shops from Supabase and map to the Shop domain model.
+   */
+  suspend fun fetchShops(accessToken: String? = null): Result<List<Shop>> =
+    withContext(Dispatchers.IO) {
+      runCatching {
+        val url = "${SupabaseConfig.restUrl}/shops?select=*"
+        val request = baseRequestBuilder(url, accessToken).get().build()
+        val response = client.newCall(request).execute()
+        val body = response.body?.string() ?: ""
+        if (!response.isSuccessful) throw Exception("Failed to fetch shops: HTTP ${response.code}")
+
+        val array = JSONArray(body)
+        val shops = mutableListOf<Shop>()
+        for (i in 0 until array.length()) {
+          val obj = array.getJSONObject(i)
+          val statusStr = obj.optString("status", "pending").uppercase()
+          val vendorStatus = try { VendorStatus.valueOf(statusStr) } catch (_: Exception) { VendorStatus.PENDING }
+          shops.add(
+            Shop(
+              id = obj.optString("id"),
+              name = obj.optString("name"),
+              ownerName = obj.optString("owner_name", ""),
+              address = obj.optString("address", ""),
+              phone = obj.optString("phone", ""),
+              rating = obj.optDouble("avg_rating", 4.5).toFloat(),
+              ratingCount = obj.optInt("rating_count", 0),
+              deliveryTime = obj.optString("delivery_time", "20-30 mins"),
+              imageUrl = obj.optString("image_url", ""),
+              isPartner = obj.optBoolean("is_partner", false),
+              primaryCategory = obj.optString("primary_category", "Grocery"),
+              status = vendorStatus,
+              isOpen = obj.optBoolean("accepting_orders", true),
+              openTime = obj.optString("open_time", "08:00"),
+              closeTime = obj.optString("close_time", "21:00")
+            )
+          )
+        }
+        shops
+      }
+    }
+
+  /**
+   * Submit a rating & review for a completed order.
+   * Server-side trigger will refresh shops.avg_rating and rating_count.
+   */
+  suspend fun submitShopRating(
+    shopId: String,
+    orderId: String,
+    customerId: String,
+    rating: Int,
+    review: String,
+    accessToken: String? = null
+  ): Result<Unit> =
+    withContext(Dispatchers.IO) {
+      runCatching {
+        val url = "${SupabaseConfig.restUrl}/shop_ratings"
+        val payload = JSONObject().apply {
+          put("shop_id", shopId)
+          put("order_id", orderId)
+          put("customer_id", customerId)
+          put("rating", rating)
+          put("review", review)
+        }
+        val request = baseRequestBuilder(url, accessToken)
+          .addHeader("Prefer", "return=minimal")
+          .post(payload.toString().toRequestBody(jsonMediaType))
+          .build()
+        val response = client.newCall(request).execute()
+        if (!response.isSuccessful) {
+          throw Exception("Failed to submit rating: HTTP ${response.code}")
+        }
+      }
+    }
+
+  /**
+   * Look up a promo code by exact match. RLS on `promo_codes` already restricts
+   * this to `active = TRUE AND valid window` — so a returned row is guaranteed
+   * to be currently redeemable.
+   */
+  suspend fun fetchPromoCode(code: String, accessToken: String? = null): Result<PromoCode> =
+    withContext(Dispatchers.IO) {
+      runCatching {
+        val cleanCode = code.trim().uppercase()
+        val url = "${SupabaseConfig.restUrl}/promo_codes?code=eq.$cleanCode&select=*"
+        val request = baseRequestBuilder(url, accessToken).get().build()
+        val response = client.newCall(request).execute()
+        val body = response.body?.string() ?: ""
+        if (!response.isSuccessful) throw Exception("Failed to fetch promo: HTTP ${response.code}")
+
+        val array = JSONArray(body)
+        if (array.length() == 0) throw Exception("Invalid or expired code")
+
+        val obj = array.getJSONObject(0)
+        PromoCode(
+          code = obj.optString("code", cleanCode),
+          description = obj.optString("description", ""),
+          discountPercent = obj.optInt("discount_percent", 0),
+          discountFlatRupees = obj.optInt("discount_flat_rupees", 0),
+          minOrderAmount = obj.optInt("min_order_amount", 0),
+          maxDiscountRupees = if (obj.isNull("max_discount_rupees")) null else obj.optInt("max_discount_rupees")
+        )
+      }
+    }
+
+  /**
+   * Look up a product by its barcode (13-digit EAN etc). Returns the first match
+   * across ALL shops so the shopkeeper can reuse product metadata (name, brand,
+   * category, image) without retyping it. The scanning shop still creates its
+   * own product row with their own price/stock — this only pre-fills the form.
+   */
+  suspend fun fetchProductByBarcode(barcode: String, accessToken: String? = null): Result<Product?> =
+    withContext(Dispatchers.IO) {
+      runCatching {
+        val clean = barcode.trim()
+        if (clean.isBlank()) return@runCatching null
+        val url = "${SupabaseConfig.restUrl}/products?barcode=eq.$clean&select=*&limit=1"
+        val request = baseRequestBuilder(url, accessToken).get().build()
+        val response = client.newCall(request).execute()
+        val body = response.body?.string() ?: ""
+        if (!response.isSuccessful) throw Exception("Failed to look up barcode: HTTP ${response.code}")
+
+        val array = JSONArray(body)
+        if (array.length() == 0) return@runCatching null
+
+        val obj = array.getJSONObject(0)
+        val imageUrls = mutableListOf<String>()
+        obj.optJSONArray("image_urls")?.let { arr ->
+          for (k in 0 until arr.length()) imageUrls.add(arr.optString(k))
+        }
+        val weightOptions = mutableListOf<WeightOption>()
+        obj.optJSONArray("weight_options")?.let { arr ->
+          for (j in 0 until arr.length()) {
+            arr.optJSONObject(j)?.let { w ->
+              weightOptions.add(
+                WeightOption(
+                  label = w.optString("label", "1 unit"),
+                  price = w.optInt("price", 0),
+                  originalPrice = w.optInt("originalPrice", 0),
+                  discountLabel = w.optString("discount", "")
+                )
+              )
+            }
+          }
+        }
+        Product(
+          id = obj.optString("id"),
+          name = obj.optString("name", ""),
+          brand = obj.optString("brand", ""),
+          categoryId = obj.optString("category_id", ""),
+          currentPrice = obj.optInt("current_price", 0),
+          originalPrice = obj.optInt("original_price", 0),
+          discountPercent = obj.optInt("discount_percent", 0),
+          unit = obj.optString("unit", "1 unit"),
+          description = obj.optString("description", ""),
+          inStock = obj.optBoolean("in_stock", true),
+          imageUrl = imageUrls.firstOrNull() ?: obj.optString("image_url", ""),
+          imageUrls = imageUrls,
+          weightOptions = weightOptions,
+          barcode = obj.optString("barcode", "")
+        )
       }
     }
 }

@@ -28,13 +28,19 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
+import com.kks.bharatkirana.data.model.Product
 import com.kks.bharatkirana.ui.theme.*
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AddProductScreen(
   onBackClick: () -> Unit,
-  onListProduct: (String, String, String, Int, Int, String, Boolean, List<Uri>) -> Unit,
+  onListProduct: (String, String, String, Int, Int, String, Boolean, List<Uri>, String) -> Unit,
+  onScanBarcode: () -> Unit = {},
+  scannedTemplate: Product? = null,
+  scannedBarcode: String? = null,
+  barcodeStatusMessage: String? = null,
+  onScanConsumed: () -> Unit = {},
   modifier: Modifier = Modifier
 ) {
   var productName by remember { mutableStateOf("") }
@@ -46,6 +52,37 @@ fun AddProductScreen(
   var description by remember { mutableStateOf("") }
   var inStock by remember { mutableStateOf(true) }
   var selectedImageUris by remember { mutableStateOf<List<Uri>>(emptyList()) }
+  var localBarcode by remember { mutableStateOf<String?>(null) }
+
+  // Pre-fill fields from a scanned catalog match; keep localBarcode set even after the
+  // ViewModel state is cleared so it survives on Save.
+  LaunchedEffect(scannedTemplate?.id, scannedBarcode) {
+    if (scannedBarcode != null) {
+      localBarcode = scannedBarcode
+      if (scannedTemplate != null) {
+        if (productName.isBlank()) productName = scannedTemplate.name
+        val catId = scannedTemplate.categoryId
+        if (category == "Select Category" && catId.isNotBlank()) {
+          category = catId.split("_").joinToString(" ") { part ->
+            part.replaceFirstChar { it.uppercase() }
+          }
+        }
+        if (description.isBlank() && scannedTemplate.description.isNotBlank()) {
+          description = scannedTemplate.description
+        }
+        val unitStr = scannedTemplate.unit.trim()
+        val parts = unitStr.split(" ", limit = 2)
+        if (weightValue.isBlank() && parts.size == 2) {
+          weightValue = parts[0]
+          weightUnit = parts[1]
+        }
+        if (mrp.isBlank() && scannedTemplate.originalPrice > 0) {
+          mrp = scannedTemplate.originalPrice.toString()
+        }
+      }
+      onScanConsumed()
+    }
+  }
 
   val photoPickerLauncher = rememberLauncherForActivityResult(
     contract = ActivityResultContracts.PickMultipleVisualMedia(3),
@@ -83,6 +120,60 @@ fun AddProductScreen(
         .padding(20.dp),
       verticalArrangement = Arrangement.spacedBy(20.dp)
     ) {
+      // Scan Barcode entry point (Round 4)
+      OutlinedCard(
+        onClick = onScanBarcode,
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.outlinedCardColors(containerColor = Color(0xFFF5F3FF)),
+        border = BorderStroke(1.dp, BharatPurplePrimary),
+        modifier = Modifier.fillMaxWidth()
+      ) {
+        Row(
+          modifier = Modifier.padding(14.dp),
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+          Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Default.QrCodeScanner, contentDescription = null, tint = BharatPurplePrimary, modifier = Modifier.size(22.dp))
+            Spacer(modifier = Modifier.width(10.dp))
+            Column {
+              Text("Scan Barcode", fontWeight = FontWeight.Bold, color = BharatTextPrimary, fontSize = 14.sp)
+              Text("Auto-fill from existing catalog", fontSize = 11.sp, color = BharatTextSecondary)
+            }
+          }
+          Icon(Icons.Default.ChevronRight, contentDescription = null, tint = BharatPurplePrimary)
+        }
+      }
+
+      localBarcode?.let { code ->
+        Row(
+          modifier = Modifier
+            .fillMaxWidth()
+            .background(color = Color(0xFFECFDF5), shape = RoundedCornerShape(10.dp))
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+          verticalAlignment = Alignment.CenterVertically
+        ) {
+          Icon(Icons.Default.CheckCircle, contentDescription = null, tint = BharatGreen, modifier = Modifier.size(16.dp))
+          Spacer(modifier = Modifier.width(8.dp))
+          Text("Barcode: $code", fontSize = 12.sp, color = BharatGreen, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
+          Text(
+            "Remove",
+            color = Color(0xFFDC2626),
+            fontSize = 11.sp,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.clickable { localBarcode = null }.padding(4.dp)
+          )
+        }
+      }
+
+      barcodeStatusMessage?.takeIf { it.isNotBlank() }?.let { msg ->
+        Text(
+          text = msg,
+          fontSize = 12.sp,
+          color = if (msg.startsWith("Found")) BharatGreen else BharatTextSecondary
+        )
+      }
+
       // Product Images Upload
       Column {
         Row(
@@ -280,7 +371,17 @@ fun AddProductScreen(
 
       Button(
         onClick = { 
-          onListProduct(productName, category, weightValue + weightUnit, sellingPrice.toIntOrNull() ?: 0, mrp.toIntOrNull() ?: 0, description, inStock, selectedImageUris)
+          onListProduct(
+            productName,
+            category,
+            weightValue + weightUnit,
+            sellingPrice.toIntOrNull() ?: 0,
+            mrp.toIntOrNull() ?: 0,
+            description,
+            inStock,
+            selectedImageUris,
+            localBarcode ?: ""
+          )
         },
         enabled = productName.isNotBlank() && sellingPrice.isNotBlank(),
         modifier = Modifier

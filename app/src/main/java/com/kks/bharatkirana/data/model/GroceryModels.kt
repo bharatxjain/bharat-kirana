@@ -1,6 +1,9 @@
 package com.kks.bharatkirana.data.model
 
 import androidx.annotation.DrawableRes
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 data class Category(
   val id: String,
@@ -47,10 +50,23 @@ data class Shop(
   val phone: String = "",
   val primaryCategory: String = "Grocery",
   val status: VendorStatus = VendorStatus.APPROVED,
-  val isOpen: Boolean = true,
+  val isOpen: Boolean = true, // maps to shops.accepting_orders — manual on/off
   val autoConfirm: Boolean = true,
-  val packingTime: Int = 15
+  val packingTime: Int = 15,
+  val openTime: String = "08:00", // 24-hour "HH:mm"
+  val closeTime: String = "21:00"
 )
+
+/**
+ * Returns true only if the shop is manually open (accepting_orders) AND the current
+ * wall-clock time falls within [openTime, closeTime]. Uses "HH:mm" string compare,
+ * which is safe because both sides are zero-padded 24-hour times.
+ */
+fun Shop.isCurrentlyOpen(): Boolean {
+  if (!isOpen) return false
+  val now = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date())
+  return now >= openTime && now < closeTime
+}
 
 data class Product(
   val id: String,
@@ -74,7 +90,8 @@ data class Product(
   val stockQty: Int = 10,
   val inStock: Boolean = true,
   val isPopular: Boolean = false,
-  val isDailyEssential: Boolean = false
+  val isDailyEssential: Boolean = false,
+  val barcode: String = ""
 ) {
   val stockStatus: String
     get() = when {
@@ -102,6 +119,24 @@ enum class UserRole(val label: String) {
 
 enum class AuthPath {
   GOOGLE, EMAIL
+}
+
+enum class UpdateStatus { NONE, OPTIONAL, FORCED }
+
+data class PromoCode(
+  val code: String,
+  val description: String = "",
+  val discountPercent: Int = 0,
+  val discountFlatRupees: Int = 0,
+  val minOrderAmount: Int = 0,
+  val maxDiscountRupees: Int? = null
+) {
+  fun computeDiscount(orderAmount: Int): Int {
+    if (orderAmount < minOrderAmount) return 0
+    val raw = if (discountPercent > 0) (orderAmount * discountPercent / 100) else discountFlatRupees
+    val cap = maxDiscountRupees
+    return if (cap != null && cap > 0) minOf(raw, cap) else raw
+  }
 }
 
 data class UserProfile(
@@ -201,7 +236,24 @@ sealed class AppScreen {
   data object VendorRegistration : AppScreen()
   data object VendorDashboard : AppScreen()
   data object AddProduct : AppScreen()
+  data object BarcodeScanner : AppScreen()
+  data class ShopsForProduct(val productName: String) : AppScreen()
   data class ResetPassword(val accessToken: String) : AppScreen()
+}
+
+/**
+ * A single row in the search-suggestions dropdown. Two variants: a product
+ * (tap → shows shops that sell it) and a shop (tap → opens the shop directly).
+ */
+sealed class SearchSuggestion {
+  data class ProductSuggestion(
+    val name: String,
+    val brand: String,
+    val categoryId: String,
+    val imageUrl: String = ""
+  ) : SearchSuggestion()
+
+  data class ShopSuggestion(val shop: Shop) : SearchSuggestion()
 }
 
 enum class MainTab(val title: String, val testTag: String) {

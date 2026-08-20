@@ -8,13 +8,18 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.google.android.gms.location.LocationServices
 import com.google.firebase.messaging.FirebaseMessaging
+import com.kks.bharatkirana.data.BharatRemoteConfig
 import com.kks.bharatkirana.data.model.*
 import com.kks.bharatkirana.data.repository.GroceryRepository
 import com.kks.bharatkirana.data.supabase.SupabaseAuthService
 import com.kks.bharatkirana.data.supabase.SupabaseGroceryRepo
+import com.kks.bharatkirana.data.supabase.SupabaseRealtimeClient
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.io.InputStream
@@ -29,6 +34,7 @@ class GroceryViewModel(
   private val repository: GroceryRepository = GroceryRepository()
   val supabaseAuthService: SupabaseAuthService = SupabaseAuthService()
   val supabaseGroceryRepo: SupabaseGroceryRepo = SupabaseGroceryRepo()
+  private val supabaseRealtime: SupabaseRealtimeClient = SupabaseRealtimeClient()
 
   private val prefs = application.getSharedPreferences("bharat_kirana_prefs", Context.MODE_PRIVATE)
   private val fusedLocationClient = LocationServices.getFusedLocationProviderClient(application)
@@ -71,6 +77,44 @@ class GroceryViewModel(
   private val _searchQuery = MutableStateFlow("")
   val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
 
+  // Round 4.5: reactive autosuggestions — top matching PRODUCT names + SHOP names
+  // as the user types. Recomputes whenever query, products, or shops change.
+  val searchSuggestions: StateFlow<List<SearchSuggestion>> = combine(
+    _searchQuery, _products, _shops
+  ) { query, products, shops ->
+    val q = query.trim()
+    if (q.isBlank()) return@combine emptyList<SearchSuggestion>()
+
+    val productSuggestions = products
+      .filter {
+        it.name.contains(q, ignoreCase = true) ||
+          it.brand.contains(q, ignoreCase = true)
+      }
+      .groupBy { it.name.lowercase() }
+      .values
+      .map { it.first() }
+      .sortedByDescending { it.name.startsWith(q, ignoreCase = true) }
+      .take(5)
+      .map {
+        SearchSuggestion.ProductSuggestion(
+          name = it.name,
+          brand = it.brand,
+          categoryId = it.categoryId,
+          imageUrl = it.imageUrl
+        )
+      }
+
+    val shopSuggestions = shops
+      .filter {
+        it.name.contains(q, ignoreCase = true) ||
+          it.primaryCategory.contains(q, ignoreCase = true)
+      }
+      .take(3)
+      .map { SearchSuggestion.ShopSuggestion(it) }
+
+    productSuggestions + shopSuggestions
+  }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
   private val _latestPlacedOrderId = MutableStateFlow<String?>(null)
   val latestPlacedOrderId: StateFlow<String?> = _latestPlacedOrderId.asStateFlow()
 
@@ -88,11 +132,162 @@ class GroceryViewModel(
 
   private val _userLocation = MutableStateFlow<Location?>(null)
 
+  // ---- Round 3: Firebase Remote Config-driven state ----
+  private val _handlingFee = MutableStateFlow(5)
+  val handlingFee: StateFlow<Int> = _handlingFee.asStateFlow()
+
+  private val _minOrderFreeHandling = MutableStateFlow(200)
+  val minOrderFreeHandling: StateFlow<Int> = _minOrderFreeHandling.asStateFlow()
+
+  private val _freeHandlingDiscount = MutableStateFlow(15)
+  val freeHandlingDiscount: StateFlow<Int> = _freeHandlingDiscount.asStateFlow()
+
+  private val _isMaintenanceMode = MutableStateFlow(false)
+  val isMaintenanceMode: StateFlow<Boolean> = _isMaintenanceMode.asStateFlow()
+
+  private val _updateStatus = MutableStateFlow(UpdateStatus.NONE)
+  val updateStatus: StateFlow<UpdateStatus> = _updateStatus.asStateFlow()
+
+  private val _promoBanner = MutableStateFlow<String?>(null)
+  val promoBanner: StateFlow<String?> = _promoBanner.asStateFlow()
+
+  private val _supportWhatsappNumber = MutableStateFlow("")
+  val supportWhatsappNumber: StateFlow<String> = _supportWhatsappNumber.asStateFlow()
+
+  private val _appliedPromo = MutableStateFlow<PromoCode?>(null)
+  val appliedPromo: StateFlow<PromoCode?> = _appliedPromo.asStateFlow()
+
+  private val _promoStatusMessage = MutableStateFlow<String?>(null)
+  val promoStatusMessage: StateFlow<String?> = _promoStatusMessage.asStateFlow()
+
+  // Round 3.5: role picked during signup (before profile is completed).
+  // Set from AuthScreen → read after CompleteProfile to decide next screen.
+  private val _pendingSignupRole = MutableStateFlow<UserRole?>(null)
+  val pendingSignupRole: StateFlow<UserRole?> = _pendingSignupRole.asStateFlow()
+
+  fun setPendingSignupRole(role: UserRole) {
+    _pendingSignupRole.value = role
+  }
+
+  fun clearPendingSignupRole() {
+    _pendingSignupRole.value = null
+  }
+
+  // Round 4: barcode scan flow.
+  // When set, AddProductScreen consumes it via LaunchedEffect to pre-fill fields, then clears.
+  private val _scannedProductTemplate = MutableStateFlow<Product?>(null)
+  val scannedProductTemplate: StateFlow<Product?> = _scannedProductTemplate.asStateFlow()
+
+  private val _scannedBarcode = MutableStateFlow<String?>(null)
+  val scannedBarcode: StateFlow<String?> = _scannedBarcode.asStateFlow()
+
+  private val _barcodeStatusMessage = MutableStateFlow<String?>(null)
+  val barcodeStatusMessage: StateFlow<String?> = _barcodeStatusMessage.asStateFlow()
+
+  fun onBarcodeScanned(barcode: String) {
+    val clean = barcode.trim()
+    if (clean.isBlank()) return
+    _scannedBarcode.value = clean
+    _barcodeStatusMessage.value = "Looking up $clean…"
+    viewModelScope.launch {
+      supabaseGroceryRepo.fetchProductByBarcode(clean, supabaseAuthService.currentAccessToken)
+        .onSuccess { match ->
+          if (match != null) {
+            _scannedProductTemplate.value = match
+            _barcodeStatusMessage.value = "Found: ${match.name}"
+          } else {
+            _scannedProductTemplate.value = null
+            _barcodeStatusMessage.value = "New product — please fill details"
+          }
+        }
+        .onFailure {
+          _scannedProductTemplate.value = null
+          _barcodeStatusMessage.value = "Lookup failed. Please fill manually."
+        }
+      // Return to Add Product screen either way
+      navigateBack()
+    }
+  }
+
+  fun clearScannedTemplate() {
+    _scannedProductTemplate.value = null
+    _scannedBarcode.value = null
+    _barcodeStatusMessage.value = null
+  }
+
   init {
     loadSavedSession()
     loadSupabaseData()
     fetchUserLocation()
     fetchFcmToken()
+    loadRemoteConfig()
+    startRealtimeCollector()
+  }
+
+  private fun startRealtimeCollector() {
+    viewModelScope.launch {
+      supabaseRealtime.changes.collect { change ->
+        if (change.table == "orders") applyOrderChange(change)
+        // notifications table changes surface via FCM push in Round 4b; no-op here.
+      }
+    }
+  }
+
+  private fun applyOrderChange(change: SupabaseRealtimeClient.RealtimeChange) {
+    val record = change.record ?: return
+    val orderId = record.optString("id").takeIf { it.isNotBlank() } ?: return
+    val statusStr = record.optString("status", "")
+    val status = OrderStatus.entries.firstOrNull { it.label == statusStr }
+
+    when (change.type) {
+      "UPDATE" -> {
+        if (status == null) return
+        val timeFormat = SimpleDateFormat("h:mm a", Locale.getDefault())
+        val now = timeFormat.format(Date())
+        _orders.update { list ->
+          list.map { order ->
+            if (order.id != orderId) return@map order
+            val updatedTimeline = order.timeline.map { item ->
+              when {
+                item.status.stepIndex < status.stepIndex -> item.copy(isCompleted = true, isCurrent = false)
+                item.status == status -> item.copy(
+                  isCompleted = true,
+                  isCurrent = true,
+                  time = if (item.time.contains("Pending") || item.time.contains("Expected")) "Today, $now" else item.time
+                )
+                else -> item.copy(isCompleted = false, isCurrent = false)
+              }
+            }
+            order.copy(status = status, timeline = updatedTimeline)
+          }
+        }
+      }
+      "DELETE" -> {
+        _orders.update { list -> list.filter { it.id != orderId } }
+      }
+      // "INSERT" — skipped intentionally: vendor's dashboard triggers a refresh
+      // via loadSupabaseData when opened, and the customer already inserted locally.
+    }
+  }
+
+  private fun loadRemoteConfig() {
+    BharatRemoteConfig.refresh {
+      _handlingFee.value = BharatRemoteConfig.handlingFeeRupees()
+      _minOrderFreeHandling.value = BharatRemoteConfig.minOrderForFreeHandling()
+      _freeHandlingDiscount.value = BharatRemoteConfig.freeHandlingDiscount()
+      _isMaintenanceMode.value = BharatRemoteConfig.maintenanceMode()
+      _promoBanner.value = if (BharatRemoteConfig.promoBannerEnabled()) BharatRemoteConfig.promoBannerText() else null
+      _supportWhatsappNumber.value = BharatRemoteConfig.supportWhatsappNumber()
+
+      val currentVersion = com.kks.bharatkirana.BuildConfig.VERSION_CODE
+      val minSupported = BharatRemoteConfig.minSupportedVersionCode()
+      val latest = BharatRemoteConfig.latestVersionCode()
+      _updateStatus.value = when {
+        currentVersion < minSupported -> UpdateStatus.FORCED
+        currentVersion < latest -> UpdateStatus.OPTIONAL
+        else -> UpdateStatus.NONE
+      }
+    }
   }
 
   private fun fetchFcmToken() {
@@ -173,6 +368,15 @@ class GroceryViewModel(
         }
       }
 
+      // Sync live shops (Round 2)
+      supabaseGroceryRepo.fetchShops(supabaseAuthService.currentAccessToken).onSuccess { liveShops ->
+        if (liveShops.isNotEmpty()) {
+          _shops.value = liveShops
+          // Re-run distance sort if we already have a location fix.
+          _userLocation.value?.let { updateShopDistances(it) }
+        }
+      }
+
       // Sync orders
       val email = _userProfile.value.email
       val isAdmin = _userProfile.value.isAdmin
@@ -234,6 +438,41 @@ class GroceryViewModel(
     _searchQuery.value = query
   }
 
+  /**
+   * Handle a tap on a search-suggestion row.
+   *  - Product: navigate to a screen showing all shops that carry it.
+   *  - Shop:    select the shop and jump to its storefront.
+   */
+  fun onSuggestionSelected(suggestion: SearchSuggestion) {
+    when (suggestion) {
+      is SearchSuggestion.ProductSuggestion -> {
+        _searchQuery.value = ""
+        navigateTo(AppScreen.ShopsForProduct(suggestion.name))
+      }
+      is SearchSuggestion.ShopSuggestion -> {
+        _searchQuery.value = ""
+        selectShop(suggestion.shop.id)
+        navigateTo(AppScreen.StoreInfo)
+      }
+    }
+  }
+
+  /**
+   * Called from ShopsForProductScreen when user picks a shop for a specific product.
+   * Selects the shop and navigates to that shop's version of the product detail.
+   */
+  fun selectShopAndProduct(shopId: String, productName: String) {
+    selectShop(shopId)
+    val product = _products.value.firstOrNull {
+      it.shopId == shopId && it.name.equals(productName, ignoreCase = true)
+    }
+    if (product != null) {
+      selectProduct(product)
+    } else {
+      navigateTo(AppScreen.StoreInfo)
+    }
+  }
+
   fun addToCart(product: Product, weightOption: WeightOption, quantity: Int = 1) {
     _cartItems.update { currentList ->
       val existingIndex = currentList.indexOfFirst {
@@ -287,11 +526,14 @@ class GroceryViewModel(
   fun placeOrder(): Order? {
     val items = _cartItems.value
     if (items.isEmpty()) return null
-    
+
     val itemTotal = items.sumOf { it.totalPrice }
-    val discount = if (itemTotal > 200) 15 else 0
-    val handlingFee = 5
-    val totalAmount = itemTotal + handlingFee - discount
+    val minForFree = _minOrderFreeHandling.value
+    val handlingFee = _handlingFee.value
+    val discount = if (itemTotal > minForFree) _freeHandlingDiscount.value else 0
+    val promo = _appliedPromo.value
+    val promoDiscount = promo?.computeDiscount(itemTotal) ?: 0
+    val totalAmount = (itemTotal + handlingFee - discount - promoDiscount).coerceAtLeast(0)
 
     val orderNum = (1000..9999).random()
     val orderId = "KIR-8F$orderNum"
@@ -299,8 +541,13 @@ class GroceryViewModel(
     val timeFormat = SimpleDateFormat("h:mm a", Locale.getDefault())
     val currentTime = timeFormat.format(Date())
 
+    // Use the shopId of the first cart item as the order's shopId (RLS requires this
+    // so the vendor of that shop can see the order).
+    val shopId = items.firstOrNull()?.product?.shopId ?: "default_shop"
+
     val newOrder = Order(
       id = orderId,
+      shopId = shopId,
       items = items,
       totalAmount = totalAmount,
       orderDate = "Today, $currentTime",
@@ -320,6 +567,9 @@ class GroceryViewModel(
     _orders.update { listOf(newOrder) + it }
     _latestPlacedOrderId.value = orderId
     _cartItems.value = emptyList()
+    val appliedCode = promo?.code
+    _appliedPromo.value = null
+    _promoStatusMessage.value = null
     navigateTo(AppScreen.OrderPlaced(orderId))
 
     // Simulation: Notify Vendor
@@ -331,11 +581,47 @@ class GroceryViewModel(
         order = newOrder,
         customerEmail = _userProfile.value.email,
         customerName = _userProfile.value.fullName,
+        customerMobile = _userProfile.value.mobileNumber,
+        userId = supabaseAuthService.currentUserId,
+        promoCode = appliedCode,
+        promoDiscount = promoDiscount,
         accessToken = supabaseAuthService.currentAccessToken
       )
     }
 
     return newOrder
+  }
+
+  fun applyPromoCode(code: String) {
+    val cleanCode = code.trim().uppercase()
+    if (cleanCode.isBlank()) {
+      _promoStatusMessage.value = "Enter a code"
+      return
+    }
+    _promoStatusMessage.value = "Checking…"
+    viewModelScope.launch {
+      supabaseGroceryRepo.fetchPromoCode(cleanCode, supabaseAuthService.currentAccessToken)
+        .onSuccess { promo ->
+          val itemTotal = _cartItems.value.sumOf { it.totalPrice }
+          if (itemTotal < promo.minOrderAmount) {
+            _appliedPromo.value = null
+            _promoStatusMessage.value = "Add ₹${promo.minOrderAmount - itemTotal} more to use $cleanCode"
+          } else {
+            _appliedPromo.value = promo
+            val d = promo.computeDiscount(itemTotal)
+            _promoStatusMessage.value = "$cleanCode applied — ₹$d off"
+          }
+        }
+        .onFailure {
+          _appliedPromo.value = null
+          _promoStatusMessage.value = "Invalid or expired code"
+        }
+    }
+  }
+
+  fun clearPromoCode() {
+    _appliedPromo.value = null
+    _promoStatusMessage.value = null
   }
 
   private fun simulateVendorNotification(order: Order) {
@@ -564,6 +850,7 @@ class GroceryViewModel(
     viewModelScope.launch {
       supabaseAuthService.signOut()
     }
+    supabaseRealtime.disconnect()
     clearSavedSession()
     _userProfile.value = UserProfile(
       fullName = "",
@@ -613,9 +900,37 @@ class GroceryViewModel(
     // Persist session
     saveSession(cleanEmail)
 
-    // Load orders for newly logged in user
+    // Kick off the Realtime subscription with the user's JWT so RLS lets them
+    // receive their own orders' postgres_changes stream.
+    supabaseRealtime.connect(supabaseAuthService.currentAccessToken)
+
+    // Fetch server-side profile (role, real name/mobile/shop_id). Server role is the
+    // sole source of truth for authorization from here on — the .env whitelist is only
+    // a fallback used until this returns.
     viewModelScope.launch {
-      supabaseGroceryRepo.fetchOrders(customerEmail = cleanEmail, isAdmin = isAdmin).onSuccess { liveOrders ->
+      val userId = supabaseAuthService.currentUserId
+      if (!userId.isNullOrBlank()) {
+        supabaseGroceryRepo.fetchProfile(userId, supabaseAuthService.currentAccessToken)
+          .onSuccess { serverProfile ->
+            _userProfile.update { local ->
+              local.copy(
+                fullName = serverProfile.fullName.ifBlank { local.fullName },
+                mobileNumber = serverProfile.mobileNumber.ifBlank { local.mobileNumber },
+                address = serverProfile.address.ifBlank { local.address },
+                loyaltyPoints = serverProfile.loyaltyPoints,
+                walletBalance = serverProfile.walletBalance,
+                shopId = serverProfile.shopId ?: local.shopId,
+                profileCompleted = serverProfile.profileCompleted || local.profileCompleted,
+                phoneVerified = serverProfile.phoneVerified || local.phoneVerified,
+                serverRole = serverProfile.serverRole
+              )
+            }
+          }
+      }
+
+      // Load orders using the (possibly updated) admin flag
+      val effectiveIsAdmin = _userProfile.value.isAdmin
+      supabaseGroceryRepo.fetchOrders(customerEmail = cleanEmail, isAdmin = effectiveIsAdmin).onSuccess { liveOrders ->
         if (liveOrders.isNotEmpty()) {
           _orders.value = liveOrders
         }
@@ -733,6 +1048,39 @@ class GroceryViewModel(
     intent.setPackage("com.google.android.apps.maps")
     intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
     getApplication<Application>().startActivity(intent)
+  }
+
+  fun openPlayStorePage() {
+    val pkg = getApplication<Application>().packageName
+    val app = getApplication<Application>()
+    val marketIntent = android.content.Intent(
+      android.content.Intent.ACTION_VIEW,
+      Uri.parse("market://details?id=$pkg")
+    ).apply { addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK) }
+    try {
+      app.startActivity(marketIntent)
+    } catch (e: Exception) {
+      val webIntent = android.content.Intent(
+        android.content.Intent.ACTION_VIEW,
+        Uri.parse("https://play.google.com/store/apps/details?id=$pkg")
+      ).apply { addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK) }
+      try { app.startActivity(webIntent) } catch (_: Exception) { }
+    }
+  }
+
+  fun openSupportWhatsApp() {
+    val raw = _supportWhatsappNumber.value.trim()
+    if (raw.isBlank()) return
+    val digits = raw.replace(Regex("[^0-9]"), "")
+    if (digits.isBlank()) return
+    val msg = Uri.encode("Hi, I need help with the Bharat Kirana app.")
+    val uri = Uri.parse("https://wa.me/$digits?text=$msg")
+    val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, uri).apply {
+      addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+    }
+    try {
+      getApplication<Application>().startActivity(intent)
+    } catch (_: Exception) { }
   }
 
   // Backwards compatibility overload
@@ -869,7 +1217,8 @@ class GroceryViewModel(
     mrp: Int,
     desc: String,
     stock: Boolean,
-    imageUris: List<Uri>
+    imageUris: List<Uri>,
+    barcode: String = ""
   ) {
     val productId = "p_${System.currentTimeMillis()}"
     val shopId = _userProfile.value.shopId ?: "s_bharat_kirana"
@@ -903,7 +1252,8 @@ class GroceryViewModel(
         inStock = stock,
         imageUrl = finalImageUrls.firstOrNull() ?: "",
         imageUrls = finalImageUrls,
-        weightOptions = listOf(WeightOption(unit, price, mrp))
+        weightOptions = listOf(WeightOption(unit, price, mrp)),
+        barcode = barcode
       )
 
       // 3. Sync to Supabase & Local
@@ -999,19 +1349,26 @@ class GroceryViewModel(
     navigateTo(AppScreen.Cart)
   }
 
-  fun rateShop(shopId: String, rating: Int, review: String) {
+  fun rateShop(shopId: String, orderId: String, rating: Int, review: String) {
+    val customerId = supabaseAuthService.currentUserId ?: return
     viewModelScope.launch {
-      // Logic to sync rating to Supabase
-      // supabaseGroceryRepo.submitRating(shopId, rating, review, currentUserId)
-      
-      // Update local state to reflect new rating for the shop
-      _shops.update { list ->
-        list.map { shop ->
-          if (shop.id == shopId) {
-            val newCount = shop.ratingCount + 1
-            val newAvg = (shop.rating * shop.ratingCount + rating) / newCount
-            shop.copy(rating = newAvg, ratingCount = newCount)
-          } else shop
+      supabaseGroceryRepo.submitShopRating(
+        shopId = shopId,
+        orderId = orderId,
+        customerId = customerId,
+        rating = rating,
+        review = review,
+        accessToken = supabaseAuthService.currentAccessToken
+      ).onSuccess {
+        // Optimistically bump local shop aggregate; the server trigger keeps DB truth.
+        _shops.update { list ->
+          list.map { shop ->
+            if (shop.id == shopId) {
+              val newCount = shop.ratingCount + 1
+              val newAvg = (shop.rating * shop.ratingCount + rating) / newCount
+              shop.copy(rating = newAvg, ratingCount = newCount)
+            } else shop
+          }
         }
       }
     }

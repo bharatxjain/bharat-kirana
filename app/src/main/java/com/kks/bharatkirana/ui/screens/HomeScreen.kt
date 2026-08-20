@@ -62,6 +62,7 @@ fun HomeScreen(
   onChangeStoreClick: () -> Unit,
   onViewCartClick: () -> Unit,
   onAdminClick: () -> Unit = {},
+  promoBanner: String? = null,
   isLoading: Boolean = false,
   activeShopId: String? = null,
   modifier: Modifier = Modifier
@@ -109,6 +110,39 @@ fun HomeScreen(
           onQueryChange = onSearchQueryChange
         )
         Spacer(modifier = Modifier.height(10.dp))
+      }
+
+      // Promo banner from Firebase Remote Config (F.promo_banner_text/enabled).
+      // Change text/toggle from the Firebase console — no app update needed.
+      if (!promoBanner.isNullOrBlank()) {
+        item {
+          androidx.compose.material3.Surface(
+            shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
+            color = Color(0xFFF3E8FF),
+            modifier = Modifier
+              .fillMaxWidth()
+              .padding(horizontal = 12.dp, vertical = 4.dp)
+          ) {
+            Row(
+              modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+              verticalAlignment = Alignment.CenterVertically
+            ) {
+              androidx.compose.material3.Icon(
+                imageVector = androidx.compose.material.icons.Icons.Default.Campaign,
+                contentDescription = null,
+                tint = androidx.compose.ui.graphics.Color(0xFF7C3AED),
+                modifier = Modifier.padding(end = 8.dp)
+              )
+              androidx.compose.material3.Text(
+                text = promoBanner,
+                color = androidx.compose.ui.graphics.Color(0xFF4C1D95),
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Medium
+              )
+            }
+          }
+          Spacer(modifier = Modifier.height(6.dp))
+        }
       }
 
       // 4-Column Categories Grid (3 rows x 4 = 12 categories) or Shimmer

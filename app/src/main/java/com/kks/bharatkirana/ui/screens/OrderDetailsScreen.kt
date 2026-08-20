@@ -34,7 +34,7 @@ fun OrderDetailsScreen(
   order: Order,
   onBackClick: () -> Unit,
   onReorder: (Order) -> Unit,
-  onRateShop: (String, Int, String) -> Unit = { _, _, _ -> },
+  onRateShop: (shopId: String, orderId: String, rating: Int, review: String) -> Unit = { _, _, _, _ -> },
   onCancelOrder: (String) -> Unit = {},
   modifier: Modifier = Modifier
 ) {
@@ -233,7 +233,7 @@ fun OrderDetailsScreen(
               Spacer(modifier = Modifier.height(16.dp))
               Button(
                 onClick = { 
-                  onRateShop(order.shopId, ratingValue, reviewText)
+                  onRateShop(order.shopId, order.id, ratingValue, reviewText)
                   ratingSubmitted = true
                 },
                 enabled = ratingValue > 0,

@@ -51,6 +51,7 @@ fun AuthScreen(
   var showChoiceScreen by remember { mutableStateOf(true) }
   var selectedTab by remember { mutableIntStateOf(0) } // 0: Login, 1: Signup, 2: OTP Verification, 3: Forgot Password
   var authRole by remember { mutableStateOf(UserRole.CUSTOMER) }
+  var signupRoleChosen by remember { mutableStateOf(false) }
   var authPath by remember { mutableStateOf(AuthPath.EMAIL) }
   
   // Input States
@@ -299,8 +300,21 @@ fun AuthScreen(
                   )
                 }
               }
+            } else if (selectedTab == 1 && !signupRoleChosen) {
+              // SIGNUP — role picker (asked FIRST, before the form)
+              SignupRolePicker(
+                onChoose = { role ->
+                  authRole = role
+                  signupRoleChosen = true
+                  localStatusMessage = null
+                }
+              )
             } else if (selectedTab == 1) {
               // SIGNUP FORM
+              SignupRolePill(
+                role = authRole,
+                onChange = { signupRoleChosen = false }
+              )
               AuthTextField(
                 value = nameInput,
                 onValueChange = { nameInput = it },
@@ -645,5 +659,109 @@ fun AuthTextField(
 fun TextButton(onClick: () -> Unit, content: @Composable () -> Unit) {
   Box(modifier = Modifier.clickable { onClick() }.padding(8.dp)) {
     content()
+  }
+}
+
+@Composable
+private fun SignupRolePicker(onChoose: (UserRole) -> Unit) {
+  Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    Text(
+      text = "How will you use Bharat Kirana?",
+      style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
+      color = BharatTextPrimary
+    )
+    Text(
+      text = "Pick one to continue. You can't change this later without a new account.",
+      style = MaterialTheme.typography.bodySmall,
+      color = BharatTextSecondary
+    )
+    SignupRoleOptionCard(
+      icon = Icons.Default.ShoppingBag,
+      title = "I'm a Customer",
+      subtitle = "Order groceries from nearby kirana shops for pickup.",
+      onClick = { onChoose(UserRole.CUSTOMER) }
+    )
+    SignupRoleOptionCard(
+      icon = Icons.Default.Storefront,
+      title = "I'm a Shop Owner",
+      subtitle = "List your shop and receive orders from customers.",
+      onClick = { onChoose(UserRole.VENDOR) }
+    )
+  }
+}
+
+@Composable
+private fun SignupRoleOptionCard(
+  icon: androidx.compose.ui.graphics.vector.ImageVector,
+  title: String,
+  subtitle: String,
+  onClick: () -> Unit
+) {
+  Surface(
+    onClick = onClick,
+    shape = RoundedCornerShape(14.dp),
+    color = Color.White,
+    border = BorderStroke(1.dp, Color(0xFFE5E7EB)),
+    modifier = Modifier.fillMaxWidth()
+  ) {
+    Row(
+      modifier = Modifier.padding(14.dp),
+      verticalAlignment = Alignment.CenterVertically
+    ) {
+      Box(
+        modifier = Modifier
+          .size(44.dp)
+          .clip(CircleShape)
+          .background(Color(0xFFF5F3FF)),
+        contentAlignment = Alignment.Center
+      ) {
+        Icon(icon, contentDescription = null, tint = BharatPurplePrimary, modifier = Modifier.size(22.dp))
+      }
+      Spacer(modifier = Modifier.width(12.dp))
+      Column(modifier = Modifier.weight(1f)) {
+        Text(title, fontWeight = FontWeight.Bold, color = BharatTextPrimary, fontSize = 14.sp)
+        Text(subtitle, fontSize = 12.sp, color = BharatTextSecondary)
+      }
+      Icon(
+        imageVector = Icons.Default.ChevronRight,
+        contentDescription = null,
+        tint = BharatPurplePrimary
+      )
+    }
+  }
+}
+
+@Composable
+private fun SignupRolePill(role: UserRole, onChange: () -> Unit) {
+  Surface(
+    shape = RoundedCornerShape(10.dp),
+    color = Color(0xFFF5F3FF),
+    modifier = Modifier.fillMaxWidth()
+  ) {
+    Row(
+      modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+      verticalAlignment = Alignment.CenterVertically
+    ) {
+      Icon(
+        imageVector = if (role == UserRole.VENDOR) Icons.Default.Storefront else Icons.Default.ShoppingBag,
+        contentDescription = null,
+        tint = BharatPurplePrimary,
+        modifier = Modifier.size(16.dp)
+      )
+      Spacer(modifier = Modifier.width(8.dp))
+      Text(
+        text = "Signing up as ${role.label}",
+        fontSize = 12.sp,
+        color = BharatTextPrimary,
+        modifier = Modifier.weight(1f)
+      )
+      Text(
+        text = "Change",
+        color = BharatPurplePrimary,
+        fontSize = 12.sp,
+        fontWeight = FontWeight.Bold,
+        modifier = Modifier.clickable(onClick = onChange).padding(4.dp)
+      )
+    }
   }
 }

@@ -107,6 +107,8 @@ fun ProfileScreen(
   onVendorRegisterClick: () -> Unit = {},
   onLogout: () -> Unit = {},
   onDeleteAccount: () -> Unit = {},
+  hasSupport: Boolean = false,
+  onSupportClick: () -> Unit = {},
   modifier: Modifier = Modifier
 ) {
   var showEditDialog by remember { mutableStateOf(false) }
@@ -643,6 +645,45 @@ fun ProfileScreen(
                 imageVector = Icons.Default.ChevronRight,
                 contentDescription = null,
                 tint = BharatTextMuted
+              )
+            }
+          }
+        }
+      }
+
+      // Contact Support (WhatsApp) — rendered only when Remote Config has a number.
+      if (hasSupport) {
+        item {
+          Spacer(modifier = Modifier.height(14.dp))
+          Surface(
+            onClick = onSupportClick,
+            shape = RoundedCornerShape(16.dp),
+            color = Color(0xFFECFDF5),
+            border = BorderStroke(1.dp, Color(0xFF10B981)),
+            modifier = Modifier
+              .fillMaxWidth()
+              .padding(horizontal = 16.dp)
+              .testTag("support_whatsapp_button")
+          ) {
+            Row(
+              modifier = Modifier
+                .fillMaxWidth()
+                .padding(14.dp),
+              horizontalArrangement = Arrangement.Center,
+              verticalAlignment = Alignment.CenterVertically
+            ) {
+              Icon(
+                imageVector = Icons.Default.Info,
+                contentDescription = null,
+                tint = Color(0xFF059669),
+                modifier = Modifier.size(18.dp)
+              )
+              Spacer(modifier = Modifier.width(8.dp))
+              Text(
+                text = "Contact Support on WhatsApp",
+                color = Color(0xFF059669),
+                fontWeight = FontWeight.Bold,
+                fontSize = 14.sp
               )
             }
           }

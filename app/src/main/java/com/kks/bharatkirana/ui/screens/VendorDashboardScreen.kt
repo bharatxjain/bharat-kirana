@@ -38,6 +38,9 @@ fun VendorDashboardScreen(
   onManageProducts: () -> Unit,
   onBackClick: () -> Unit,
   onUpdateShop: (String, Shop) -> Unit = { _, _ -> },
+  onUpdateOrderStatus: (String, OrderStatus) -> Unit = { _, _ -> },
+  onCancelOrder: (String) -> Unit = {},
+  onUpdateProductStock: (String, Boolean) -> Unit = { _, _ -> },
   modifier: Modifier = Modifier
 ) {
   var selectedTab by remember { mutableIntStateOf(0) } // 0: Overview, 1: Inventory, 2: Orders, 3: Reviews
@@ -265,17 +268,75 @@ fun VendorDashboardScreen(
                         Text(product.name, fontWeight = FontWeight.Bold, color = BharatTextPrimary)
                         Text("${product.stockQty} in stock • ₹${product.currentPrice}", fontSize = 12.sp, color = BharatTextSecondary)
                       }
-                      Switch(checked = product.inStock, onCheckedChange = { /* onUpdateStock */ }, colors = SwitchDefaults.colors(checkedTrackColor = BharatGreen))
+                      Switch(checked = product.inStock, onCheckedChange = { onUpdateProductStock(product.id, it) }, colors = SwitchDefaults.colors(checkedTrackColor = BharatGreen))
                     }
                   }
                }
             }
           }
           2 -> {
-            LazyColumn(modifier = Modifier.fillMaxSize().background(Color(0xFFF9FAFB)), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-               items(orders) { order ->
-                  RecentOrderRow(order = order)
-               }
+            val pending = orders.filter { it.status == OrderStatus.PLACED }
+            val preparing = orders.filter { it.status == OrderStatus.PREPARING }
+            val ready = orders.filter { it.status == OrderStatus.READY_FOR_PICKUP }
+            val history = orders.filter { it.status == OrderStatus.COMPLETED || it.status == OrderStatus.CANCELLED }
+
+            LazyColumn(
+              modifier = Modifier.fillMaxSize().background(Color(0xFFF9FAFB)),
+              contentPadding = PaddingValues(16.dp),
+              verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+              if (orders.isEmpty()) {
+                item {
+                  Box(modifier = Modifier.fillMaxWidth().padding(top = 80.dp), contentAlignment = Alignment.Center) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                      Icon(Icons.AutoMirrored.Filled.ReceiptLong, null, tint = Color(0xFFCBD5E1), modifier = Modifier.size(56.dp))
+                      Spacer(modifier = Modifier.height(12.dp))
+                      Text("No orders yet", fontWeight = FontWeight.Bold, color = BharatTextPrimary)
+                      Text("Incoming orders will appear here.", fontSize = 12.sp, color = BharatTextSecondary)
+                    }
+                  }
+                }
+              }
+              if (pending.isNotEmpty()) {
+                item { OrderSectionHeader("New Orders", pending.size, Color(0xFFF59E0B)) }
+                items(pending, key = { it.id }) { order ->
+                  VendorOrderActionCard(
+                    order = order,
+                    primaryLabel = "Accept & Prepare",
+                    primaryColor = BharatGreen,
+                    onPrimary = { onUpdateOrderStatus(order.id, OrderStatus.PREPARING) },
+                    onCancel = { onCancelOrder(order.id) }
+                  )
+                }
+              }
+              if (preparing.isNotEmpty()) {
+                item { OrderSectionHeader("Preparing", preparing.size, Color(0xFF0284C7)) }
+                items(preparing, key = { it.id }) { order ->
+                  VendorOrderActionCard(
+                    order = order,
+                    primaryLabel = "Mark Ready for Pickup",
+                    primaryColor = BharatPurplePrimary,
+                    onPrimary = { onUpdateOrderStatus(order.id, OrderStatus.READY_FOR_PICKUP) },
+                    onCancel = { onCancelOrder(order.id) }
+                  )
+                }
+              }
+              if (ready.isNotEmpty()) {
+                item { OrderSectionHeader("Ready for Pickup", ready.size, BharatGreen) }
+                items(ready, key = { it.id }) { order ->
+                  VendorOrderActionCard(
+                    order = order,
+                    primaryLabel = "Mark Completed",
+                    primaryColor = BharatPurpleDark,
+                    onPrimary = { onUpdateOrderStatus(order.id, OrderStatus.COMPLETED) },
+                    onCancel = null
+                  )
+                }
+              }
+              if (history.isNotEmpty()) {
+                item { OrderSectionHeader("History", history.size, BharatTextSecondary) }
+                items(history, key = { it.id }) { order -> RecentOrderRow(order = order) }
+              }
             }
           }
           3 -> {
@@ -458,6 +519,90 @@ fun RecentOrderRow(order: Order) {
           fontWeight = FontWeight.Bold,
           color = textTint
         )
+      }
+    }
+  }
+}
+
+@Composable
+private fun OrderSectionHeader(title: String, count: Int, accent: Color) {
+  Row(
+    modifier = Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 4.dp),
+    verticalAlignment = Alignment.CenterVertically
+  ) {
+    Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(accent))
+    Spacer(modifier = Modifier.width(8.dp))
+    Text(text = title, fontWeight = FontWeight.ExtraBold, color = BharatTextPrimary, fontSize = 14.sp)
+    Spacer(modifier = Modifier.width(8.dp))
+    Surface(shape = RoundedCornerShape(50.dp), color = accent.copy(alpha = 0.15f)) {
+      Text(
+        text = count.toString(),
+        modifier = Modifier.padding(horizontal = 10.dp, vertical = 2.dp),
+        fontSize = 11.sp,
+        fontWeight = FontWeight.Bold,
+        color = accent
+      )
+    }
+  }
+}
+
+@Composable
+private fun VendorOrderActionCard(
+  order: Order,
+  primaryLabel: String,
+  primaryColor: Color,
+  onPrimary: () -> Unit,
+  onCancel: (() -> Unit)? = null
+) {
+  Card(
+    shape = RoundedCornerShape(16.dp),
+    colors = CardDefaults.cardColors(containerColor = Color.White),
+    border = BorderStroke(1.dp, Color(0xFFF1F5F9)),
+    modifier = Modifier.fillMaxWidth()
+  ) {
+    Column(modifier = Modifier.padding(16.dp)) {
+      Row(verticalAlignment = Alignment.CenterVertically) {
+        Box(
+          modifier = Modifier.size(44.dp).clip(RoundedCornerShape(12.dp)).background(Color(0xFFF5F3FF)),
+          contentAlignment = Alignment.Center
+        ) {
+          Text("#" + order.id.takeLast(3), fontWeight = FontWeight.Bold, color = BharatPurplePrimary, fontSize = 12.sp)
+        }
+        Spacer(modifier = Modifier.width(12.dp))
+        Column(modifier = Modifier.weight(1f)) {
+          Text(text = order.id, fontWeight = FontWeight.Bold, color = BharatTextPrimary, fontSize = 14.sp)
+          Text(
+            text = "${order.items.size} items \u2022 ${order.orderDate}",
+            fontSize = 12.sp,
+            color = BharatTextSecondary
+          )
+        }
+        Text(text = "\u20b9${order.totalAmount}", fontWeight = FontWeight.ExtraBold, color = BharatTextPrimary, fontSize = 16.sp)
+      }
+
+      Spacer(modifier = Modifier.height(12.dp))
+      Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+      ) {
+        if (onCancel != null) {
+          OutlinedButton(
+            onClick = onCancel,
+            modifier = Modifier.weight(1f).height(44.dp),
+            shape = RoundedCornerShape(10.dp),
+            border = BorderStroke(1.dp, Color(0xFFDC2626))
+          ) {
+            Text("Cancel", color = Color(0xFFDC2626), fontWeight = FontWeight.Bold, fontSize = 13.sp)
+          }
+        }
+        Button(
+          onClick = onPrimary,
+          modifier = Modifier.weight(if (onCancel != null) 2f else 1f).height(44.dp),
+          colors = ButtonDefaults.buttonColors(containerColor = primaryColor),
+          shape = RoundedCornerShape(10.dp)
+        ) {
+          Text(primaryLabel, fontWeight = FontWeight.Bold, color = Color.White, fontSize = 13.sp)
+        }
       }
     }
   }

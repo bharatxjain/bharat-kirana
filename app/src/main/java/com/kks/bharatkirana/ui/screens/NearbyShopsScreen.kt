@@ -298,7 +298,30 @@ fun NearbyShopCard(shop: Shop, onClick: () -> Unit) {
         } else {
           Box(modifier = Modifier.fillMaxSize().background(Color(0xFFF5F3FF)))
         }
-        
+
+        // Open/Closed badge (top-start): reads shop.isCurrentlyOpen() which combines
+        // the manual accepting-orders toggle with the current time vs open/close hours.
+        val open = shop.isCurrentlyOpen()
+        Surface(
+          shape = RoundedCornerShape(8.dp),
+          color = if (open) BharatGreen else Color(0xFFDC2626),
+          modifier = Modifier.padding(12.dp).align(Alignment.TopStart)
+        ) {
+          Row(
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically
+          ) {
+            Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(Color.White))
+            Spacer(modifier = Modifier.width(4.dp))
+            Text(
+              text = if (open) "Open" else "Closed",
+              color = Color.White,
+              fontSize = 11.sp,
+              fontWeight = FontWeight.Bold
+            )
+          }
+        }
+
         // Rating Badge
         Surface(
           shape = RoundedCornerShape(8.dp),
