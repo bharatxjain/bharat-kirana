@@ -11,13 +11,12 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Campaign
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -29,8 +28,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Campaign
 import androidx.compose.ui.unit.sp
 import com.kks.bharatkirana.data.model.CartItem
 import com.kks.bharatkirana.data.model.Category
@@ -116,7 +113,6 @@ fun HomeScreen(
       }
 
       // Promo banner from Firebase Remote Config (F.promo_banner_text/enabled).
-      // Change text/toggle from the Firebase console — no app update needed.
       if (!promoBanner.isNullOrBlank()) {
         item {
           Surface(
@@ -148,7 +144,7 @@ fun HomeScreen(
         }
       }
 
-      // 4-Column Categories Grid (3 rows x 4 = 12 categories) or Shimmer
+      // 4-Column Categories Grid
       item {
         if (isLoading && categories.isEmpty()) {
           ShimmerCategoriesGrid()
@@ -179,11 +175,11 @@ fun HomeScreen(
         Spacer(modifier = Modifier.height(16.dp))
       }
 
-      // Section: Popular in Rice & Grains
+      // Section: Popular items
       item {
         Column(modifier = Modifier.fillMaxWidth()) {
           Text(
-            text = "Popular in Rice & Grains",
+            text = "Popular items",
             style = MaterialTheme.typography.titleLarge.copy(
               fontWeight = FontWeight.Bold,
               fontSize = 18.sp

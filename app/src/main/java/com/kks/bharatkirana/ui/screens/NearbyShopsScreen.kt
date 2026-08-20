@@ -27,6 +27,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.kks.bharatkirana.R
 import com.kks.bharatkirana.data.model.Shop
+import com.kks.bharatkirana.data.model.isCurrentlyOpen
 import com.kks.bharatkirana.ui.theme.*
 
 @OptIn(ExperimentalMaterial3Api::class)
