@@ -41,10 +41,18 @@ fun VendorDashboardScreen(
   onUpdateOrderStatus: (String, OrderStatus) -> Unit = { _, _ -> },
   onCancelOrder: (String) -> Unit = {},
   onUpdateProductStock: (String, Boolean) -> Unit = { _, _ -> },
+  onUpdateProductPrice: (String, Int) -> Unit = { _, _ -> },
+  onSupportClick: () -> Unit = {},
+  onRefreshStatus: () -> Unit = {},
+  onManagePlan: () -> Unit = {},
+  currentTierName: String? = null,
+  currentTierItemCap: Int = 10,
   modifier: Modifier = Modifier
 ) {
   var selectedTab by remember { mutableIntStateOf(0) } // 0: Overview, 1: Inventory, 2: Orders, 3: Reviews
   var showEditShopDialog by remember { mutableStateOf(false) }
+  var editingProductId by remember { mutableStateOf<String?>(null) }
+  var editingProductPrice by remember { mutableStateOf("") }
 
   // Real Analytics Calculations
   val totalOrders = orders.size
@@ -105,56 +113,13 @@ fun VendorDashboardScreen(
     modifier = modifier.fillMaxSize()
   ) { paddingValues ->
     if (shop.status != VendorStatus.APPROVED) {
-      Box(
-        modifier = Modifier
-          .fillMaxSize()
-          .background(Color.White)
-          .padding(paddingValues),
-        contentAlignment = Alignment.Center
-      ) {
-        Column(
-          horizontalAlignment = Alignment.CenterHorizontally,
-          modifier = Modifier.padding(32.dp)
-        ) {
-          Icon(
-            imageVector = Icons.Default.PendingActions,
-            contentDescription = null,
-            tint = BharatPurplePrimary,
-            modifier = Modifier.size(72.dp)
-          )
-          Spacer(modifier = Modifier.height(24.dp))
-          Text(
-            text = when(shop.status) {
-              VendorStatus.PENDING -> "Your Shop is Under Review"
-              VendorStatus.REJECTED -> "Application Rejected"
-              VendorStatus.SUSPENDED -> "Shop Suspended"
-              else -> "Status Unknown"
-            },
-            style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold),
-            color = BharatTextPrimary,
-            textAlign = TextAlign.Center
-          )
-          Spacer(modifier = Modifier.height(12.dp))
-          Text(
-            text = when(shop.status) {
-              VendorStatus.PENDING -> "Bharat Kirana team is currently verifying your shop details. You will receive a notification once approved."
-              VendorStatus.REJECTED -> "We're sorry, but your shop application was not approved at this time. Please contact support for more details."
-              VendorStatus.SUSPENDED -> "Your shop access has been suspended due to policy violations. Please reach out to the admin team."
-              else -> "Please wait while we fetch your shop status."
-            },
-            style = MaterialTheme.typography.bodyMedium,
-            color = BharatTextSecondary,
-            textAlign = TextAlign.Center
-          )
-          Spacer(modifier = Modifier.height(32.dp))
-          OutlinedButton(
-            onClick = onLogout,
-            shape = RoundedCornerShape(12.dp)
-          ) {
-            Text("Sign Out")
-          }
-        }
-      }
+      VendorStatusPendingContent(
+        shop = shop,
+        paddingValues = paddingValues,
+        onSupportClick = onSupportClick,
+        onRefreshStatus = onRefreshStatus,
+        onLogout = onLogout
+      )
     } else {
       Box(modifier = Modifier.fillMaxSize().padding(paddingValues)) {
         when (selectedTab) {
@@ -168,6 +133,48 @@ fun VendorDashboardScreen(
                 Column {
                   Text(text = "Store Hub", style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.Bold), color = BharatTextPrimary)
                   Text(text = "Real-time performance for ${shop.name}", style = MaterialTheme.typography.bodyMedium, color = BharatTextSecondary)
+                }
+              }
+
+              // Round 5: current subscription tier + Manage Plan CTA.
+              item {
+                val tierLabel = currentTierName ?: "Free"
+                val capLabel = if (currentTierItemCap == -1) "Unlimited items" else "${products.size} / $currentTierItemCap items"
+                Card(
+                  onClick = onManagePlan,
+                  shape = RoundedCornerShape(16.dp),
+                  colors = CardDefaults.cardColors(containerColor = Color.White),
+                  border = BorderStroke(1.dp, Color(0xFFE5E7EB))
+                ) {
+                  Row(
+                    modifier = Modifier.fillMaxWidth().padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                  ) {
+                    Box(
+                      modifier = Modifier.size(40.dp).clip(CircleShape).background(BharatPurpleContainer),
+                      contentAlignment = Alignment.Center
+                    ) {
+                      Icon(Icons.Default.Star, contentDescription = null, tint = BharatPurplePrimary, modifier = Modifier.size(20.dp))
+                    }
+                    Spacer(Modifier.width(12.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                      Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Current Plan", fontSize = 11.sp, color = BharatTextSecondary, fontWeight = FontWeight.SemiBold)
+                        Spacer(Modifier.width(6.dp))
+                        Surface(color = BharatPurpleContainer, shape = RoundedCornerShape(4.dp)) {
+                          Text(
+                            tierLabel.uppercase(),
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = BharatPurpleDark,
+                            modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
+                          )
+                        }
+                      }
+                      Text(capLabel, fontSize = 13.sp, color = BharatTextPrimary, fontWeight = FontWeight.Bold)
+                    }
+                    Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = "Manage Plan", tint = BharatPurplePrimary)
+                  }
                 }
               }
 
@@ -258,15 +265,27 @@ fun VendorDashboardScreen(
                  }
                }
                items(products) { product ->
-                  Card(shape = RoundedCornerShape(16.dp), colors = CardDefaults.cardColors(containerColor = Color.White), border = BorderStroke(1.dp, Color(0xFFF1F5F9))) {
+                  Card(
+                    onClick = {
+                      editingProductId = product.id
+                      editingProductPrice = product.currentPrice.toString()
+                    },
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color.White),
+                    border = BorderStroke(1.dp, Color(0xFFF1F5F9))
+                  ) {
                     Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
                       Box(modifier = Modifier.size(50.dp).clip(RoundedCornerShape(8.dp)).background(Color(0xFFF1F5F9)), contentAlignment = Alignment.Center) {
                         Icon(Icons.Default.Inventory, null, tint = BharatPurplePrimary)
                       }
                       Spacer(Modifier.width(12.dp))
                       Column(modifier = Modifier.weight(1f)) {
-                        Text(product.name, fontWeight = FontWeight.Bold, color = BharatTextPrimary)
-                        Text("${product.stockQty} in stock • ₹${product.currentPrice}", fontSize = 12.sp, color = BharatTextSecondary)
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                          Text(product.name, fontWeight = FontWeight.Bold, color = BharatTextPrimary, modifier = Modifier.weight(1f, fill = false))
+                          Spacer(Modifier.width(6.dp))
+                          Icon(Icons.Default.Edit, contentDescription = "Edit", tint = BharatPurplePrimary, modifier = Modifier.size(14.dp))
+                        }
+                        Text("${product.stockQty} in stock • ₹${product.currentPrice} • Tap to edit", fontSize = 11.sp, color = BharatTextSecondary)
                       }
                       Switch(checked = product.inStock, onCheckedChange = { onUpdateProductStock(product.id, it) }, colors = SwitchDefaults.colors(checkedTrackColor = BharatGreen))
                     }
@@ -396,6 +415,254 @@ fun VendorDashboardScreen(
         TextButton(onClick = { showEditShopDialog = false }) { Text("Cancel") }
       }
     )
+  }
+
+  // Round 4a: quick "edit price" dialog when a product row is tapped.
+  editingProductId?.let { pid ->
+    val prod = products.firstOrNull { it.id == pid }
+    if (prod == null) {
+      editingProductId = null
+    } else {
+      AlertDialog(
+        onDismissRequest = { editingProductId = null },
+        title = {
+          Column {
+            Text("Update Price", fontWeight = FontWeight.Bold, color = BharatTextPrimary)
+            Text(prod.name, fontSize = 13.sp, color = BharatTextSecondary)
+          }
+        },
+        text = {
+          Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedTextField(
+              value = editingProductPrice,
+              onValueChange = { input -> editingProductPrice = input.filter { it.isDigit() }.take(6) },
+              label = { Text("Selling Price (₹)") },
+              singleLine = true,
+              modifier = Modifier.fillMaxWidth(),
+              colors = OutlinedTextFieldDefaults.colors(
+                focusedTextColor = BharatTextPrimary,
+                unfocusedTextColor = BharatTextPrimary,
+                focusedBorderColor = BharatPurplePrimary
+              )
+            )
+            Text(
+              text = "Currently listed at ₹${prod.currentPrice} • ${if (prod.inStock) "In stock" else "Out of stock"}",
+              fontSize = 11.sp,
+              color = BharatTextMuted
+            )
+          }
+        },
+        confirmButton = {
+          Button(
+            onClick = {
+              val newPrice = editingProductPrice.toIntOrNull()
+              if (newPrice != null && newPrice > 0 && newPrice != prod.currentPrice) {
+                onUpdateProductPrice(prod.id, newPrice)
+              }
+              editingProductId = null
+            },
+            enabled = editingProductPrice.toIntOrNull().let { it != null && it > 0 && it != prod.currentPrice },
+            colors = ButtonDefaults.buttonColors(containerColor = BharatPurplePrimary)
+          ) { Text("Save", color = Color.White, fontWeight = FontWeight.Bold) }
+        },
+        dismissButton = {
+          TextButton(onClick = { editingProductId = null }) {
+            Text("Cancel", color = BharatTextSecondary)
+          }
+        }
+      )
+    }
+  }
+}
+
+// Round 4a/4b polish: friendlier "Under Review" surface for non-approved vendors.
+// Shows shop identity, the exact status, a 3-step timeline of what happens next,
+// and quick actions (WhatsApp support + manual status refresh + sign out).
+@Composable
+private fun VendorStatusPendingContent(
+  shop: Shop,
+  paddingValues: PaddingValues,
+  onSupportClick: () -> Unit,
+  onRefreshStatus: () -> Unit,
+  onLogout: () -> Unit
+) {
+  val (titleText, subtitleText, accentColor) = when (shop.status) {
+    VendorStatus.PENDING -> Triple(
+      "Your Shop is Under Review",
+      "The BreakQ team is verifying your shop details. This usually takes 24-48 hours.",
+      BharatPurplePrimary
+    )
+    VendorStatus.REJECTED -> Triple(
+      "Application Not Approved",
+      "We couldn't approve your shop this time. Please reach out to support — we're happy to help you re-apply.",
+      Color(0xFFDC2626)
+    )
+    VendorStatus.SUSPENDED -> Triple(
+      "Shop Temporarily Suspended",
+      "Your shop access has been paused. Contact support to understand next steps.",
+      Color(0xFFF59E0B)
+    )
+    else -> Triple(
+      "Checking Status…",
+      "Please wait while we fetch your latest shop status.",
+      BharatTextSecondary
+    )
+  }
+
+  Box(
+    modifier = Modifier
+      .fillMaxSize()
+      .background(Color(0xFFF9FAFB))
+      .padding(paddingValues)
+  ) {
+    Column(
+      modifier = Modifier
+        .fillMaxSize()
+        .padding(horizontal = 20.dp, vertical = 24.dp),
+      horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+      // Big status icon
+      Box(
+        modifier = Modifier
+          .size(96.dp)
+          .clip(CircleShape)
+          .background(accentColor.copy(alpha = 0.12f)),
+        contentAlignment = Alignment.Center
+      ) {
+        Icon(
+          imageVector = when (shop.status) {
+            VendorStatus.PENDING -> Icons.Default.PendingActions
+            VendorStatus.REJECTED -> Icons.Default.Cancel
+            VendorStatus.SUSPENDED -> Icons.Default.Warning
+            else -> Icons.Default.Refresh
+          },
+          contentDescription = null,
+          tint = accentColor,
+          modifier = Modifier.size(48.dp)
+        )
+      }
+
+      Spacer(Modifier.height(20.dp))
+
+      Text(
+        text = titleText,
+        style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold),
+        color = BharatTextPrimary,
+        textAlign = TextAlign.Center
+      )
+
+      Spacer(Modifier.height(8.dp))
+
+      Text(
+        text = subtitleText,
+        style = MaterialTheme.typography.bodyMedium,
+        color = BharatTextSecondary,
+        textAlign = TextAlign.Center
+      )
+
+      Spacer(Modifier.height(24.dp))
+
+      // Shop summary card
+      Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.White),
+        border = BorderStroke(1.dp, Color(0xFFE5E7EB))
+      ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+          Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Default.Store, contentDescription = null, tint = BharatPurplePrimary, modifier = Modifier.size(20.dp))
+            Spacer(Modifier.width(8.dp))
+            Text(shop.name, fontWeight = FontWeight.Bold, color = BharatTextPrimary, fontSize = 16.sp)
+          }
+          Spacer(Modifier.height(6.dp))
+          Text("Owner: ${shop.ownerName}", fontSize = 13.sp, color = BharatTextSecondary)
+          Text("Phone: ${shop.phone}", fontSize = 13.sp, color = BharatTextSecondary)
+          if (shop.address.isNotBlank()) {
+            Text("Address: ${shop.address}", fontSize = 13.sp, color = BharatTextSecondary)
+          }
+        }
+      }
+
+      Spacer(Modifier.height(20.dp))
+
+      // What happens next — only meaningful for PENDING
+      if (shop.status == VendorStatus.PENDING) {
+        Card(
+          modifier = Modifier.fillMaxWidth(),
+          shape = RoundedCornerShape(16.dp),
+          colors = CardDefaults.cardColors(containerColor = Color.White),
+          border = BorderStroke(1.dp, Color(0xFFE5E7EB))
+        ) {
+          Column(modifier = Modifier.padding(16.dp)) {
+            Text("What happens next?", fontWeight = FontWeight.Bold, color = BharatTextPrimary, fontSize = 14.sp)
+            Spacer(Modifier.height(12.dp))
+            PendingStep(1, "Team reviews your details", "We check your shop info, location and contact number.", completed = true)
+            PendingStep(2, "Verification call", "Someone from BreakQ may call you on the number you gave us.", completed = false)
+            PendingStep(3, "You're live!", "Once approved, this screen turns into your Store Hub.", completed = false)
+          }
+        }
+        Spacer(Modifier.height(20.dp))
+      }
+
+      // Quick actions
+      Button(
+        onClick = onSupportClick,
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF25D366))
+      ) {
+        Icon(Icons.Default.Chat, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
+        Spacer(Modifier.width(8.dp))
+        Text("Chat with Support on WhatsApp", color = Color.White, fontWeight = FontWeight.Bold)
+      }
+
+      Spacer(Modifier.height(8.dp))
+
+      OutlinedButton(
+        onClick = onRefreshStatus,
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+        border = BorderStroke(1.dp, BharatPurplePrimary)
+      ) {
+        Icon(Icons.Default.Refresh, contentDescription = null, tint = BharatPurplePrimary, modifier = Modifier.size(18.dp))
+        Spacer(Modifier.width(8.dp))
+        Text("Check status again", color = BharatPurplePrimary, fontWeight = FontWeight.Bold)
+      }
+
+      Spacer(Modifier.height(8.dp))
+
+      TextButton(onClick = onLogout, modifier = Modifier.fillMaxWidth()) {
+        Text("Sign Out", color = BharatTextSecondary)
+      }
+    }
+  }
+}
+
+@Composable
+private fun PendingStep(number: Int, title: String, subtitle: String, completed: Boolean) {
+  Row(
+    modifier = Modifier.padding(vertical = 6.dp),
+    verticalAlignment = Alignment.Top
+  ) {
+    Box(
+      modifier = Modifier
+        .size(28.dp)
+        .clip(CircleShape)
+        .background(if (completed) BharatGreen.copy(alpha = 0.15f) else Color(0xFFF1F5F9)),
+      contentAlignment = Alignment.Center
+    ) {
+      if (completed) {
+        Icon(Icons.Default.Check, contentDescription = null, tint = BharatGreen, modifier = Modifier.size(16.dp))
+      } else {
+        Text("$number", fontWeight = FontWeight.Bold, fontSize = 13.sp, color = BharatTextSecondary)
+      }
+    }
+    Spacer(Modifier.width(12.dp))
+    Column(modifier = Modifier.weight(1f)) {
+      Text(title, fontWeight = FontWeight.SemiBold, color = BharatTextPrimary, fontSize = 13.sp)
+      Text(subtitle, fontSize = 12.sp, color = BharatTextSecondary)
+    }
   }
 }
 

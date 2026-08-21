@@ -148,7 +148,7 @@ fun SignupSplashScreen(
           ) {
             Icon(
               imageVector = if (isAdmin) Icons.Default.AdminPanelSettings else Icons.Default.Storefront,
-              contentDescription = "Bharat Kirana",
+              contentDescription = "BreakQ",
               tint = if (isAdmin) BharatPurpleDark else BharatPurplePrimary,
               modifier = Modifier.size(52.dp)
             )

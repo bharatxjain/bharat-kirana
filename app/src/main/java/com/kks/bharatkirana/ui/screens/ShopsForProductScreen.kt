@@ -39,14 +39,16 @@ fun ShopsForProductScreen(
 ) {
   // For each shop, find its first matching product row (case-insensitive name match).
   // We only surface shops that actually stock the item and have it in-stock.
-  val matches: List<Pair<Shop, Product>> = shops.mapNotNull { shop ->
-    val prod = products.firstOrNull {
-      it.shopId == shop.id &&
-        it.inStock &&
-        it.name.equals(productName, ignoreCase = true)
-    }
-    if (prod != null) shop to prod else null
-  }.sortedBy { it.first.distance.substringBefore(" ").toDoubleOrNull() ?: 99.0 }
+  val matches: List<Pair<Shop, Product>> = shops
+    .filter { it.status == com.kks.bharatkirana.data.model.VendorStatus.APPROVED }
+    .mapNotNull { shop ->
+      val prod = products.firstOrNull {
+        it.shopId == shop.id &&
+          it.inStock &&
+          it.name.equals(productName, ignoreCase = true)
+      }
+      if (prod != null) shop to prod else null
+    }.sortedBy { it.first.distance.substringBefore(" ").toDoubleOrNull() ?: Double.MAX_VALUE }
 
   Scaffold(
     topBar = {

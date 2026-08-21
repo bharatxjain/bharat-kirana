@@ -14,37 +14,64 @@ import com.kks.bharatkirana.R
 
 class MyFirebaseMessagingService : FirebaseMessagingService() {
 
+    companion object {
+        const val CHANNEL_ID = "bharat_kirana_orders"
+        const val CHANNEL_NAME = "Order Updates"
+        const val EXTRA_ORDER_ID = "notification_order_id"
+        const val EXTRA_FROM_PUSH = "from_push_notification"
+
+        // Idempotent — safe to call at every app start.
+        fun ensureChannel(context: Context) {
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+            val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            if (manager.getNotificationChannel(CHANNEL_ID) != null) return
+            val channel = NotificationChannel(
+                CHANNEL_ID,
+                CHANNEL_NAME,
+                NotificationManager.IMPORTANCE_HIGH
+            ).apply {
+                description = "Order status updates from BreakQ"
+            }
+            manager.createNotificationChannel(channel)
+        }
+    }
+
     override fun onMessageReceived(remoteMessage: RemoteMessage) {
         super.onMessageReceived(remoteMessage)
 
-        remoteMessage.notification?.let {
-            showNotification(it.title ?: "Bharat Kirana", it.body ?: "")
-        } ?: run {
-            // Handle data payload if notification is null
-            val title = remoteMessage.data["title"] ?: "Bharat Kirana"
-            val body = remoteMessage.data["body"] ?: ""
-            showNotification(title, body)
-        }
+        val data = remoteMessage.data
+        val orderId = data["order_id"] // Edge Function includes this in data payload.
+
+        val title = remoteMessage.notification?.title ?: data["title"] ?: "BreakQ"
+        val body = remoteMessage.notification?.body ?: data["body"] ?: ""
+
+        showNotification(title, body, orderId)
     }
 
     override fun onNewToken(token: String) {
         super.onNewToken(token)
-        // Token will be sent to Supabase during user login/session refresh
+        // Persist locally; ViewModel picks it up on next app open / login and
+        // PATCHes profiles.fcm_token via syncFcmTokenToServer().
         saveTokenLocally(token)
     }
 
-    private fun showNotification(title: String, message: String) {
+    private fun showNotification(title: String, message: String, orderId: String?) {
+        ensureChannel(this)
+
         val intent = Intent(this, MainActivity::class.java).apply {
-            addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            putExtra(EXTRA_FROM_PUSH, true)
+            if (!orderId.isNullOrBlank()) putExtra(EXTRA_ORDER_ID, orderId)
         }
         val pendingIntent = PendingIntent.getActivity(
-            this, 0, intent,
-            PendingIntent.FLAG_ONE_SHOT or PendingIntent.FLAG_IMMUTABLE
+            this,
+            (orderId ?: title).hashCode(),
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        val channelId = "bharat_kirana_orders"
-        val notificationBuilder = NotificationCompat.Builder(this, channelId)
-            .setSmallIcon(R.drawable.ic_launcher_foreground) // Use appropriate icon
+        val notificationBuilder = NotificationCompat.Builder(this, CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_launcher_foreground)
             .setContentTitle(title)
             .setContentText(message)
             .setAutoCancel(true)
@@ -52,16 +79,6 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
             .setContentIntent(pendingIntent)
 
         val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(
-                channelId,
-                "Order Updates",
-                NotificationManager.IMPORTANCE_HIGH
-            )
-            notificationManager.createNotificationChannel(channel)
-        }
-
         notificationManager.notify(System.currentTimeMillis().toInt(), notificationBuilder.build())
     }
 
@@ -70,3 +87,4 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
         prefs.edit().putString("fcm_token", token).apply()
     }
 }
+

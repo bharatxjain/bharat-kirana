@@ -8,6 +8,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.ui.Modifier
+import com.kks.bharatkirana.service.MyFirebaseMessagingService
 import com.kks.bharatkirana.ui.screens.MainScreen
 import com.kks.bharatkirana.ui.theme.BharatKiranaTheme
 import com.kks.bharatkirana.ui.viewmodel.GroceryViewModel
@@ -19,10 +20,17 @@ class MainActivity : ComponentActivity() {
     super.onCreate(savedInstanceState)
     enableEdgeToEdge()
 
+    // Round 4b: register the FCM channel up-front so the very first push renders
+    // correctly on Android 8+ even if MyFirebaseMessagingService hasn't run yet.
+    MyFirebaseMessagingService.ensureChannel(this)
+
     // Handle deep link from Supabase Magic Link
     intent?.data?.let { uri ->
       handleDeepLink(uri)
     }
+
+    // Round 4b: user tapped an FCM push — route them to the right screen.
+    handlePushIntent(intent)
 
     setContent {
       BharatKiranaTheme {
@@ -41,6 +49,7 @@ class MainActivity : ComponentActivity() {
     intent.data?.let { uri ->
       handleDeepLink(uri)
     }
+    handlePushIntent(intent)
   }
 
   private fun handleDeepLink(uri: android.net.Uri) {
@@ -58,4 +67,15 @@ class MainActivity : ComponentActivity() {
       }
     }
   }
+
+  private fun handlePushIntent(intent: Intent?) {
+    if (intent == null) return
+    if (!intent.getBooleanExtra(MyFirebaseMessagingService.EXTRA_FROM_PUSH, false)) return
+    val orderId = intent.getStringExtra(MyFirebaseMessagingService.EXTRA_ORDER_ID)
+    viewModel.handleNotificationTap(orderId)
+    // Consume the extra so orientation changes don't re-trigger it.
+    intent.removeExtra(MyFirebaseMessagingService.EXTRA_FROM_PUSH)
+    intent.removeExtra(MyFirebaseMessagingService.EXTRA_ORDER_ID)
+  }
 }
+

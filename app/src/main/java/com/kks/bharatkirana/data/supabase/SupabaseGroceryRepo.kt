@@ -8,9 +8,11 @@ import com.kks.bharatkirana.data.model.OrderTimelineItem
 import com.kks.bharatkirana.data.model.Product
 import com.kks.bharatkirana.data.model.PromoCode
 import com.kks.bharatkirana.data.model.Shop
+import com.kks.bharatkirana.data.model.SubscriptionTier
 import com.kks.bharatkirana.data.model.UserProfile
 import com.kks.bharatkirana.data.model.UserRole
 import com.kks.bharatkirana.data.model.VendorStatus
+import com.kks.bharatkirana.data.model.VendorSubscription
 import com.kks.bharatkirana.data.model.WeightOption
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -162,6 +164,24 @@ class SupabaseGroceryRepo(
         val response = client.newCall(request).execute()
         if (!response.isSuccessful) {
           throw Exception("Failed to update price: HTTP ${response.code}")
+        }
+      }
+    }
+
+  // Round 4b: targeted PATCH of just profiles.fcm_token — cheaper and safer than
+  // re-writing the whole profile row via syncProfile whenever the FCM token rotates.
+  suspend fun updateFcmToken(userId: String, token: String, accessToken: String? = null): Result<Unit> =
+    withContext(Dispatchers.IO) {
+      runCatching {
+        val url = "${SupabaseConfig.restUrl}/profiles?id=eq.$userId"
+        val payload = JSONObject().apply { put("fcm_token", token) }
+        val request = baseRequestBuilder(url, accessToken)
+          .addHeader("Prefer", "return=minimal")
+          .patch(payload.toString().toRequestBody(jsonMediaType))
+          .build()
+        val response = client.newCall(request).execute()
+        if (!response.isSuccessful) {
+          throw Exception("Failed to update FCM token: HTTP ${response.code}")
         }
       }
     }
@@ -704,7 +724,10 @@ class SupabaseGroceryRepo(
         if (!response.isSuccessful) throw Exception("Failed to look up barcode: HTTP ${response.code}")
 
         val array = JSONArray(body)
-        if (array.length() == 0) return@runCatching null
+        if (array.length() == 0) {
+          // Round 5: fallback to OpenFoodFacts (free, 3.4M SKUs, no key needed).
+          return@runCatching lookupOnOpenFoodFacts(clean)
+        }
 
         val obj = array.getJSONObject(0)
         val imageUrls = mutableListOf<String>()
@@ -741,6 +764,114 @@ class SupabaseGroceryRepo(
           imageUrls = imageUrls,
           weightOptions = weightOptions,
           barcode = obj.optString("barcode", "")
+        )
+      }
+    }
+
+  // Round 5: free OpenFoodFacts API — no key, no signup, User-Agent required by ToS.
+  // Returns a partial Product template (no shopId/price/stock — vendor fills those).
+  private fun lookupOnOpenFoodFacts(barcode: String): Product? {
+    val url = "https://world.openfoodfacts.org/api/v2/product/$barcode.json?fields=code,product_name,brands,image_url,image_front_url,quantity,categories_tags,generic_name"
+    val request = Request.Builder()
+      .url(url)
+      .addHeader("User-Agent", "BreakQ-Android/1.1 (support@breakq.app)")
+      .get()
+      .build()
+    val response = client.newCall(request).execute()
+    if (!response.isSuccessful) return null
+    val body = response.body?.string() ?: return null
+    val root = JSONObject(body)
+    if (root.optInt("status", 0) != 1) return null
+
+    val p = root.optJSONObject("product") ?: return null
+    val name = p.optString("product_name").ifBlank { p.optString("generic_name") }
+    if (name.isBlank()) return null
+
+    val image = p.optString("image_front_url").ifBlank { p.optString("image_url") }
+    val brand = p.optString("brands").split(",").firstOrNull()?.trim().orEmpty()
+    val unit = p.optString("quantity").ifBlank { "1 unit" }
+
+    // Categories arrive as ["en:noodles", "en:instant-noodles"] — take the last
+    // (most specific) for future auto-mapping to our category tree.
+    val catsTag = p.optJSONArray("categories_tags")
+      ?.let { arr -> if (arr.length() > 0) arr.optString(arr.length() - 1) else null }
+      ?.substringAfter(":")
+      ?.replace("-", " ")
+      ?.replaceFirstChar { it.uppercase() }
+      .orEmpty()
+
+    return Product(
+      id = "",
+      name = name.trim(),
+      brand = brand,
+      categoryId = catsTag,
+      currentPrice = 0,
+      originalPrice = 0,
+      unit = unit,
+      description = "",
+      imageUrl = image,
+      imageUrls = if (image.isNotBlank()) listOf(image) else emptyList(),
+      weightOptions = emptyList(),
+      barcode = barcode
+    )
+  }
+
+  // Round 5: subscription catalog. Public read, so no token needed.
+  suspend fun fetchSubscriptionTiers(): Result<List<SubscriptionTier>> =
+    withContext(Dispatchers.IO) {
+      runCatching {
+        val url = "${SupabaseConfig.restUrl}/subscription_tiers?is_active=eq.true&select=*&order=price_rupees.asc"
+        val request = baseRequestBuilder(url).get().build()
+        val response = client.newCall(request).execute()
+        val body = response.body?.string() ?: ""
+        if (!response.isSuccessful) throw Exception("Failed to fetch tiers: HTTP ${response.code}")
+        val array = JSONArray(body)
+        val list = mutableListOf<SubscriptionTier>()
+        for (i in 0 until array.length()) {
+          val o = array.getJSONObject(i)
+          val featuresArr = o.optJSONArray("features")
+          val features = mutableListOf<String>()
+          if (featuresArr != null) {
+            for (j in 0 until featuresArr.length()) features.add(featuresArr.optString(j))
+          }
+          list.add(
+            SubscriptionTier(
+              id = o.optString("id"),
+              displayName = o.optString("display_name"),
+              priceRupees = o.optInt("price_rupees", 0),
+              itemCap = o.optInt("item_cap", 10),
+              priorityRank = o.optInt("priority_rank", 0),
+              canPromote = o.optBoolean("can_promote", false),
+              promoteDailyCapRupees = o.optInt("promote_daily_cap_rupees", 0),
+              commissionPercent = o.optDouble("commission_percent", 0.0),
+              features = features
+            )
+          )
+        }
+        list
+      }
+    }
+
+  suspend fun fetchVendorSubscription(shopId: String, accessToken: String? = null): Result<VendorSubscription?> =
+    withContext(Dispatchers.IO) {
+      runCatching {
+        val url = "${SupabaseConfig.restUrl}/vendor_subscriptions?shop_id=eq.$shopId&status=eq.active&select=*&limit=1"
+        val request = baseRequestBuilder(url, accessToken).get().build()
+        val response = client.newCall(request).execute()
+        val body = response.body?.string() ?: ""
+        if (!response.isSuccessful) throw Exception("Failed to fetch subscription: HTTP ${response.code}")
+        val array = JSONArray(body)
+        if (array.length() == 0) return@runCatching null
+        val o = array.getJSONObject(0)
+        VendorSubscription(
+          id = o.optString("id"),
+          shopId = o.optString("shop_id"),
+          tierId = o.optString("tier_id"),
+          status = o.optString("status"),
+          startedAt = o.optString("started_at"),
+          expiresAt = if (o.isNull("expires_at")) null else o.optString("expires_at"),
+          amountPaidRupees = o.optInt("amount_paid_rupees", 0),
+          commissionLockedAtPercent = o.optDouble("commission_locked_at_percent", 0.0)
         )
       }
     }

@@ -160,10 +160,28 @@ class GroceryViewModel(
   private val _promoStatusMessage = MutableStateFlow<String?>(null)
   val promoStatusMessage: StateFlow<String?> = _promoStatusMessage.asStateFlow()
 
+  // Round 5: subscription tier catalog + this vendor's active subscription.
+  private val _subscriptionTiers = MutableStateFlow<List<SubscriptionTier>>(emptyList())
+  val subscriptionTiers: StateFlow<List<SubscriptionTier>> = _subscriptionTiers.asStateFlow()
+
+  private val _vendorSubscription = MutableStateFlow<VendorSubscription?>(null)
+  val vendorSubscription: StateFlow<VendorSubscription?> = _vendorSubscription.asStateFlow()
+
+  // Set to a non-null message when the vendor tries to add a product beyond their
+  // tier's item cap. Screens observe this to show an "Upgrade Plan" dialog.
+  private val _tierCapMessage = MutableStateFlow<String?>(null)
+  val tierCapMessage: StateFlow<String?> = _tierCapMessage.asStateFlow()
+
   // Round 3.5: role picked during signup (before profile is completed).
   // Set from AuthScreen → read after CompleteProfile to decide next screen.
   private val _pendingSignupRole = MutableStateFlow<UserRole?>(null)
   val pendingSignupRole: StateFlow<UserRole?> = _pendingSignupRole.asStateFlow()
+
+  // Signup captures name + mobile now (single page). We stash them here so that
+  // after email OTP verification, the profile can be filled in one shot and the
+  // separate CompleteProfile screen is skipped.
+  private val _pendingSignupName = MutableStateFlow<String?>(null)
+  private val _pendingSignupMobile = MutableStateFlow<String?>(null)
 
   fun setPendingSignupRole(role: UserRole) {
     _pendingSignupRole.value = role
@@ -293,14 +311,43 @@ class GroceryViewModel(
   private fun fetchFcmToken() {
     FirebaseMessaging.getInstance().token.addOnCompleteListener { task ->
       if (task.isSuccessful) {
-        val token = task.result
+        val token = task.result ?: return@addOnCompleteListener
         _userProfile.update { it.copy(fcmToken = token) }
-        // If logged in, sync to Supabase
-        if (_userProfile.value.email.isNotBlank()) {
-          updateProfile(_userProfile.value.fullName, _userProfile.value.email, _userProfile.value.mobileNumber, _userProfile.value.address)
-        }
+        // If already logged in when init runs (rare — happens on cold app start with
+        // a saved session), push it to Supabase via a targeted PATCH.
+        syncFcmTokenToServer(token)
       }
     }
+  }
+
+  // Round 4b: called after login and whenever we want to guarantee the current
+  // FCM token is on file server-side so the Edge Function can push to this device.
+  fun syncFcmTokenToServer(explicitToken: String? = null) {
+    val userId = supabaseAuthService.currentUserId ?: return
+    val accessToken = supabaseAuthService.currentAccessToken
+    if (explicitToken != null) {
+      viewModelScope.launch {
+        supabaseGroceryRepo.updateFcmToken(userId, explicitToken, accessToken)
+      }
+      return
+    }
+    FirebaseMessaging.getInstance().token.addOnCompleteListener { task ->
+      if (!task.isSuccessful) return@addOnCompleteListener
+      val token = task.result ?: return@addOnCompleteListener
+      _userProfile.update { it.copy(fcmToken = token) }
+      viewModelScope.launch {
+        supabaseGroceryRepo.updateFcmToken(userId, token, accessToken)
+      }
+    }
+  }
+
+  // Round 4b: when the user taps a push notification, MainActivity routes here.
+  // If we have an orderId, drop them straight on the OrderDetails screen; otherwise
+  // fall back to Main so they at least land somewhere useful.
+  fun handleNotificationTap(orderId: String?) {
+    if (_userProfile.value.email.isBlank()) return
+    val screen = if (!orderId.isNullOrBlank()) AppScreen.OrderDetails(orderId) else AppScreen.Main
+    navigateTo(screen)
   }
 
   private fun loadSavedSession() {
@@ -341,9 +388,12 @@ class GroceryViewModel(
 
   private fun updateShopDistances(userLoc: Location) {
     val updatedShops = _shops.value.map { shop ->
+      // Skip shops that never captured lat/lng during registration — otherwise we'd
+      // compute a bogus ~7000 km distance from user → (0,0) and hide them from customers.
+      if (shop.lat == 0.0 && shop.lng == 0.0) return@map shop
       val distanceKm = calculateDistance(userLoc.latitude, userLoc.longitude, shop.lat, shop.lng)
       shop.copy(distance = String.format("%.1f km", distanceKm))
-    }.sortedBy { it.distance.substringBefore(" ").toDoubleOrNull() ?: 99.0 }
+    }.sortedBy { it.distance.substringBefore(" ").toDoubleOrNull() ?: Double.MAX_VALUE }
     
     _shops.value = updatedShops
   }
@@ -677,6 +727,8 @@ class GroceryViewModel(
     onResult: (Boolean, String) -> Unit
   ) {
     val cleanEmail = email.trim().lowercase()
+    _pendingSignupName.value = name.trim()
+    _pendingSignupMobile.value = mobile.trim()
     _isAuthLoading.value = true
     _authStatusMessage.value = "Creating account..."
 
@@ -829,7 +881,15 @@ class GroceryViewModel(
         .onSuccess { session ->
           _isAuthLoading.value = false
           _authStatusMessage.value = "Successfully authenticated!"
-          login(cleanEmail, authPath = AuthPath.EMAIL)
+          val pendingName = _pendingSignupName.value.orEmpty()
+          val pendingMobile = _pendingSignupMobile.value.orEmpty()
+          login(cleanEmail, pendingName, pendingMobile, authPath = AuthPath.EMAIL)
+          if (pendingName.isNotBlank()) {
+            // Persist name + mobile now so the CompleteProfile screen can be skipped.
+            updateProfile(pendingName, cleanEmail, pendingMobile, "")
+          }
+          _pendingSignupName.value = null
+          _pendingSignupMobile.value = null
           loadSupabaseData()
           onResult(true, "Authentication successful")
         }
@@ -927,6 +987,15 @@ class GroceryViewModel(
             }
           }
       }
+
+      // Round 4b: push the current FCM token to profiles.fcm_token so the Edge
+      // Function can target this device with order-status pushes.
+      syncFcmTokenToServer()
+
+      // Round 5: preload tier catalog + this vendor's active subscription so the
+      // Overview screen can show tier badge and enforce item cap without a spinner.
+      loadSubscriptionTiers()
+      loadVendorSubscription()
 
       // Load orders using the (possibly updated) admin flag
       val effectiveIsAdmin = _userProfile.value.isAdmin
@@ -1083,6 +1152,67 @@ class GroceryViewModel(
     } catch (_: Exception) { }
   }
 
+  // Round 5: subscription helpers -------------------------------------------
+
+  fun loadSubscriptionTiers() {
+    viewModelScope.launch {
+      supabaseGroceryRepo.fetchSubscriptionTiers().onSuccess { tiers ->
+        _subscriptionTiers.value = tiers
+      }
+    }
+  }
+
+  fun loadVendorSubscription() {
+    val shopId = _userProfile.value.shopId ?: return
+    viewModelScope.launch {
+      supabaseGroceryRepo.fetchVendorSubscription(shopId, supabaseAuthService.currentAccessToken)
+        .onSuccess { sub -> _vendorSubscription.value = sub }
+    }
+  }
+
+  // Convenience — the tier this vendor is currently on (nullable if not a vendor
+  // or tiers haven't loaded yet).
+  fun currentTier(): SubscriptionTier? {
+    val tierId = _vendorSubscription.value?.tierId ?: return null
+    return _subscriptionTiers.value.firstOrNull { it.id == tierId }
+  }
+
+  // Returns true if the vendor can add one more product. Used by AddProductScreen
+  // to gate submission and by VendorDashboard to show a badge.
+  fun canAddMoreProducts(): Boolean {
+    val cap = currentTier()?.itemCap ?: 10
+    if (cap == -1) return true
+    val shopId = _userProfile.value.shopId ?: return true
+    val current = _products.value.count { it.shopId == shopId }
+    return current < cap
+  }
+
+  // Opens WhatsApp with a pre-filled upgrade request. We handle the payment flow
+  // manually (Razorpay comes in a later round), then admin flips the tier via SQL.
+  fun requestPlanUpgrade(targetTierId: String) {
+    val digits = _supportWhatsappNumber.value.replace(Regex("[^0-9]"), "")
+    if (digits.isBlank()) return
+    val shop = _shops.value.firstOrNull { it.id == _userProfile.value.shopId }
+    val currentTierName = currentTier()?.displayName ?: "Free"
+    val targetTierName = _subscriptionTiers.value.firstOrNull { it.id == targetTierId }?.displayName ?: targetTierId
+    val msg = Uri.encode(
+      "Hi, I want to upgrade my BreakQ plan.\n" +
+        "Shop: ${shop?.name.orEmpty()}\n" +
+        "Owner: ${_userProfile.value.fullName}\n" +
+        "Current plan: $currentTierName\n" +
+        "Upgrade to: $targetTierName\n" +
+        "Please share payment details."
+    )
+    val uri = Uri.parse("https://wa.me/$digits?text=$msg")
+    val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, uri).apply {
+      addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+    }
+    try { getApplication<Application>().startActivity(intent) } catch (_: Exception) { }
+  }
+
+  fun showTierCapMessage(msg: String) { _tierCapMessage.value = msg }
+  fun clearTierCapMessage() { _tierCapMessage.value = null }
+
   // Backwards compatibility overload
   fun updateProfile(fullName: String, mobileNumber: String, address: String) {
     _userProfile.update {
@@ -1203,6 +1333,12 @@ class GroceryViewModel(
   }
 
   fun addProduct(product: Product) {
+    if (!canAddMoreProducts()) {
+      val cap = currentTier()?.itemCap ?: 10
+      val tierName = currentTier()?.displayName ?: "Free"
+      _tierCapMessage.value = "You've reached your $tierName plan limit of $cap products. Upgrade to add more."
+      return
+    }
     _products.update { listOf(product) + it }
     viewModelScope.launch {
       supabaseGroceryRepo.addProduct(product, supabaseAuthService.currentAccessToken)
@@ -1220,6 +1356,12 @@ class GroceryViewModel(
     imageUris: List<Uri>,
     barcode: String = ""
   ) {
+    if (!canAddMoreProducts()) {
+      val cap = currentTier()?.itemCap ?: 10
+      val tierName = currentTier()?.displayName ?: "Free"
+      _tierCapMessage.value = "You've reached your $tierName plan limit of $cap products. Upgrade to add more."
+      return
+    }
     val productId = "p_${System.currentTimeMillis()}"
     val shopId = _userProfile.value.shopId ?: "s_bharat_kirana"
     
