@@ -1,9 +1,7 @@
 package com.kks.bharatkirana.data
 
-import com.google.firebase.ktx.Firebase
 import com.google.firebase.remoteconfig.FirebaseRemoteConfig
-import com.google.firebase.remoteconfig.ktx.remoteConfig
-import com.google.firebase.remoteconfig.ktx.remoteConfigSettings
+import com.google.firebase.remoteconfig.FirebaseRemoteConfigSettings
 
 /**
  * Thin wrapper around Firebase Remote Config with typed getters for our known keys.
@@ -26,12 +24,11 @@ object BharatRemoteConfig {
   }
 
   private val rc: FirebaseRemoteConfig by lazy {
-    Firebase.remoteConfig.apply {
-      setConfigSettingsAsync(
-        remoteConfigSettings {
-          minimumFetchIntervalInSeconds = 3600 // 1 hour cache in production
-        }
-      )
+    FirebaseRemoteConfig.getInstance().apply {
+      val settings = FirebaseRemoteConfigSettings.Builder()
+        .setMinimumFetchIntervalInSeconds(3600) // 1 hour cache in production
+        .build()
+      setConfigSettingsAsync(settings)
       setDefaultsAsync(
         mapOf(
           Keys.MIN_ORDER_FREE_HANDLING to 200L,
