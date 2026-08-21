@@ -26,6 +26,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.AdminPanelSettings
 import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Email
 import androidx.compose.material.icons.filled.Info
@@ -111,7 +112,7 @@ fun ProfileScreen(
   onSupportClick: () -> Unit = {},
   modifier: Modifier = Modifier
 ) {
-  var showEditDialog by remember { mutableStateOf(false) }
+  var editingProfile by remember { mutableStateOf(false) }
   var showQrDialog by remember { mutableStateOf(false) }
   var showLogoutConfirmDialog by remember { mutableStateOf(false) }
   var showDeleteConfirmDialog by remember { mutableStateOf(false) }
@@ -153,7 +154,7 @@ fun ProfileScreen(
             )
             Spacer(modifier = Modifier.width(8.dp))
             Text(
-              text = "Bharat Kirana",
+              text = "BreakQ",
               style = MaterialTheme.typography.titleLarge.copy(
                 fontWeight = FontWeight.Bold,
                 fontSize = 19.sp
@@ -317,22 +318,132 @@ fun ProfileScreen(
                 )
               }
 
-              IconButton(
+              // Kept only for accessibility / muscle memory — the real prominent
+              // Edit button lives right below the profile row.
+              if (editingProfile) {
+                IconButton(
+                  onClick = {
+                    editName = userProfile.fullName
+                    editEmail = userProfile.email
+                    editMobile = userProfile.mobileNumber
+                    editAddress = userProfile.address
+                    editingProfile = false
+                  },
+                  modifier = Modifier.testTag("edit_profile_button")
+                ) {
+                  Icon(
+                    imageVector = Icons.Default.Close,
+                    contentDescription = "Cancel edit",
+                    tint = BharatTextSecondary,
+                    modifier = Modifier.size(20.dp)
+                  )
+                }
+              }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Round 4a v2: prominent, obviously-tappable Edit Profile button.
+            // Replaces the tiny 20dp pencil icon nobody noticed.
+            if (!editingProfile) {
+              Button(
                 onClick = {
                   editName = userProfile.fullName
                   editEmail = userProfile.email
                   editMobile = userProfile.mobileNumber
                   editAddress = userProfile.address
-                  showEditDialog = true
+                  editingProfile = true
                 },
-                modifier = Modifier.testTag("edit_profile_button")
+                modifier = Modifier
+                  .fillMaxWidth()
+                  .testTag("edit_profile_button"),
+                shape = RoundedCornerShape(12.dp),
+                colors = ButtonDefaults.buttonColors(
+                  containerColor = BharatPurpleContainer,
+                  contentColor = BharatPurplePrimary
+                ),
+                elevation = ButtonDefaults.buttonElevation(defaultElevation = 0.dp)
               ) {
-                Icon(
-                  imageVector = Icons.Default.Edit,
-                  contentDescription = "Edit Profile",
-                  tint = BharatPurplePrimary,
-                  modifier = Modifier.size(20.dp)
+                Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                  text = "Edit Profile",
+                  fontWeight = FontWeight.Bold,
+                  fontSize = 14.sp
                 )
+              }
+            }
+
+            // Inline edit form (Round 4a): appears directly under the avatar/name row
+            // when user taps the Edit icon. No modal dialog anymore.
+            if (editingProfile) {
+              Spacer(modifier = Modifier.height(14.dp))
+              HorizontalDivider(color = Color(0xFFF1F5F9))
+              Spacer(modifier = Modifier.height(14.dp))
+              Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                OutlinedTextField(
+                  value = editName,
+                  onValueChange = { editName = it },
+                  label = { Text("Full Name") },
+                  singleLine = true,
+                  modifier = Modifier.fillMaxWidth(),
+                  colors = OutlinedTextFieldDefaults.colors(
+                    focusedTextColor = BharatTextPrimary,
+                    unfocusedTextColor = BharatTextPrimary,
+                    focusedBorderColor = BharatPurplePrimary
+                  )
+                )
+                OutlinedTextField(
+                  value = editAddress,
+                  onValueChange = { editAddress = it },
+                  label = { Text("Delivery / Pickup Address") },
+                  minLines = 2,
+                  modifier = Modifier.fillMaxWidth(),
+                  colors = OutlinedTextFieldDefaults.colors(
+                    focusedTextColor = BharatTextPrimary,
+                    unfocusedTextColor = BharatTextPrimary,
+                    focusedBorderColor = BharatPurplePrimary
+                  )
+                )
+                Row(
+                  modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                  verticalAlignment = Alignment.CenterVertically
+                ) {
+                  Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                    Icon(Icons.Default.Lock, contentDescription = null, tint = BharatTextMuted, modifier = Modifier.size(12.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                      text = "Email and mobile are locked (login identity).",
+                      fontSize = 10.sp,
+                      color = BharatTextMuted
+                    )
+                  }
+                }
+                Row(
+                  modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
+                  horizontalArrangement = Arrangement.End,
+                  verticalAlignment = Alignment.CenterVertically
+                ) {
+                  TextButton(onClick = {
+                    editName = userProfile.fullName
+                    editAddress = userProfile.address
+                    editingProfile = false
+                  }) {
+                    Text("Cancel", color = BharatTextSecondary, fontWeight = FontWeight.SemiBold)
+                  }
+                  Spacer(modifier = Modifier.width(8.dp))
+                  Button(
+                    onClick = {
+                      onUpdateProfile(editName.trim(), userProfile.email, userProfile.mobileNumber, editAddress.trim())
+                      editingProfile = false
+                    },
+                    enabled = editName.isNotBlank() && (editName.trim() != userProfile.fullName || editAddress.trim() != userProfile.address),
+                    colors = ButtonDefaults.buttonColors(containerColor = BharatPurplePrimary),
+                    shape = RoundedCornerShape(10.dp)
+                  ) {
+                    Text("Save Changes", color = Color.White, fontWeight = FontWeight.Bold)
+                  }
+                }
               }
             }
 
@@ -837,81 +948,7 @@ fun ProfileScreen(
     )
   }
 
-  // Edit Profile Dialog
-  if (showEditDialog) {
-    AlertDialog(
-      onDismissRequest = { showEditDialog = false },
-      title = {
-        Text("Edit Profile Details", fontWeight = FontWeight.Bold)
-      },
-      text = {
-        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-          OutlinedTextField(
-            value = editName,
-            onValueChange = { editName = it },
-            label = { Text("Full Name") },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
-            colors = OutlinedTextFieldDefaults.colors(
-              focusedTextColor = BharatTextPrimary,
-              unfocusedTextColor = BharatTextPrimary
-            )
-          )
-          OutlinedTextField(
-            value = editEmail,
-            onValueChange = { editEmail = it },
-            label = { Text("Email Address") },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
-            colors = OutlinedTextFieldDefaults.colors(
-              focusedTextColor = BharatTextPrimary,
-              unfocusedTextColor = BharatTextPrimary
-            )
-          )
-          OutlinedTextField(
-            value = userProfile.mobileNumber,
-            onValueChange = { },
-            label = { Text("Mobile Number (Verified)") },
-            readOnly = true,
-            enabled = false,
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
-            colors = OutlinedTextFieldDefaults.colors(
-              disabledTextColor = BharatTextMuted,
-              disabledBorderColor = Color(0xFFE2E8F0)
-            )
-          )
-          OutlinedTextField(
-            value = editAddress,
-            onValueChange = { editAddress = it },
-            label = { Text("Address") },
-            minLines = 2,
-            modifier = Modifier.fillMaxWidth(),
-            colors = OutlinedTextFieldDefaults.colors(
-              focusedTextColor = BharatTextPrimary,
-              unfocusedTextColor = BharatTextPrimary
-            )
-          )
-        }
-      },
-      confirmButton = {
-        Button(
-          onClick = {
-            onUpdateProfile(editName, editEmail, editMobile, editAddress)
-            showEditDialog = false
-          },
-          colors = ButtonDefaults.buttonColors(containerColor = BharatPurplePrimary)
-        ) {
-          Text("Save Changes")
-        }
-      },
-      dismissButton = {
-        TextButton(onClick = { showEditDialog = false }) {
-          Text("Cancel", color = BharatTextSecondary)
-        }
-      }
-    )
-  }
+  // Edit Profile Dialog — REMOVED (Round 4a): replaced with inline editing under the profile row above.
 
   // Large QR Code Dialog for Counter Pickup
   if (showQrDialog) {

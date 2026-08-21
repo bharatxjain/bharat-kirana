@@ -237,6 +237,7 @@ sealed class AppScreen {
   data object VendorDashboard : AppScreen()
   data object AddProduct : AppScreen()
   data object BarcodeScanner : AppScreen()
+  data object Subscription : AppScreen()
   data class ShopsForProduct(val productName: String) : AppScreen()
   data class ResetPassword(val accessToken: String) : AppScreen()
 }
@@ -255,6 +256,31 @@ sealed class SearchSuggestion {
 
   data class ShopSuggestion(val shop: Shop) : SearchSuggestion()
 }
+
+// Round 5: monetization catalog. Mirrors subscription_tiers table row-for-row.
+data class SubscriptionTier(
+  val id: String,           // "free" | "starter" | "standard" | "pro"
+  val displayName: String,
+  val priceRupees: Int,
+  val itemCap: Int,         // -1 = unlimited
+  val priorityRank: Int,
+  val canPromote: Boolean,
+  val promoteDailyCapRupees: Int,
+  val commissionPercent: Double,
+  val features: List<String>
+)
+
+// Vendor's currently-active subscription row (one per shop).
+data class VendorSubscription(
+  val id: String,
+  val shopId: String,
+  val tierId: String,
+  val status: String,       // "active" | "expired" | "cancelled" | "pending_payment"
+  val startedAt: String,
+  val expiresAt: String?,
+  val amountPaidRupees: Int,
+  val commissionLockedAtPercent: Double
+)
 
 enum class MainTab(val title: String, val testTag: String) {
   HOME("Home", "tab_home"),

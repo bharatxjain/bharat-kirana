@@ -49,8 +49,11 @@ fun NearbyShopsScreen(
 
   // Filter Logic
   val filteredShops = shops.filter { shop ->
-    val distanceValue = shop.distance.substringBefore(" ").toDoubleOrNull() ?: 99.0
-    val matchesDistance = distanceValue <= selectedDistanceKm
+    // Shops with unknown distance ("---" or shops whose vendor never captured
+    // lat/lng) are shown regardless of distance filter — better to include a valid
+    // approved shop with a manual pin than to hide it because we lack coordinates.
+    val distanceValue = shop.distance.substringBefore(" ").toDoubleOrNull()
+    val matchesDistance = distanceValue == null || distanceValue <= selectedDistanceKm
     val matchesSearch = shop.name.contains(searchQuery, ignoreCase = true)
     val matchesFilter = when(selectedFilter) {
       "All Shops" -> true
@@ -60,7 +63,10 @@ fun NearbyShopsScreen(
       "Organic" -> shop.primaryCategory.equals("Produce", ignoreCase = true) || shop.primaryCategory.equals("Organic", ignoreCase = true)
       else -> true
     }
-    matchesDistance && matchesSearch && matchesFilter
+    // Only show approved shops on the customer side — pending/rejected/suspended
+    // must never reach the marketplace listing.
+    val isVisibleStatus = shop.status == com.kks.bharatkirana.data.model.VendorStatus.APPROVED
+    isVisibleStatus && matchesDistance && matchesSearch && matchesFilter
   }
 
   Scaffold(

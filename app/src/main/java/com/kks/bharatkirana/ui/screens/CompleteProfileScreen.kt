@@ -66,7 +66,7 @@ fun CompleteProfileScreen(
         )
         Spacer(modifier = Modifier.width(10.dp))
         Text(
-          text = "Bharat Kirana",
+          text = "BreakQ",
           style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold, fontSize = 20.sp),
           color = BharatPurplePrimary
         )

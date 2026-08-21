@@ -118,16 +118,7 @@ fun AuthScreen(
           ) {
             Icon(
               imageVector = Icons.Default.Storefront,
-              contentDescription = "Bharat Kirana",
-              tint = Color.White,
-              modifier = Modifier.size(32.dp)
-            )
-          }
-
-          Spacer(modifier = Modifier.height(14.dp))
-
-          Text(
-            text = when (selectedTab) {
+                contentDescription = "BreakQ",
               2 -> "Verify Your Identity"
               3 -> "Reset Your Password"
               else -> "Login / Signup"
@@ -197,7 +188,9 @@ fun AuthScreen(
           }
 
           // Status message display
-          AnimatedVisibility(visible = effectiveStatus != null) {
+          // Hidden while a request is in flight — the button already shows a spinner,
+          // so surfacing "Creating account..." as a red banner is confusing.
+          AnimatedVisibility(visible = effectiveStatus != null && !effectiveLoading) {
             effectiveStatus?.let { msg ->
               Surface(
                 shape = RoundedCornerShape(10.dp),
@@ -324,6 +317,15 @@ fun AuthScreen(
               )
               
               AuthTextField(
+                value = mobileInput,
+                onValueChange = { if (it.length <= 10 && it.all { c -> c.isDigit() }) mobileInput = it },
+                label = "Mobile Number",
+                placeholder = "10-digit number",
+                icon = Icons.Default.Phone,
+                keyboardType = KeyboardType.Phone
+              )
+              
+              AuthTextField(
                 value = emailInput,
                 onValueChange = { emailInput = it },
                 label = "Email Address",
@@ -362,8 +364,12 @@ fun AuthScreen(
                     localStatusMessage = "Passwords do not match"
                     return@Button
                   }
+                  if (mobileInput.length != 10) {
+                    localStatusMessage = "Please enter a valid 10-digit mobile number"
+                    return@Button
+                  }
                   isLocalLoading = true
-                  onSignup(nameInput, emailInput.trim(), "", "", passwordInput) { success, msg ->
+                  onSignup(nameInput, emailInput.trim(), mobileInput, "", passwordInput) { success, msg ->
                     isLocalLoading = false
                     localStatusMessage = msg
                     if (success) {
@@ -371,7 +377,7 @@ fun AuthScreen(
                     }
                   }
                 },
-                enabled = !effectiveLoading && emailInput.isNotBlank() && passwordInput.length >= 6,
+                enabled = !effectiveLoading && emailInput.isNotBlank() && passwordInput.length >= 6 && nameInput.isNotBlank() && mobileInput.length == 10,
                 modifier = Modifier.fillMaxWidth().height(50.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = BharatPurplePrimary),
                 shape = RoundedCornerShape(14.dp)
@@ -547,7 +553,7 @@ fun AuthChoiceView(
       Spacer(modifier = Modifier.height(24.dp))
 
       Text(
-        text = "Bharat Kirana",
+        text = "BreakQ",
         style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.Bold),
         color = BharatTextPrimary
       )

@@ -73,6 +73,7 @@ fun MainScreen(
   val appliedPromo by viewModel.appliedPromo.collectAsState()
   val promoStatusMessage by viewModel.promoStatusMessage.collectAsState()
   val searchSuggestions by viewModel.searchSuggestions.collectAsState()
+  val tierCapMessage by viewModel.tierCapMessage.collectAsState()
   var updateDialogDismissed by rememberSaveable { mutableStateOf(false) }
 
   val totalCartCount = cartItems.sumOf { it.quantity }
@@ -137,8 +138,8 @@ fun MainScreen(
           onLogin = { email, pass, callback ->
             viewModel.loginWithPassword(email, pass, callback)
           },
-          onSignup = { name, email, _, _, pass, callback ->
-            viewModel.signUp(name, email, "", "", pass, callback)
+          onSignup = { name, email, mobile, _, pass, callback ->
+            viewModel.signUp(name, email, mobile, "", pass, callback)
           },
           onSendOtp = { identifier, callback ->
             viewModel.sendEmailOtp(identifier, callback)
@@ -163,12 +164,14 @@ fun MainScreen(
             when {
               isAdmin -> viewModel.navigateTo(AppScreen.AdminDashboard)
               !user.profileCompleted -> {
-                // Fresh signup path: remember the role they picked at signup so
-                // CompleteProfile can route them to VendorRegistration vs CustomerOnboarding.
                 viewModel.setPendingSignupRole(role)
                 viewModel.navigateTo(AppScreen.CompleteProfile)
               }
               user.isVendor -> viewModel.navigateTo(AppScreen.VendorDashboard)
+              role == UserRole.VENDOR -> {
+                viewModel.setPendingSignupRole(role)
+                viewModel.navigateTo(AppScreen.VendorRegistration)
+              }
               else -> {
                 viewModel.navigateTo(AppScreen.CustomerOnboarding)
               }
@@ -374,10 +377,15 @@ fun MainScreen(
 
       is AppScreen.VendorDashboard -> {
         val vendorShop = shops.find { it.id == userProfile.shopId } ?: shops.first()
+        val vendorSub by viewModel.vendorSubscription.collectAsState()
+        val tiers by viewModel.subscriptionTiers.collectAsState()
+        val currentTier = tiers.firstOrNull { it.id == vendorSub?.tierId }
         VendorDashboardScreen(
           shop = vendorShop,
           orders = orders.filter { it.shopId == vendorShop.id },
           products = products.filter { it.shopId == vendorShop.id },
+          currentTierName = currentTier?.displayName,
+          currentTierItemCap = currentTier?.itemCap ?: 10,
           onLogout = { viewModel.logout() },
           onManageProducts = { 
             viewModel.navigateTo(AppScreen.AddProduct)
@@ -389,7 +397,25 @@ fun MainScreen(
           onUpdateShop = { id, shop -> viewModel.updateShopDetails(id, shop) },
           onUpdateOrderStatus = { orderId, newStatus -> viewModel.updateOrderStatus(orderId, newStatus) },
           onCancelOrder = { orderId -> viewModel.cancelOrder(orderId) },
-          onUpdateProductStock = { prodId, inStock -> viewModel.updateProductStock(prodId, inStock) }
+          onUpdateProductStock = { prodId, inStock -> viewModel.updateProductStock(prodId, inStock) },
+          onUpdateProductPrice = { prodId, price -> viewModel.updateProductPrice(prodId, price) },
+          onSupportClick = { viewModel.openSupportWhatsApp() },
+          onRefreshStatus = { viewModel.loadSupabaseData() },
+          onManagePlan = { viewModel.navigateTo(AppScreen.Subscription) }
+        )
+      }
+
+      is AppScreen.Subscription -> {
+        val vendorSub by viewModel.vendorSubscription.collectAsState()
+        val tiers by viewModel.subscriptionTiers.collectAsState()
+        val vendorShopId = userProfile.shopId
+        val productCount = products.count { it.shopId == vendorShopId }
+        SubscriptionScreen(
+          tiers = tiers,
+          currentSubscription = vendorSub,
+          currentProductCount = productCount,
+          onBackClick = { viewModel.navigateBack() },
+          onUpgradeClick = { tierId -> viewModel.requestPlanUpgrade(tierId) }
         )
       }
 
@@ -647,8 +673,8 @@ fun MainScreen(
                     onLogin = { email, pass, callback ->
                       viewModel.loginWithPassword(email, pass, callback)
                     },
-                    onSignup = { name, email, _, _, pass, callback ->
-                      viewModel.signUp(name, email, "", "", pass, callback)
+                    onSignup = { name, email, mobile, _, pass, callback ->
+                      viewModel.signUp(name, email, mobile, "", pass, callback)
                     },
                     onSendOtp = { email, callback ->
                       viewModel.sendEmailOtp(email, callback)
@@ -677,6 +703,10 @@ fun MainScreen(
                           viewModel.navigateTo(AppScreen.CompleteProfile)
                         }
                         user.isVendor -> viewModel.navigateTo(AppScreen.VendorDashboard)
+                        role == UserRole.VENDOR -> {
+                          viewModel.setPendingSignupRole(role)
+                          viewModel.navigateTo(AppScreen.VendorRegistration)
+                        }
                         else -> {
                            viewModel.navigateTo(AppScreen.CustomerOnboarding)
                         }
@@ -737,6 +767,24 @@ fun MainScreen(
       forced = updateStatus == UpdateStatus.FORCED,
       onUpdate = { viewModel.openPlayStorePage() },
       onDismiss = { updateDialogDismissed = true }
+    )
+  }
+
+  // Round 5: vendor tried to add a product beyond their tier's item cap.
+  tierCapMessage?.let { msg ->
+    AlertDialog(
+      onDismissRequest = { viewModel.clearTierCapMessage() },
+      title = { Text("Plan Limit Reached", fontWeight = FontWeight.Bold) },
+      text = { Text(msg) },
+      confirmButton = {
+        Button(onClick = {
+          viewModel.clearTierCapMessage()
+          viewModel.navigateTo(AppScreen.Subscription)
+        }) { Text("See Plans") }
+      },
+      dismissButton = {
+        TextButton(onClick = { viewModel.clearTierCapMessage() }) { Text("Later") }
+      }
     )
   }
 }
