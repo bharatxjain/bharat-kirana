@@ -118,7 +118,16 @@ fun AuthScreen(
           ) {
             Icon(
               imageVector = Icons.Default.Storefront,
-                contentDescription = "BreakQ",
+              contentDescription = "Bharat Kirana",
+              tint = Color.White,
+              modifier = Modifier.size(32.dp)
+            )
+          }
+
+          Spacer(modifier = Modifier.height(14.dp))
+
+          Text(
+            text = when (selectedTab) {
               2 -> "Verify Your Identity"
               3 -> "Reset Your Password"
               else -> "Login / Signup"

@@ -18,6 +18,8 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -28,6 +30,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Campaign
 import androidx.compose.ui.unit.sp
 import com.kks.bharatkirana.data.model.CartItem
 import com.kks.bharatkirana.data.model.Category
@@ -116,8 +120,8 @@ fun HomeScreen(
       // Change text/toggle from the Firebase console — no app update needed.
       if (!promoBanner.isNullOrBlank()) {
         item {
-          androidx.compose.material3.Surface(
-            shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
+          Surface(
+            shape = RoundedCornerShape(12.dp),
             color = Color(0xFFF3E8FF),
             modifier = Modifier
               .fillMaxWidth()
@@ -127,15 +131,15 @@ fun HomeScreen(
               modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
               verticalAlignment = Alignment.CenterVertically
             ) {
-              androidx.compose.material3.Icon(
-                imageVector = androidx.compose.material.icons.Icons.Default.Campaign,
+              Icon(
+                imageVector = Icons.Default.Campaign,
                 contentDescription = null,
-                tint = androidx.compose.ui.graphics.Color(0xFF7C3AED),
+                tint = Color(0xFF7C3AED),
                 modifier = Modifier.padding(end = 8.dp)
               )
-              androidx.compose.material3.Text(
+              Text(
                 text = promoBanner,
-                color = androidx.compose.ui.graphics.Color(0xFF4C1D95),
+                color = Color(0xFF4C1D95),
                 fontSize = 13.sp,
                 fontWeight = FontWeight.Medium
               )
