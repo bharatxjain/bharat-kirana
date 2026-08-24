@@ -251,6 +251,26 @@ class SupabaseGroceryRepo(
     }
 
   /**
+   * Permanently delete the signed-in user's profile row (name, address, phone, etc.)
+   * from Supabase as part of account deletion. Order history is intentionally left
+   * in place for store accounting/tax purposes — see Privacy Policy data retention note.
+   */
+  suspend fun deleteUserProfile(userId: String, accessToken: String? = null): Result<Unit> =
+    withContext(Dispatchers.IO) {
+      runCatching {
+        val url = "${SupabaseConfig.restUrl}/profiles?id=eq.$userId"
+        val request = baseRequestBuilder(url, accessToken)
+          .delete()
+          .build()
+
+        val response = client.newCall(request).execute()
+        if (!response.isSuccessful) {
+          throw Exception("Failed to delete profile: HTTP ${response.code}")
+        }
+      }
+    }
+
+  /**
    * Update full product details in Supabase
    */
   suspend fun updateFullProduct(product: com.kks.bharatkirana.data.model.Product, accessToken: String? = null): Result<Unit> =
@@ -441,12 +461,15 @@ class SupabaseGroceryRepo(
           put("owner_id", ownerId)
           put("address", shop.address)
           put("phone", shop.phone)
+          put("lat", shop.lat)
+          put("lng", shop.lng)
+          put("primary_category", shop.primaryCategory)
           put("is_partner", false)
           put("accepting_orders", shop.isOpen)
           put("open_time", shop.openTime)
           put("close_time", shop.closeTime)
         }
-        
+
         val shopRequest = baseRequestBuilder(shopUrl, accessToken)
           .post(shopPayload.toString().toRequestBody(jsonMediaType))
           .build()
@@ -485,6 +508,8 @@ class SupabaseGroceryRepo(
           put("owner_name", shop.ownerName)
           put("address", shop.address)
           put("phone", shop.phone)
+          put("lat", shop.lat)
+          put("lng", shop.lng)
           put("accepting_orders", shop.isOpen)
           put("open_time", shop.openTime)
           put("close_time", shop.closeTime)
@@ -626,6 +651,8 @@ class SupabaseGroceryRepo(
               ownerName = obj.optString("owner_name", ""),
               address = obj.optString("address", ""),
               phone = obj.optString("phone", ""),
+              lat = obj.optDouble("lat", 0.0),
+              lng = obj.optDouble("lng", 0.0),
               rating = obj.optDouble("avg_rating", 4.5).toFloat(),
               ratingCount = obj.optInt("rating_count", 0),
               deliveryTime = obj.optString("delivery_time", "20-30 mins"),

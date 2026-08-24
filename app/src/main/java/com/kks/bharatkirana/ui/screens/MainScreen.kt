@@ -369,8 +369,8 @@ fun MainScreen(
 
       is AppScreen.VendorRegistration -> {
         VendorRegistrationScreen(
-          onRegisterClick = { name, owner, addr, phone ->
-            viewModel.registerVendorShop(name, owner, addr, phone)
+          onRegisterClick = { name, owner, addr, phone, category, lat, lng ->
+            viewModel.registerVendorShop(name, owner, addr, phone, category, lat, lng)
           },
           onBackClick = { viewModel.navigateBack() }
         )

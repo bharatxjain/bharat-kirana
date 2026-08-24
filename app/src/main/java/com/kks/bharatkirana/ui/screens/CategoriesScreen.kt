@@ -22,6 +22,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.Inventory2
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.HorizontalDivider
@@ -67,7 +68,7 @@ fun CategoriesScreen(
 ) {
   val currentCategory = selectedCategory ?: categories.firstOrNull()
   val filteredProducts = if (currentCategory != null) {
-    products.filter { it.categoryId == currentCategory.id }.ifEmpty { products }
+    products.filter { it.categoryId == currentCategory.id }
   } else {
     products
   }
@@ -170,6 +171,34 @@ fun CategoriesScreen(
             items(6) {
               ShimmerProductCard(modifier = Modifier.fillMaxWidth())
             }
+          }
+        } else if (filteredProducts.isEmpty()) {
+          Column(
+            modifier = Modifier.fillMaxSize(),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+          ) {
+            Icon(
+              imageVector = Icons.Default.Inventory2,
+              contentDescription = null,
+              tint = BharatTextMuted,
+              modifier = Modifier.size(40.dp)
+            )
+            Spacer(modifier = Modifier.height(10.dp))
+            Text(
+              text = "No products found in this category",
+              style = MaterialTheme.typography.bodyMedium,
+              color = BharatTextSecondary,
+              fontWeight = FontWeight.Medium,
+              textAlign = androidx.compose.ui.text.style.TextAlign.Center
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+              text = "This store hasn't added items here yet. Check back soon!",
+              style = MaterialTheme.typography.bodySmall,
+              color = BharatTextMuted,
+              textAlign = androidx.compose.ui.text.style.TextAlign.Center
+            )
           }
         } else {
           LazyVerticalGrid(

@@ -450,23 +450,6 @@ fun ProfileScreen(
             Spacer(modifier = Modifier.height(14.dp))
             HorizontalDivider(color = Color(0xFFF1F5F9))
             Spacer(modifier = Modifier.height(14.dp))
-        
-        TextButton(
-          onClick = { showDeleteConfirmDialog = true },
-          modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp)
-            .testTag("delete_account_button")
-        ) {
-          Text(
-            text = "Delete Account & Data",
-            color = Color(0xFF94A3B8),
-            fontSize = 12.sp,
-            fontWeight = FontWeight.Medium
-          )
-        }
-
-        Spacer(modifier = Modifier.height(12.dp))
 
             // Quick Stats Row (Wallet & Loyalty Points)
             Row(

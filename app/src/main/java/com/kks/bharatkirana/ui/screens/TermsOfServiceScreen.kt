@@ -201,7 +201,7 @@ fun TermsOfServiceScreen(
         TermsSectionCard(
           icon = Icons.Default.Inventory,
           title = "5. Product Availability & Replacements",
-          content = "While stock counts sync in real time via our Supabase cloud infrastructure, high-demand local items (such as milk pouches or fresh flour) may occasionally run out at the counter before fulfillment. In such cases, store staff will notify the customer or adjust the bill accordingly."
+          content = "While stock counts sync in real time, high-demand local items (such as milk pouches or fresh flour) may occasionally run out at the counter before fulfillment. In such cases, store staff will notify the customer or adjust the bill accordingly."
         )
       }
 

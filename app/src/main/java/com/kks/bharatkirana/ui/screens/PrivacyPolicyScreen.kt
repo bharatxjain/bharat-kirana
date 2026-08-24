@@ -196,11 +196,11 @@ fun PrivacyPolicyScreen(
       item {
         PolicySectionCard(
           icon = Icons.Default.Lock,
-          title = "4. Data Security & Cloud Storage",
-          content = "We implement industry-standard administrative, physical, and technical safeguards:\n\n" +
-              "• Secure Cloud Infrastructure: Database and authentication operations run on managed Supabase servers secured with Row Level Security (RLS) policies and HTTPS/TLS 1.3 encryption in transit.\n" +
-              "• Protected Credentials: Passwords, OTP codes, and authentication tokens are securely hashed and never stored in plain text.\n" +
-              "• Counter Verification: Pickup QR codes are cryptographically formatted to prevent tampering."
+          title = "4. Data Security",
+          content = "We take reasonable administrative, physical, and technical measures to protect your information:\n\n" +
+              "• Secure Storage: Your data is stored on secure, access-controlled servers and encrypted while it travels between your device and our systems.\n" +
+              "• Protected Credentials: Passwords, OTP codes, and login sessions are never stored or shared in plain, readable form.\n" +
+              "• Counter Verification: Pickup QR codes are formatted to prevent tampering or reuse."
         )
       }
 
@@ -220,9 +220,9 @@ fun PrivacyPolicyScreen(
       item {
         PolicySectionCard(
           icon = Icons.Default.Sync,
-          title = "6. Third-Party Integrations",
-          content = "Our application interfaces with trusted infrastructure providers:\n\n" +
-              "• Supabase (PostgreSQL & Auth): For persistent database records, product inventory synchronization, and user session management.\n" +
+          title = "6. Third-Party Services",
+          content = "Our application relies on trusted service providers to operate:\n\n" +
+              "• Cloud hosting and account sign-in services, to store your data securely and manage your session.\n" +
               "• Google Play Services: For app distribution, security verification, and update delivery."
         )
       }

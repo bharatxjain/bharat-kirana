@@ -1,14 +1,16 @@
 package com.kks.bharatkirana.ui.screens
 
+import android.Manifest
+import android.content.pm.PackageManager
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -25,20 +27,20 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.kks.bharatkirana.R
+import androidx.core.content.ContextCompat
+import com.google.android.gms.location.LocationServices
 import com.kks.bharatkirana.ui.theme.*
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun VendorRegistrationScreen(
-  onRegisterClick: (String, String, String, String) -> Unit,
+  onRegisterClick: (name: String, owner: String, address: String, phone: String, category: String, lat: Double, lng: Double) -> Unit,
   onBackClick: () -> Unit,
   modifier: Modifier = Modifier
 ) {
@@ -179,8 +181,13 @@ fun VendorRegistrationScreen(
               }
               Spacer(modifier = Modifier.height(12.dp))
               Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                CategorySelectCard(title = "Produce", icon = Icons.Default.Agriculture, isSelected = selectedCategory == "Produce", onClick = { selectedCategory = "Produce" }, modifier = Modifier.weight(1f))
-                CategorySelectCard(title = "Other", icon = Icons.Default.Storefront, isSelected = selectedCategory == "Other", onClick = { selectedCategory = "Other" }, modifier = Modifier.weight(1f))
+                CategorySelectCard(title = "Medical", icon = Icons.Default.LocalPharmacy, isSelected = selectedCategory == "Medical", onClick = { selectedCategory = "Medical" }, modifier = Modifier.weight(1f))
+                CategorySelectCard(title = "Electronics", icon = Icons.Default.Devices, isSelected = selectedCategory == "Electronics", onClick = { selectedCategory = "Electronics" }, modifier = Modifier.weight(1f))
+              }
+              Spacer(modifier = Modifier.height(12.dp))
+              Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                CategorySelectCard(title = "Pashu Aahar", icon = Icons.Default.Agriculture, isSelected = selectedCategory == "Pashu Aahar", onClick = { selectedCategory = "Pashu Aahar" }, modifier = Modifier.weight(1f))
+                CategorySelectCard(title = "Others", icon = Icons.Default.Storefront, isSelected = selectedCategory == "Others", onClick = { selectedCategory = "Others" }, modifier = Modifier.weight(1f))
               }
             }
 
@@ -235,7 +242,7 @@ fun VendorRegistrationScreen(
                   Icon(Icons.Default.Map, contentDescription = null, tint = BharatPurplePrimary)
                   Spacer(modifier = Modifier.width(8.dp))
                   Text(
-                    text = if (lat != 0.0) "Location Selected: $lat, $lng" else "Select Store Location on Map",
+                    text = if (lat != 0.0 || lng != 0.0) "Location Selected: ${"%.4f".format(lat)}, ${"%.4f".format(lng)}" else "Select Store Location on Map",
                     color = BharatPurplePrimary,
                     fontWeight = FontWeight.Bold
                   )
@@ -321,8 +328,8 @@ fun VendorRegistrationScreen(
           Spacer(modifier = Modifier.height(32.dp))
 
           Button(
-            onClick = { 
-              if (step < 3) step++ else onRegisterClick(shopName, ownerName, shopAddress, phoneNumber) 
+            onClick = {
+              if (step < 3) step++ else onRegisterClick(shopName, ownerName, shopAddress, phoneNumber, selectedCategory, lat, lng)
             },
             enabled = when(step) {
               1 -> shopName.isNotBlank()
@@ -354,58 +361,148 @@ fun VendorRegistrationScreen(
   }
 
   if (showMapPicker) {
+    val context = LocalContext.current
+    val fusedLocationClient = remember { LocationServices.getFusedLocationProviderClient(context) }
+    var pinOffset by remember { mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
+    var locationError by remember { mutableStateOf<String?>(null) }
+    // Roughly meters-per-pixel converted to degrees, so dragging across the 260dp
+    // pad box moves the pin a realistic few hundred meters instead of a fixed dummy point.
+    val degreesPerPixel = 0.00003
+
+    val requestLocationPermission = rememberLauncherForActivityResult(
+      contract = ActivityResultContracts.RequestPermission()
+    ) { granted ->
+      if (granted) {
+        fusedLocationClient.lastLocation.addOnSuccessListener { location ->
+          if (location != null) {
+            lat = location.latitude
+            lng = location.longitude
+            pinOffset = androidx.compose.ui.geometry.Offset.Zero
+            locationError = null
+          } else {
+            locationError = "Couldn't get current location. Drag the pin or enter coordinates manually."
+          }
+        }
+      } else {
+        locationError = "Location permission denied. Drag the pin or enter coordinates manually."
+      }
+    }
+
+    fun useCurrentLocation() {
+      val hasPermission = ContextCompat.checkSelfPermission(
+        context, Manifest.permission.ACCESS_FINE_LOCATION
+      ) == PackageManager.PERMISSION_GRANTED
+      if (hasPermission) {
+        fusedLocationClient.lastLocation.addOnSuccessListener { location ->
+          if (location != null) {
+            lat = location.latitude
+            lng = location.longitude
+            pinOffset = androidx.compose.ui.geometry.Offset.Zero
+            locationError = null
+          } else {
+            locationError = "Couldn't get current location. Drag the pin or enter coordinates manually."
+          }
+        }
+      } else {
+        requestLocationPermission.launch(Manifest.permission.ACCESS_FINE_LOCATION)
+      }
+    }
+
     AlertDialog(
       onDismissRequest = { showMapPicker = false },
       title = { Text("Select Store Location", fontWeight = FontWeight.Bold) },
       text = {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-          Text("Drag the map or tap to place the store pin. Currently showing Banjara Hills, Hyderabad.", fontSize = 12.sp, color = BharatTextSecondary, textAlign = TextAlign.Center)
+          Text(
+            "Drag the pin to fine-tune your store's exact spot, or fetch it from your device's GPS.",
+            fontSize = 12.sp,
+            color = BharatTextSecondary,
+            textAlign = TextAlign.Center
+          )
           Spacer(modifier = Modifier.height(16.dp))
           Box(
             modifier = Modifier
               .fillMaxWidth()
-              .height(300.dp)
+              .height(220.dp)
               .clip(RoundedCornerShape(16.dp))
               .background(Color(0xFFE2E8F0))
-              .border(1.dp, Color(0xFFCBD5E1), RoundedCornerShape(16.dp)),
+              .border(1.dp, Color(0xFFCBD5E1), RoundedCornerShape(16.dp))
+              .pointerInput(Unit) {
+                detectDragGestures { change, dragAmount ->
+                  change.consume()
+                  pinOffset += dragAmount
+                  lat -= dragAmount.y * degreesPerPixel
+                  lng += dragAmount.x * degreesPerPixel
+                }
+              },
             contentAlignment = Alignment.Center
           ) {
-            Image(
-              painter = painterResource(id = R.drawable.img_onboarding_delivery), // Use a map-like placeholder
-              contentDescription = "Map View",
-              modifier = Modifier.fillMaxSize(),
-              contentScale = ContentScale.Crop
-            )
             Icon(
               imageVector = Icons.Default.LocationOn,
-              contentDescription = "Store Pin",
+              contentDescription = "Store Pin — drag to adjust",
               tint = BharatPurplePrimary,
-              modifier = Modifier.size(48.dp).offset(y = (-20).dp)
+              modifier = Modifier
+                .size(48.dp)
+                .offset { androidx.compose.ui.unit.IntOffset(pinOffset.x.toInt(), pinOffset.y.toInt() - 40) }
             )
-            
+
             Surface(
               color = Color.White.copy(alpha = 0.9f),
               shape = RoundedCornerShape(8.dp),
-              modifier = Modifier.align(Alignment.BottomCenter).padding(16.dp)
+              modifier = Modifier.align(Alignment.BottomCenter).padding(12.dp)
             ) {
               Text(
-                text = "17.4123, 78.4567",
+                text = if (lat != 0.0 || lng != 0.0) "${"%.4f".format(lat)}, ${"%.4f".format(lng)}" else "No location set yet",
                 modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
                 fontSize = 11.sp,
                 fontWeight = FontWeight.Bold
               )
             }
           }
+
+          Spacer(modifier = Modifier.height(12.dp))
+
+          OutlinedButton(
+            onClick = { useCurrentLocation() },
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(12.dp)
+          ) {
+            Icon(Icons.Default.MyLocation, contentDescription = null, tint = BharatPurplePrimary, modifier = Modifier.size(18.dp))
+            Spacer(modifier = Modifier.width(8.dp))
+            Text("Use My Current Location", color = BharatPurplePrimary, fontWeight = FontWeight.SemiBold)
+          }
+
+          if (locationError != null) {
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(locationError!!, fontSize = 11.sp, color = Color(0xFFDC2626), textAlign = TextAlign.Center)
+          }
+
+          Spacer(modifier = Modifier.height(12.dp))
+
+          Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedTextField(
+              value = if (lat != 0.0) lat.toString() else "",
+              onValueChange = { lat = it.toDoubleOrNull() ?: lat },
+              label = { Text("Latitude", fontSize = 11.sp) },
+              singleLine = true,
+              keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number),
+              modifier = Modifier.weight(1f)
+            )
+            OutlinedTextField(
+              value = if (lng != 0.0) lng.toString() else "",
+              onValueChange = { lng = it.toDoubleOrNull() ?: lng },
+              label = { Text("Longitude", fontSize = 11.sp) },
+              singleLine = true,
+              keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number),
+              modifier = Modifier.weight(1f)
+            )
+          }
         }
       },
       confirmButton = {
         Button(
-          onClick = {
-            lat = 17.4123
-            lng = 78.4567
-            shopAddress = "Banjara Hills, Road No. 12, Hyderabad"
-            showMapPicker = false
-          },
+          onClick = { showMapPicker = false },
+          enabled = lat != 0.0 || lng != 0.0,
           colors = ButtonDefaults.buttonColors(containerColor = BharatPurplePrimary)
         ) {
           Text("Confirm Location")

@@ -924,9 +924,14 @@ class GroceryViewModel(
 
   fun deleteAccount() {
     viewModelScope.launch {
-      // In a production app, you would call a backend function here 
-      // to remove all user data from PostgreSQL and the Auth system.
-      // For now, we perform a secure logout and clear local state.
+      val userId = supabaseAuthService.currentUserId
+      if (userId != null) {
+        // Best-effort: remove the profile row (name, address, phone) so it no longer
+        // exists server-side. Order history is retained for store accounting — see
+        // Privacy Policy. We still sign the user out below even if this call fails,
+        // since the account must not remain accessible either way.
+        supabaseGroceryRepo.deleteUserProfile(userId, supabaseAuthService.currentAccessToken)
+      }
       supabaseAuthService.signOut()
       clearSavedSession()
       _userProfile.value = UserProfile()
@@ -1029,7 +1034,15 @@ class GroceryViewModel(
     }
   }
 
-  fun registerVendorShop(name: String, owner: String, address: String, phone: String) {
+  fun registerVendorShop(
+    name: String,
+    owner: String,
+    address: String,
+    phone: String,
+    category: String = "Grocery",
+    lat: Double = 0.0,
+    lng: Double = 0.0
+  ) {
     val shopId = "s_${System.currentTimeMillis()}"
     val userId = supabaseAuthService.currentUserId ?: return
     val token = supabaseAuthService.currentAccessToken
@@ -1040,6 +1053,9 @@ class GroceryViewModel(
       ownerName = owner,
       address = address,
       phone = phone,
+      lat = lat,
+      lng = lng,
+      primaryCategory = category,
       isPartner = false,
       status = VendorStatus.PENDING
     )

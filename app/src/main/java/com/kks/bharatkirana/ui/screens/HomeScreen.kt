@@ -48,6 +48,7 @@ import com.kks.bharatkirana.ui.components.ShimmerProductRow
 import com.kks.bharatkirana.ui.components.StoreLocationHeader
 import com.kks.bharatkirana.ui.theme.BharatBackground
 import com.kks.bharatkirana.ui.theme.BharatTextPrimary
+import com.kks.bharatkirana.ui.theme.BharatTextSecondary
 
 @Composable
 fun HomeScreen(
@@ -92,7 +93,7 @@ fun HomeScreen(
       modifier = Modifier
         .fillMaxSize()
         .testTag("home_screen_content"),
-      contentPadding = PaddingValues(bottom = if (cartItemCount > 0) 90.dp else 24.dp)
+      contentPadding = PaddingValues(bottom = if (cartItemCount > 0) 130.dp else 48.dp)
     ) {
       // Store Location Header
       item {
@@ -195,6 +196,13 @@ fun HomeScreen(
 
           if (isLoading && products.isEmpty()) {
             ShimmerProductRow()
+          } else if (popularProducts.isEmpty()) {
+            Text(
+              text = "No products found in this category",
+              style = MaterialTheme.typography.bodySmall,
+              color = BharatTextSecondary,
+              modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)
+            )
           } else {
             LazyRow(
               contentPadding = PaddingValues(horizontal = 16.dp),
@@ -250,6 +258,13 @@ fun HomeScreen(
                 ShimmerDailyEssentialCard()
               }
             }
+          } else if (dailyEssentials.isEmpty()) {
+            Text(
+              text = "No products found in this category",
+              style = MaterialTheme.typography.bodySmall,
+              color = BharatTextSecondary,
+              modifier = Modifier.padding(vertical = 12.dp)
+            )
           } else {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
               dailyEssentials.forEach { product ->
@@ -267,6 +282,7 @@ fun HomeScreen(
             }
           }
         }
+        Spacer(modifier = Modifier.height(24.dp))
       }
     }
 

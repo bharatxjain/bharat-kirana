@@ -45,6 +45,7 @@ fun OrderDetailsScreen(
   var reviewText by remember { mutableStateOf("") }
   var showRatingForm by remember { mutableStateOf(order.status == OrderStatus.COMPLETED) }
   var ratingSubmitted by remember { mutableStateOf(false) }
+  var ratingDismissed by remember { mutableStateOf(false) }
   var showCancelDialog by remember { mutableStateOf(false) }
 
   val canCancel = order.status == OrderStatus.PLACED || order.status == OrderStatus.PREPARING
@@ -201,14 +202,23 @@ fun OrderDetailsScreen(
         }
 
         // Rating Section
-        if (showRatingForm && !ratingSubmitted) {
+        if (showRatingForm && !ratingSubmitted && !ratingDismissed) {
           Card(
             shape = RoundedCornerShape(16.dp),
             colors = CardDefaults.cardColors(containerColor = BharatPurpleContainer.copy(alpha = 0.5f)),
             modifier = Modifier.fillMaxWidth()
           ) {
             Column(modifier = Modifier.padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-              Text(text = "Rate your experience", fontWeight = FontWeight.Bold, color = BharatPurpleDark)
+              Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Spacer(modifier = Modifier.width(24.dp))
+                Text(text = "Rate your experience", fontWeight = FontWeight.Bold, color = BharatPurpleDark)
+                IconButton(
+                  onClick = { ratingDismissed = true },
+                  modifier = Modifier.size(24.dp).testTag("dismiss_rating_button")
+                ) {
+                  Icon(Icons.Default.Close, contentDescription = "Dismiss", tint = BharatPurpleDark, modifier = Modifier.size(18.dp))
+                }
+              }
               Spacer(modifier = Modifier.height(12.dp))
               Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 repeat(5) { index ->
@@ -232,7 +242,7 @@ fun OrderDetailsScreen(
               )
               Spacer(modifier = Modifier.height(16.dp))
               Button(
-                onClick = { 
+                onClick = {
                   onRateShop(order.shopId, order.id, ratingValue, reviewText)
                   ratingSubmitted = true
                 },
@@ -242,6 +252,12 @@ fun OrderDetailsScreen(
                 shape = RoundedCornerShape(12.dp)
               ) {
                 Text("Submit Rating", fontWeight = FontWeight.Bold)
+              }
+              TextButton(
+                onClick = { ratingDismissed = true },
+                modifier = Modifier.testTag("maybe_later_rating_button")
+              ) {
+                Text("Maybe Later", color = BharatTextSecondary)
               }
             }
           }
