@@ -186,7 +186,7 @@ fun SignupSplashScreen(
         Spacer(modifier = Modifier.height(16.dp))
 
         Text(
-          text = if (isAdmin) "Welcome, Store Administrator!" else "Welcome to Bharat Kirana!",
+          text = if (isAdmin) "Welcome, Store Administrator!" else "Welcome to BreakQ!",
           style = MaterialTheme.typography.headlineMedium.copy(
             fontWeight = FontWeight.ExtraBold,
             fontSize = 24.sp

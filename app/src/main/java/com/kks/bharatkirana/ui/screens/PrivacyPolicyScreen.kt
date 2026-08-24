@@ -143,7 +143,7 @@ fun PrivacyPolicyScreen(
             Spacer(modifier = Modifier.width(14.dp))
             Column {
               Text(
-                text = "Bharat Kirana Data Commitment",
+                text = "BreakQ Data Commitment",
                 style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
                 color = BharatPurpleDark
               )
@@ -162,7 +162,7 @@ fun PrivacyPolicyScreen(
         PolicySectionCard(
           icon = Icons.Default.Storefront,
           title = "1. Introduction & Overview",
-          content = "Bharat Kirana (application ID: com.kks.bharatkirana, operated by KKS PVT) is committed to safeguarding user privacy. This Privacy Policy explains how our local kirana ordering platform collects, handles, stores, and protects personal information when you browse grocery inventories, create accounts, place pickup orders, and interact with our store services."
+          content = "BreakQ (application ID: com.kks.bharatkirana, operated by KKS PVT) is committed to safeguarding user privacy. This Privacy Policy explains how our local kirana ordering platform collects, handles, stores, and protects personal information when you browse grocery inventories, create accounts, place pickup orders, and interact with our store services."
         )
       }
 
@@ -232,7 +232,7 @@ fun PrivacyPolicyScreen(
         PolicySectionCard(
           icon = Icons.Default.ChildCare,
           title = "7. Children's Privacy",
-          content = "Bharat Kirana is a retail shopping application intended for general audiences. We do not knowingly solicit or collect personal identifiable information from children under 13 years of age."
+          content = "BreakQ is a retail shopping application intended for general audiences. We do not knowingly solicit or collect personal identifiable information from children under 13 years of age."
         )
       }
 
@@ -292,7 +292,7 @@ fun PrivacyPolicyScreen(
                   color = BharatTextPrimary
                 )
                 Text(
-                  text = "Organization: KKS PVT / Bharat Kirana Operations",
+                  text = "Organization: KKS PVT / BreakQ Operations",
                   fontSize = 12.sp,
                   color = BharatTextSecondary
                 )

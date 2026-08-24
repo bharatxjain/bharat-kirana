@@ -40,7 +40,7 @@ fun RoleSelectionScreen(
       verticalArrangement = Arrangement.Center
     ) {
       Text(
-        text = "How will you use Bharat Kirana?",
+        text = "How will you use BreakQ?",
         style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold),
         color = BharatTextPrimary,
         textAlign = TextAlign.Center

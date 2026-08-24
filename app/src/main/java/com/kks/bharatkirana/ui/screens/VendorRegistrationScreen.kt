@@ -71,7 +71,7 @@ fun VendorRegistrationScreen(
       TopAppBar(
         title = {
           Text(
-            text = "Bharat Kirana Store",
+            text = "BreakQ Store",
             style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
             color = BharatPurplePrimary
           )
@@ -254,8 +254,11 @@ fun VendorRegistrationScreen(
               Text(text = "Verification & Media", style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold), color = BharatPurplePrimary)
               Spacer(modifier = Modifier.height(24.dp))
               
-              // Shop Photo
-              Text(text = "Shop Photo", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = BharatTextPrimary)
+              // Shop Photo (required)
+              Row {
+                Text(text = "Shop Photo", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = BharatTextPrimary)
+                Text(text = " *", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = Color(0xFFDC2626))
+              }
               Spacer(modifier = Modifier.height(8.dp))
               Box(
                 modifier = Modifier
@@ -291,8 +294,8 @@ fun VendorRegistrationScreen(
               
               Spacer(modifier = Modifier.height(16.dp))
 
-              // Business Proof
-              Text(text = "Business Proof (Utility bill / License)", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = BharatTextPrimary)
+              // Business Proof (optional)
+              Text(text = "Business Proof (Utility bill / License) (Optional)", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = BharatTextPrimary)
               Spacer(modifier = Modifier.height(8.dp))
               Button(
                 onClick = { proofPickerLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
@@ -319,6 +322,11 @@ fun VendorRegistrationScreen(
                    Text(text = "Shop: $shopName", fontSize = 13.sp)
                    Text(text = "Owner: $ownerName", fontSize = 13.sp)
                    Text(text = "Location: $lat, $lng", fontSize = 13.sp)
+                   Spacer(modifier = Modifier.height(8.dp))
+                   Row {
+                     Text(text = "*", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFFDC2626))
+                     Text(text = " Required. Business proof is optional and can be added later.", fontSize = 11.sp, color = BharatTextSecondary)
+                   }
                 }
               }
             }
@@ -334,7 +342,7 @@ fun VendorRegistrationScreen(
             enabled = when(step) {
               1 -> shopName.isNotBlank()
               2 -> ownerName.isNotBlank() && phoneNumber.isNotBlank() && shopAddress.isNotBlank()
-              else -> true
+              else -> shopPhotoUri != null
             },
             modifier = Modifier
               .align(Alignment.End)

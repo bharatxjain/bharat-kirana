@@ -19,6 +19,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -67,6 +68,12 @@ class GroceryViewModel(
 
   private val _orders = MutableStateFlow(repository.getSampleOrders())
   val orders: StateFlow<List<Order>> = _orders.asStateFlow()
+
+  private val _notifications = MutableStateFlow<List<AppNotification>>(emptyList())
+  val notifications: StateFlow<List<AppNotification>> = _notifications.asStateFlow()
+  val unreadNotificationCount: StateFlow<Int> = _notifications
+    .map { list -> list.count { !it.isRead } }
+    .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
 
   private val _selectedProduct = MutableStateFlow<Product?>(repository.getProducts().firstOrNull())
   val selectedProduct: StateFlow<Product?> = _selectedProduct.asStateFlow()
@@ -246,7 +253,7 @@ class GroceryViewModel(
     viewModelScope.launch {
       supabaseRealtime.changes.collect { change ->
         if (change.table == "orders") applyOrderChange(change)
-        // notifications table changes surface via FCM push in Round 4b; no-op here.
+        if (change.table == "notifications" && change.type == "INSERT") applyNewNotification(change)
       }
     }
   }
@@ -286,6 +293,21 @@ class GroceryViewModel(
       // "INSERT" — skipped intentionally: vendor's dashboard triggers a refresh
       // via loadSupabaseData when opened, and the customer already inserted locally.
     }
+  }
+
+  private fun applyNewNotification(change: SupabaseRealtimeClient.RealtimeChange) {
+    val record = change.record ?: return
+    val id = record.optString("id").takeIf { it.isNotBlank() } ?: return
+    if (_notifications.value.any { it.id == id }) return
+    val notification = AppNotification(
+      id = id,
+      title = record.optString("title"),
+      message = record.optString("message"),
+      isRead = record.optBoolean("is_read", false),
+      orderId = record.optString("order_id").takeIf { it.isNotBlank() },
+      createdAt = record.optString("created_at")
+    )
+    _notifications.update { listOf(notification) + it }
   }
 
   private fun loadRemoteConfig() {
@@ -353,14 +375,15 @@ class GroceryViewModel(
   private fun loadSavedSession() {
     val email = prefs.getString("user_email", "") ?: ""
     if (email.isNotBlank()) {
-      login(email)
-      val user = _userProfile.value
-      // If profile is not completed, force them to complete it
-      if (!user.profileCompleted) {
-        _currentScreen.value = AppScreen.CompleteProfile
-      } else {
-        _currentScreen.value = AppScreen.Main
-        _activeShopId.value = null
+      login(email) { user ->
+        // Decided only after the server profile has loaded, so a returning user
+        // whose profile is actually complete doesn't get bounced back here.
+        if (!user.profileCompleted) {
+          _currentScreen.value = AppScreen.CompleteProfile
+        } else {
+          _currentScreen.value = AppScreen.Main
+          _activeShopId.value = null
+        }
       }
     }
   }
@@ -943,7 +966,13 @@ class GroceryViewModel(
     }
   }
 
-  fun login(email: String, name: String = "", mobile: String = "", authPath: AuthPath? = null) {
+  fun login(
+    email: String,
+    name: String = "",
+    mobile: String = "",
+    authPath: AuthPath? = null,
+    onProfileReady: (UserProfile) -> Unit = {}
+  ) {
     val cleanEmail = email.trim()
     // Delegate the admin check to UserProfile (which reads BuildConfig from .env).
     // No personal emails are compiled into source.
@@ -993,6 +1022,12 @@ class GroceryViewModel(
           }
       }
 
+      // Only decide profile-completeness-dependent navigation once the server's
+      // profile_completed value has actually loaded — reading _userProfile.value
+      // right after login() returns (as callers used to) races this coroutine and
+      // always saw the stale local default, forcing Complete Profile every time.
+      onProfileReady(_userProfile.value)
+
       // Round 4b: push the current FCM token to profiles.fcm_token so the Edge
       // Function can target this device with order-status pushes.
       syncFcmTokenToServer()
@@ -1009,6 +1044,25 @@ class GroceryViewModel(
           _orders.value = liveOrders
         }
       }
+
+      loadNotifications()
+    }
+  }
+
+  fun loadNotifications() {
+    val userId = supabaseAuthService.currentUserId ?: return
+    viewModelScope.launch {
+      supabaseGroceryRepo.fetchNotifications(userId, supabaseAuthService.currentAccessToken)
+        .onSuccess { list -> _notifications.value = list }
+    }
+  }
+
+  fun markNotificationRead(notificationId: String) {
+    val notification = _notifications.value.firstOrNull { it.id == notificationId } ?: return
+    if (notification.isRead) return
+    _notifications.update { list -> list.map { if (it.id == notificationId) it.copy(isRead = true) else it } }
+    viewModelScope.launch {
+      supabaseGroceryRepo.markNotificationRead(notificationId, supabaseAuthService.currentAccessToken)
     }
   }
 
@@ -1127,12 +1181,30 @@ class GroceryViewModel(
     }
   }
 
-  fun openDirections(address: String) {
-    val mapUri = Uri.parse("geo:0,0?q=${Uri.encode(address)}")
+  fun openDirections(address: String, lat: Double = 0.0, lng: Double = 0.0) {
+    val app = getApplication<Application>()
+    val hasCoords = lat != 0.0 || lng != 0.0
+    val mapUri = if (hasCoords) {
+      Uri.parse("geo:$lat,$lng?q=$lat,$lng(${Uri.encode(address)})")
+    } else {
+      Uri.parse("geo:0,0?q=${Uri.encode(address)}")
+    }
     val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, mapUri)
-    intent.setPackage("com.google.android.apps.maps")
-    intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
-    getApplication<Application>().startActivity(intent)
+      .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+    try {
+      app.startActivity(intent)
+    } catch (e: Exception) {
+      // No app registered for geo: URIs (e.g. Google Maps not installed) — fall back
+      // to opening directions in the browser instead of failing silently.
+      val webUri = if (hasCoords) {
+        Uri.parse("https://www.google.com/maps/dir/?api=1&destination=$lat,$lng")
+      } else {
+        Uri.parse("https://www.google.com/maps/dir/?api=1&destination=${Uri.encode(address)}")
+      }
+      val webIntent = android.content.Intent(android.content.Intent.ACTION_VIEW, webUri)
+        .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+      try { app.startActivity(webIntent) } catch (_: Exception) { }
+    }
   }
 
   fun openPlayStorePage() {
@@ -1158,7 +1230,7 @@ class GroceryViewModel(
     if (raw.isBlank()) return
     val digits = raw.replace(Regex("[^0-9]"), "")
     if (digits.isBlank()) return
-    val msg = Uri.encode("Hi, I need help with the Bharat Kirana app.")
+    val msg = Uri.encode("Hi, I need help with the BreakQ app.")
     val uri = Uri.parse("https://wa.me/$digits?text=$msg")
     val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, uri).apply {
       addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)

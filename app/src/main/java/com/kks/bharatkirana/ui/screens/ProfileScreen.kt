@@ -847,7 +847,7 @@ fun ProfileScreen(
           horizontalAlignment = Alignment.CenterHorizontally
         ) {
           Text(
-            text = "Bharat Kirana v1.0.0 • com.kks.bharatkirana",
+            text = "BreakQ v1.0.0 • com.kks.bharatkirana",
             fontSize = 11.sp,
             color = BharatTextMuted,
             textAlign = TextAlign.Center
@@ -946,7 +946,7 @@ fun ProfileScreen(
           modifier = Modifier.fillMaxWidth()
         ) {
           Text(
-            text = "Show this QR code at Bharat Kirana checkout counter to verify and collect your groceries.",
+            text = "Show this QR code at BreakQ checkout counter to verify and collect your order.",
             style = MaterialTheme.typography.bodySmall,
             color = BharatTextSecondary,
             textAlign = TextAlign.Center

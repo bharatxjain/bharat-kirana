@@ -226,7 +226,7 @@ fun AdminDashboardScreen(
               Column {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                   Text(
-                    text = if (userProfile.isSuperAdmin) "Bharat Kirana Super Admin" else "Bharat Kirana Admin",
+                    text = if (userProfile.isSuperAdmin) "BreakQ Super Admin" else "BreakQ Admin",
                     style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
                     color = BharatTextPrimary
                   )
@@ -1891,7 +1891,7 @@ fun AdminStoreSettingsView(
         )
         Spacer(modifier = Modifier.height(10.dp))
 
-        SettingInfoRow("Store Outlet", "Bharat Kirana Supermart #104")
+        SettingInfoRow("Store Outlet", "BreakQ Supermart #104")
         SettingInfoRow("Store Location", "Banjara Hills Rd 12, Hyderabad")
         SettingInfoRow("Store Timings", "7:00 AM – 10:30 PM (Daily)")
         SettingInfoRow("Merchant GSTIN", "36AAAAA0000A1Z5")

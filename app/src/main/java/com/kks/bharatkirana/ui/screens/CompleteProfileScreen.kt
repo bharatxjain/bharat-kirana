@@ -1,5 +1,10 @@
 package com.kks.bharatkirana.ui.screens
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.location.Geocoder
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -18,15 +23,22 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
+import com.google.android.gms.location.LocationServices
 import com.kks.bharatkirana.R
 import com.kks.bharatkirana.data.model.AuthPath
 import com.kks.bharatkirana.data.model.UserProfile
 import com.kks.bharatkirana.ui.theme.*
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.util.Locale
 
 @Composable
 fun CompleteProfileScreen(
@@ -38,8 +50,55 @@ fun CompleteProfileScreen(
   var email by remember { mutableStateOf(userProfile.email) }
   var mobileNumber by remember { mutableStateOf(userProfile.mobileNumber) }
   var address by remember { mutableStateOf(userProfile.address) }
-  
+
   var statusMessage by remember { mutableStateOf<String?>(null) }
+
+  val context = LocalContext.current
+  val scope = rememberCoroutineScope()
+  val fusedLocationClient = remember { LocationServices.getFusedLocationProviderClient(context) }
+  var isFetchingLocation by remember { mutableStateOf(false) }
+  var locationError by remember { mutableStateOf<String?>(null) }
+
+  fun fetchAndFillAddress() {
+    isFetchingLocation = true
+    locationError = null
+    fusedLocationClient.lastLocation
+      .addOnSuccessListener { location ->
+        if (location == null) {
+          isFetchingLocation = false
+          locationError = "Couldn't detect your location. Please enter your address manually."
+          return@addOnSuccessListener
+        }
+        scope.launch {
+          val resolvedAddress = withContext(Dispatchers.IO) {
+            runCatching {
+              @Suppress("DEPRECATION")
+              Geocoder(context, Locale.getDefault())
+                .getFromLocation(location.latitude, location.longitude, 1)
+                ?.firstOrNull()
+                ?.getAddressLine(0)
+            }.getOrNull()
+          }
+          isFetchingLocation = false
+          if (!resolvedAddress.isNullOrBlank()) {
+            address = resolvedAddress
+          } else {
+            locationError = "Couldn't resolve an address for your location. Please enter it manually."
+          }
+        }
+      }
+      .addOnFailureListener {
+        isFetchingLocation = false
+        locationError = "Couldn't detect your location. Please enter your address manually."
+      }
+  }
+
+  val locationPermissionLauncher = rememberLauncherForActivityResult(
+    ActivityResultContracts.RequestPermission()
+  ) { granted ->
+    if (granted) fetchAndFillAddress()
+    else locationError = "Location permission denied. Please enter your address manually."
+  }
 
   Surface(
     modifier = modifier.fillMaxSize(),
@@ -170,6 +229,35 @@ fun CompleteProfileScreen(
           
           Text(text = "Delivery Address", fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = BharatTextPrimary)
           Spacer(modifier = Modifier.height(6.dp))
+
+          OutlinedButton(
+            onClick = {
+              val hasPermission = ContextCompat.checkSelfPermission(
+                context, Manifest.permission.ACCESS_FINE_LOCATION
+              ) == PackageManager.PERMISSION_GRANTED
+              if (hasPermission) fetchAndFillAddress()
+              else locationPermissionLauncher.launch(Manifest.permission.ACCESS_FINE_LOCATION)
+            },
+            enabled = !isFetchingLocation,
+            modifier = Modifier.fillMaxWidth().testTag("use_current_location_button"),
+            shape = RoundedCornerShape(12.dp)
+          ) {
+            if (isFetchingLocation) {
+              CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = BharatPurplePrimary)
+              Spacer(modifier = Modifier.width(8.dp))
+              Text("Detecting your location...", color = BharatPurplePrimary, fontWeight = FontWeight.SemiBold)
+            } else {
+              Icon(Icons.Default.MyLocation, contentDescription = null, tint = BharatPurplePrimary, modifier = Modifier.size(18.dp))
+              Spacer(modifier = Modifier.width(8.dp))
+              Text("Use My Current Location", color = BharatPurplePrimary, fontWeight = FontWeight.SemiBold)
+            }
+          }
+          if (locationError != null) {
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(locationError!!, fontSize = 11.sp, color = Color(0xFFDC2626))
+          }
+          Spacer(modifier = Modifier.height(8.dp))
+
           OutlinedTextField(
             value = address,
             onValueChange = { address = it },

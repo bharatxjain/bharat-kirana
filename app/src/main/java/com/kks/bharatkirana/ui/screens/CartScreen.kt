@@ -188,7 +188,7 @@ fun CartScreen(
             )
             Spacer(modifier = Modifier.height(6.dp))
             Text(
-              text = "Explore fresh grains, dairy, and daily essentials from Bharat Kirana.",
+              text = "Explore fresh grains, dairy, and daily essentials from BreakQ.",
               style = MaterialTheme.typography.bodySmall,
               color = BharatTextSecondary,
               textAlign = androidx.compose.ui.text.style.TextAlign.Center

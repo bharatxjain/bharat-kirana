@@ -58,6 +58,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.kks.bharatkirana.R
+import com.kks.bharatkirana.data.model.Shop
+import com.kks.bharatkirana.data.model.isCurrentlyOpen
 import com.kks.bharatkirana.ui.theme.BharatBackground
 import com.kks.bharatkirana.ui.theme.BharatGreen
 import com.kks.bharatkirana.ui.theme.BharatPurpleContainer
@@ -69,19 +71,22 @@ import com.kks.bharatkirana.ui.theme.BharatTextSecondary
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun StoreInfoScreen(
+  shop: Shop?,
   onBackClick: () -> Unit,
   onViewCatalog: () -> Unit,
-  onOpenDirections: (String) -> Unit = { },
+  onOpenDirections: (address: String, lat: Double, lng: Double) -> Unit = { _, _, _ -> },
   modifier: Modifier = Modifier
 ) {
   val context = LocalContext.current
-  val storePhone = "+91 9876543210"
-  val storeAddress = "Banjara Hills Rd 12, Hyderabad, TS 500034"
-  val storeHours = "7:00 AM – 10:30 PM"
-  
+  val storeName = shop?.name?.takeIf { it.isNotBlank() } ?: "BreakQ Store"
+  val storePhone = shop?.phone?.takeIf { it.isNotBlank() } ?: "+91 9876543210"
+  val storeAddress = shop?.address?.takeIf { it.isNotBlank() } ?: "Banjara Hills Rd 12, Hyderabad, TS 500034"
+  val storeHours = if (shop != null) "${shop.openTime} – ${shop.closeTime}" else "7:00 AM – 10:30 PM"
+  val hasCoords = shop != null && (shop.lat != 0.0 || shop.lng != 0.0)
+
   // Helper to open Google Maps
   val openMaps = {
-    onOpenDirections(storeAddress)
+    onOpenDirections(storeAddress, shop?.lat ?: 0.0, shop?.lng ?: 0.0)
   }
 
   Scaffold(
@@ -163,7 +168,7 @@ fun StoreInfoScreen(
               modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 12.dp)
             ) {
               Text(
-                text = "Tap to view on Google Maps",
+                text = if (hasCoords) "Tap to view exact location on Maps" else "Tap to search this address on Maps",
                 color = Color.White,
                 fontSize = 11.sp,
                 modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
@@ -177,9 +182,9 @@ fun StoreInfoScreen(
       item {
         StoreDetailCard(
           icon = Icons.Default.Storefront,
-          title = "Bharat Kirana Store",
+          title = storeName,
           subtitle = storeAddress,
-          badge = "Open Now"
+          badge = if (shop?.isCurrentlyOpen() != false) "Open Now" else "Closed"
         )
       }
 

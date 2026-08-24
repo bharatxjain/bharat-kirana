@@ -62,6 +62,8 @@ fun MainScreen(
   val isOrderPlacing by viewModel.isOrderPlacing.collectAsState()
   val shops by viewModel.shops.collectAsState()
   val activeShopId by viewModel.activeShopId.collectAsState()
+  val notifications by viewModel.notifications.collectAsState()
+  val unreadNotificationCount by viewModel.unreadNotificationCount.collectAsState()
 
   // Round 3: Remote Config-driven state
   val isMaintenanceMode by viewModel.isMaintenanceMode.collectAsState()
@@ -158,23 +160,22 @@ fun MainScreen(
             viewModel.navigateTo(AppScreen.TermsOfService)
           },
           onAuthSuccess = { email: String, role: UserRole, path: AuthPath ->
-            viewModel.login(email, authPath = path)
-            val user = viewModel.userProfile.value
-            val isAdmin = user.isAdmin
-
-            when {
-              isAdmin -> viewModel.navigateTo(AppScreen.AdminDashboard)
-              !user.profileCompleted -> {
-                viewModel.setPendingSignupRole(role)
-                viewModel.navigateTo(AppScreen.CompleteProfile)
-              }
-              user.isVendor -> viewModel.navigateTo(AppScreen.VendorDashboard)
-              role == UserRole.VENDOR -> {
-                viewModel.setPendingSignupRole(role)
-                viewModel.navigateTo(AppScreen.VendorRegistration)
-              }
-              else -> {
-                viewModel.navigateTo(AppScreen.CustomerOnboarding)
+            viewModel.login(email, authPath = path) { user ->
+              val isAdmin = user.isAdmin
+              when {
+                isAdmin -> viewModel.navigateTo(AppScreen.AdminDashboard)
+                !user.profileCompleted -> {
+                  viewModel.setPendingSignupRole(role)
+                  viewModel.navigateTo(AppScreen.CompleteProfile)
+                }
+                user.isVendor -> viewModel.navigateTo(AppScreen.VendorDashboard)
+                role == UserRole.VENDOR -> {
+                  viewModel.setPendingSignupRole(role)
+                  viewModel.navigateTo(AppScreen.VendorRegistration)
+                }
+                else -> {
+                  viewModel.navigateTo(AppScreen.CustomerOnboarding)
+                }
               }
             }
           }
@@ -345,11 +346,25 @@ fun MainScreen(
 
       is AppScreen.StoreInfo -> {
         StoreInfoScreen(
+          shop = shops.find { it.id == activeShopId },
           onBackClick = { viewModel.navigateBack() },
           onViewCatalog = {
             viewModel.setTab(MainTab.HOME)
           },
-          onOpenDirections = { addr -> viewModel.openDirections(addr) }
+          onOpenDirections = { addr, lat, lng -> viewModel.openDirections(addr, lat, lng) }
+        )
+      }
+
+      is AppScreen.Notifications -> {
+        NotificationsScreen(
+          notifications = notifications,
+          onBackClick = { viewModel.navigateBack() },
+          onNotificationClick = { notification ->
+            viewModel.markNotificationRead(notification.id)
+            if (notification.orderId != null) {
+              viewModel.navigateTo(AppScreen.OrderDetails(notification.orderId))
+            }
+          }
         )
       }
 
@@ -581,10 +596,12 @@ fun MainScreen(
                     onProfileClick = { viewModel.setTab(MainTab.PROFILE) },
                     onStoreClick = { viewModel.navigateTo(AppScreen.StoreInfo) },
                     onChangeStoreClick = { viewModel.selectShop(null) },
-                    onAdminClick = { 
+                    onAdminClick = {
                       if (userProfile.isSuperAdmin) viewModel.navigateTo(AppScreen.AdminDashboard)
                       else if (userProfile.isVendor) viewModel.navigateTo(AppScreen.VendorDashboard)
                     },
+                    onNotificationsClick = { viewModel.navigateTo(AppScreen.Notifications) },
+                    unreadNotificationCount = unreadNotificationCount,
                     promoBanner = promoBanner,
                     isLoading = isLoading,
                     activeShopId = activeShopId
@@ -693,23 +710,22 @@ fun MainScreen(
                       viewModel.navigateTo(AppScreen.TermsOfService)
                     },
                     onAuthSuccess = { email: String, role: UserRole, path: AuthPath ->
-                      viewModel.login(email, authPath = path)
-                      val user = viewModel.userProfile.value
-                      val isAdmin = user.isAdmin
-
-                      when {
-                        isAdmin -> viewModel.navigateTo(AppScreen.AdminDashboard)
-                        !user.profileCompleted -> {
-                          viewModel.setPendingSignupRole(role)
-                          viewModel.navigateTo(AppScreen.CompleteProfile)
-                        }
-                        user.isVendor -> viewModel.navigateTo(AppScreen.VendorDashboard)
-                        role == UserRole.VENDOR -> {
-                          viewModel.setPendingSignupRole(role)
-                          viewModel.navigateTo(AppScreen.VendorRegistration)
-                        }
-                        else -> {
-                           viewModel.navigateTo(AppScreen.CustomerOnboarding)
+                      viewModel.login(email, authPath = path) { user ->
+                        val isAdmin = user.isAdmin
+                        when {
+                          isAdmin -> viewModel.navigateTo(AppScreen.AdminDashboard)
+                          !user.profileCompleted -> {
+                            viewModel.setPendingSignupRole(role)
+                            viewModel.navigateTo(AppScreen.CompleteProfile)
+                          }
+                          user.isVendor -> viewModel.navigateTo(AppScreen.VendorDashboard)
+                          role == UserRole.VENDOR -> {
+                            viewModel.setPendingSignupRole(role)
+                            viewModel.navigateTo(AppScreen.VendorRegistration)
+                          }
+                          else -> {
+                             viewModel.navigateTo(AppScreen.CustomerOnboarding)
+                          }
                         }
                       }
                     }
@@ -814,7 +830,7 @@ private fun MaintenanceOverlay() {
       )
       Spacer(modifier = Modifier.height(8.dp))
       Text(
-        text = "Bharat Kirana is under scheduled maintenance. Please try again in a few minutes.",
+        text = "BreakQ is under scheduled maintenance. Please try again in a few minutes.",
         style = MaterialTheme.typography.bodyMedium,
         color = BharatTextSecondary,
         textAlign = TextAlign.Center
@@ -836,9 +852,9 @@ private fun UpdateAvailableDialog(
     text = {
       Text(
         text = if (forced)
-          "This version of Bharat Kirana is no longer supported. Please update to continue."
+          "This version of BreakQ is no longer supported. Please update to continue."
         else
-          "A new version of Bharat Kirana is ready with improvements and fixes.",
+          "A new version of BreakQ is ready with improvements and fixes.",
         color = BharatTextSecondary
       )
     },

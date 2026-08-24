@@ -67,6 +67,8 @@ fun HomeScreen(
   onChangeStoreClick: () -> Unit,
   onViewCartClick: () -> Unit,
   onAdminClick: () -> Unit = {},
+  onNotificationsClick: () -> Unit = {},
+  unreadNotificationCount: Int = 0,
   promoBanner: String? = null,
   isLoading: Boolean = false,
   activeShopId: String? = null,
@@ -101,10 +103,12 @@ fun HomeScreen(
           storeName = userProfile.activeStore,
           userInitial = userProfile.fullName.firstOrNull()?.toString() ?: "R",
           isAdmin = userProfile.isAdmin,
+          unreadNotificationCount = unreadNotificationCount,
           onProfileClick = onProfileClick,
           onStoreClick = onStoreClick,
           onChangeStoreClick = onChangeStoreClick,
-          onAdminClick = onAdminClick
+          onAdminClick = onAdminClick,
+          onNotificationsClick = onNotificationsClick
         )
       }
 

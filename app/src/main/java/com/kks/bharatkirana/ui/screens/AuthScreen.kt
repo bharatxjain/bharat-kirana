@@ -118,7 +118,7 @@ fun AuthScreen(
           ) {
             Icon(
               imageVector = Icons.Default.Storefront,
-              contentDescription = "Bharat Kirana",
+              contentDescription = "BreakQ",
               tint = Color.White,
               modifier = Modifier.size(32.dp)
             )
@@ -681,7 +681,7 @@ fun TextButton(onClick: () -> Unit, content: @Composable () -> Unit) {
 private fun SignupRolePicker(onChoose: (UserRole) -> Unit) {
   Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
     Text(
-      text = "How will you use Bharat Kirana?",
+      text = "How will you use BreakQ?",
       style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
       color = BharatTextPrimary
     )

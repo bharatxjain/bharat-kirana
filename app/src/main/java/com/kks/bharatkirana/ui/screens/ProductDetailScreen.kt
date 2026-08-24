@@ -107,7 +107,7 @@ fun ProductDetailScreen(
             onClick = { 
               val sendIntent: Intent = Intent().apply {
                 action = Intent.ACTION_SEND
-                putExtra(Intent.EXTRA_TEXT, "Check out ${product.name} on Bharat Kirana! Price: ₹${selectedWeight.price}")
+                putExtra(Intent.EXTRA_TEXT, "Check out ${product.name} on BreakQ! Price: ₹${selectedWeight.price}")
                 type = "text/plain"
               }
               val shareIntent = Intent.createChooser(sendIntent, null)

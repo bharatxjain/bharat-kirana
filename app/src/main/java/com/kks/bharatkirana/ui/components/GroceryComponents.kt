@@ -52,13 +52,15 @@ import com.kks.bharatkirana.ui.theme.*
 
 @Composable
 fun StoreLocationHeader(
-  storeName: String = "Bharat Kirana Store",
+  storeName: String = "BreakQ Store",
   userInitial: String = "R",
   isAdmin: Boolean = false,
+  unreadNotificationCount: Int = 0,
   onProfileClick: () -> Unit = {},
   onStoreClick: () -> Unit = {},
   onChangeStoreClick: () -> Unit = {},
-  onAdminClick: () -> Unit = {}
+  onAdminClick: () -> Unit = {},
+  onNotificationsClick: () -> Unit = {}
 ) {
   Row(
     modifier = Modifier
@@ -135,7 +137,39 @@ fun StoreLocationHeader(
         }
         Spacer(modifier = Modifier.width(8.dp))
       }
-      
+
+      Box {
+        IconButton(
+          onClick = onNotificationsClick,
+          modifier = Modifier.size(36.dp).testTag("notifications_bell_icon")
+        ) {
+          Icon(
+            imageVector = Icons.Default.Notifications,
+            contentDescription = "Notifications",
+            tint = BharatTextPrimary
+          )
+        }
+        if (unreadNotificationCount > 0) {
+          Box(
+            modifier = Modifier
+              .align(Alignment.TopEnd)
+              .padding(top = 4.dp, end = 4.dp)
+              .size(16.dp)
+              .clip(CircleShape)
+              .background(Color(0xFFDC2626)),
+            contentAlignment = Alignment.Center
+          ) {
+            Text(
+              text = if (unreadNotificationCount > 9) "9+" else unreadNotificationCount.toString(),
+              color = Color.White,
+              fontSize = 9.sp,
+              fontWeight = FontWeight.Bold
+            )
+          }
+        }
+      }
+      Spacer(modifier = Modifier.width(4.dp))
+
       IconButton(
         onClick = onProfileClick,
         modifier = Modifier
@@ -649,7 +683,7 @@ fun CartFloatingBanner(
 
 @Composable
 fun StorePickupCard(
-  storeName: String = "Bharat Kirana Store",
+  storeName: String = "BreakQ Store",
   storeAddress: String = "Banjara Hills Rd 12, Hyderabad",
   timeSlot: String = "Ready in ~15 mins",
   modifier: Modifier = Modifier

@@ -187,6 +187,54 @@ class SupabaseGroceryRepo(
     }
 
   /**
+   * Fetch this user's in-app notifications (written by the notify-order-status Edge
+   * Function alongside every push it sends — see SETUP_STEPS.md Task 3).
+   */
+  suspend fun fetchNotifications(userId: String, accessToken: String? = null): Result<List<com.kks.bharatkirana.data.model.AppNotification>> =
+    withContext(Dispatchers.IO) {
+      runCatching {
+        val url = "${SupabaseConfig.restUrl}/notifications?user_id=eq.$userId&select=*&order=created_at.desc&limit=50"
+        val request = baseRequestBuilder(url, accessToken).get().build()
+        val response = client.newCall(request).execute()
+        val body = response.body?.string() ?: ""
+        if (!response.isSuccessful) throw Exception("Failed to fetch notifications: HTTP ${response.code}")
+
+        val array = JSONArray(body)
+        val list = mutableListOf<com.kks.bharatkirana.data.model.AppNotification>()
+        for (i in 0 until array.length()) {
+          val obj = array.getJSONObject(i)
+          list.add(
+            com.kks.bharatkirana.data.model.AppNotification(
+              id = obj.optString("id"),
+              title = obj.optString("title"),
+              message = obj.optString("message"),
+              isRead = obj.optBoolean("is_read", false),
+              orderId = obj.optString("order_id").takeIf { it.isNotBlank() },
+              createdAt = obj.optString("created_at")
+            )
+          )
+        }
+        list
+      }
+    }
+
+  suspend fun markNotificationRead(notificationId: String, accessToken: String? = null): Result<Unit> =
+    withContext(Dispatchers.IO) {
+      runCatching {
+        val url = "${SupabaseConfig.restUrl}/notifications?id=eq.$notificationId"
+        val payload = JSONObject().apply { put("is_read", true) }
+        val request = baseRequestBuilder(url, accessToken)
+          .addHeader("Prefer", "return=minimal")
+          .patch(payload.toString().toRequestBody(jsonMediaType))
+          .build()
+        val response = client.newCall(request).execute()
+        if (!response.isSuccessful) {
+          throw Exception("Failed to mark notification read: HTTP ${response.code}")
+        }
+      }
+    }
+
+  /**
    * Add Product in Supabase (Store Admin)
    */
   suspend fun addProduct(product: Product, accessToken: String? = null): Result<Unit> =

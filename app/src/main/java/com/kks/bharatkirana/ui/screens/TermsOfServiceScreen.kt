@@ -140,7 +140,7 @@ fun TermsOfServiceScreen(
             Spacer(modifier = Modifier.width(14.dp))
             Column {
               Text(
-                text = "Bharat Kirana User Agreement",
+                text = "BreakQ User Agreement",
                 style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
                 color = BharatPurpleDark
               )
@@ -159,7 +159,7 @@ fun TermsOfServiceScreen(
         TermsSectionCard(
           icon = Icons.Default.AssignmentTurnedIn,
           title = "1. Acceptance of Terms",
-          content = "By downloading, installing, accessing, or using the Bharat Kirana mobile application (Package: com.kkspvt.bharatkirana.xrvk, provided by KKS PVT), you acknowledge that you have read, understood, and agree to be legally bound by these Terms of Service and our associated Privacy Policy. If you do not agree to all terms, please refrain from using the application."
+          content = "By downloading, installing, accessing, or using the BreakQ mobile application (Package: com.kkspvt.bharatkirana.xrvk, provided by KKS PVT), you acknowledge that you have read, understood, and agree to be legally bound by these Terms of Service and our associated Privacy Policy. If you do not agree to all terms, please refrain from using the application."
         )
       }
 
@@ -179,7 +179,7 @@ fun TermsOfServiceScreen(
         TermsSectionCard(
           icon = Icons.Default.Storefront,
           title = "3. Orders & Express Pickup Policy",
-          content = "• Pickup Model: Bharat Kirana operates an express store-pickup retail model. Orders placed via the app are prepared at the selected partner store branch.\n" +
+          content = "• Pickup Model: BreakQ operates an express store-pickup retail model. Orders placed via the app are prepared at the selected partner store branch.\n" +
               "• Digital Pickup Tokens: When an order is marked ready, a unique QR pass is generated on your screen. You must present this token at the store counter to collect items.\n" +
               "• Collection Window: Prepared grocery orders are held for pickup within the specified operating store hours. Items not picked up may be returned to store shelves."
         )
@@ -234,7 +234,7 @@ fun TermsOfServiceScreen(
         TermsSectionCard(
           icon = Icons.Default.Gavel,
           title = "8. Governing Law & Dispute Resolution",
-          content = "These Terms are governed by and construed in accordance with the laws of the Republic of India. Any disputes arising in connection with the Bharat Kirana application or store services shall be subject to the exclusive jurisdiction of the competent courts in Hyderabad, Telangana, India."
+          content = "These Terms are governed by and construed in accordance with the laws of the Republic of India. Any disputes arising in connection with the BreakQ application or store services shall be subject to the exclusive jurisdiction of the competent courts in Hyderabad, Telangana, India."
         )
       }
 
@@ -288,7 +288,7 @@ fun TermsOfServiceScreen(
             ) {
               Column(modifier = Modifier.padding(12.dp)) {
                 Text(
-                  text = "Legal Entity: KKS PVT (Bharat Kirana)",
+                  text = "Legal Entity: KKS PVT (BreakQ)",
                   fontWeight = FontWeight.Bold,
                   fontSize = 13.sp,
                   color = BharatTextPrimary

@@ -37,7 +37,7 @@ object BharatRemoteConfig {
           Keys.DEFAULT_SHOP_RADIUS_KM to 5L,
           Keys.MIN_SUPPORTED_VERSION_CODE to 1L,
           Keys.LATEST_VERSION_CODE to 1L,
-          Keys.PROMO_BANNER_TEXT to "Welcome to Bharat Kirana! \uD83D\uDED2",
+          Keys.PROMO_BANNER_TEXT to "Welcome to BreakQ! \uD83D\uDED2",
           Keys.PROMO_BANNER_ENABLED to true,
           Keys.MAINTENANCE_MODE to false,
           Keys.SUPPORT_WHATSAPP_NUMBER to ""

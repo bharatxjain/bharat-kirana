@@ -17,7 +17,7 @@ class GroceryRepository {
   fun getShops(): List<Shop> = listOf(
     Shop(
       id = "s_bharat_kirana",
-      name = "Bharat Kirana Store",
+      name = "BreakQ Store",
       ownerName = "Bharat Jain",
       address = "Banjara Hills Rd 12, Hyderabad",
       lat = 17.4123,

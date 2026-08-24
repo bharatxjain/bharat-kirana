@@ -147,8 +147,8 @@ data class UserProfile(
   val isLoyaltyMember: Boolean = false,
   val loyaltyPoints: Int = 0,
   val walletBalance: Int = 0,
-  val activeStore: String = "Bharat Kirana Store, Hyderabad",
-  val activeStoreAddress: String = "Bharat Kirana Store, Banjara Hills Rd 12, Hyderabad",
+  val activeStore: String = "BreakQ Store, Hyderabad",
+  val activeStoreAddress: String = "BreakQ Store, Banjara Hills Rd 12, Hyderabad",
   val shopId: String? = null, // For vendors
   val profileCompleted: Boolean = false,
   val phoneVerified: Boolean = false,
@@ -209,7 +209,7 @@ data class Order(
   val orderDate: String, // e.g. "Today, 2:30 PM"
   val status: OrderStatus = OrderStatus.READY_FOR_PICKUP,
   val expectedPickupTime: String = "Today by 5:00 PM",
-  val storeName: String = "Bharat Kirana Store",
+  val storeName: String = "BreakQ Store",
   val storeAddress: String = "Banjara Hills Rd 12, Hyderabad",
   val timeline: List<OrderTimelineItem> = emptyList(),
   val qrCodePayload: String = "",
@@ -240,7 +240,21 @@ sealed class AppScreen {
   data object Subscription : AppScreen()
   data class ShopsForProduct(val productName: String) : AppScreen()
   data class ResetPassword(val accessToken: String) : AppScreen()
+  data object Notifications : AppScreen()
 }
+
+/**
+ * An in-app notification row, mirrored from the `notifications` table (also written by
+ * the `notify-order-status` Edge Function when it sends a matching push — see SETUP_STEPS.md).
+ */
+data class AppNotification(
+  val id: String,
+  val title: String,
+  val message: String,
+  val isRead: Boolean = false,
+  val orderId: String? = null,
+  val createdAt: String = ""
+)
 
 /**
  * A single row in the search-suggestions dropdown. Two variants: a product
