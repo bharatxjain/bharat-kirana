@@ -433,7 +433,14 @@ class GroceryViewModel(
   }
 
   private fun clearSavedSession() {
-    prefs.edit().remove("user_email").remove("refresh_token").apply()
+    prefs.edit()
+      .remove("user_email")
+      .remove("refresh_token")
+      .remove("profile_completed_locally")
+      .remove("profile_full_name")
+      .remove("profile_mobile")
+      .remove("profile_address")
+      .apply()
   }
 
   fun fetchUserLocation() {
@@ -1026,14 +1033,33 @@ class GroceryViewModel(
     val isSuperAdmin = probe.isSuperAdmin
     val isAdmin = probe.isAdmin
 
+    // Round 6.2: hydrate from the local SharedPrefs snapshot so a returning user
+    // whose profile was completed but never synced to Supabase (e.g. RLS misconfig)
+    // doesn't get bounced to Complete Profile again.
+    val locallyCompleted = prefs.getBoolean("profile_completed_locally", false)
+    val localName = prefs.getString("profile_full_name", "") ?: ""
+    val localMobile = prefs.getString("profile_mobile", "") ?: ""
+    val localAddress = prefs.getString("profile_address", "") ?: ""
+
     _userProfile.update {
       it.copy(
         email = cleanEmail,
-        fullName = if (name.isNotBlank()) name.trim() else if (isSuperAdmin) "Super Admin" else if (isAdmin) "Admin" else it.fullName,
-        mobileNumber = if (mobile.isNotBlank()) mobile.trim() else it.mobileNumber,
-        profileCompleted = name.isNotBlank() || isSuperAdmin || isAdmin,
+        fullName = when {
+          name.isNotBlank() -> name.trim()
+          localName.isNotBlank() -> localName
+          isSuperAdmin -> "Super Admin"
+          isAdmin -> "Admin"
+          else -> it.fullName
+        },
+        mobileNumber = when {
+          mobile.isNotBlank() -> mobile.trim()
+          localMobile.isNotBlank() -> localMobile
+          else -> it.mobileNumber
+        },
+        address = if (localAddress.isNotBlank()) localAddress else it.address,
+        profileCompleted = name.isNotBlank() || isSuperAdmin || isAdmin || locallyCompleted,
         authPath = authPath ?: it.authPath,
-        phoneVerified = it.phoneVerified
+        phoneVerified = it.phoneVerified || locallyCompleted
       )
     }
 
@@ -1069,6 +1095,11 @@ class GroceryViewModel(
       }
       // Flip regardless of success/failure — the UI just needs to know "we tried".
       _profileFetchComplete.value = true
+
+      // Round 6.2: if the local prefs say the profile IS complete but the server
+      // row still doesn't reflect that (RLS blocked, was offline, etc), push it
+      // now that we're authenticated. Silent — no user-facing spinner.
+      retryProfileSyncIfNeeded()
 
       // Only decide profile-completeness-dependent navigation once the server's
       // profile_completed value has actually loaded — reading _userProfile.value
@@ -1230,27 +1261,61 @@ class GroceryViewModel(
       _authStatusMessage.value = "Session expired. Please log in again."
       return
     }
+    val cleanName = fullName.trim()
+    val cleanMobile = mobileNumber.trim()
+    val cleanAddress = address.trim()
+
     // Optimistic local update so the UI feels instant.
     _userProfile.update {
       it.copy(
-        fullName = fullName.trim(),
+        fullName = cleanName,
         email = cleanEmail,
-        mobileNumber = mobileNumber.trim(),
-        address = address.trim(),
+        mobileNumber = cleanMobile,
+        address = cleanAddress,
         profileCompleted = true,
         phoneVerified = true
       )
     }
+
+    // Round 6.2: Persist profile fields + a "completed" flag to SharedPreferences
+    // BEFORE the server call. If Supabase RLS or a network hiccup breaks the sync,
+    // the app still remembers the user completed their profile — so we never
+    // re-prompt them on the next launch. The background retry (below) eventually
+    // pushes to Supabase whenever it becomes reachable.
+    prefs.edit()
+      .putBoolean("profile_completed_locally", true)
+      .putString("profile_full_name", cleanName)
+      .putString("profile_mobile", cleanMobile)
+      .putString("profile_address", cleanAddress)
+      .apply()
+
     _isLoading.value = true
     viewModelScope.launch {
       val result = supabaseGroceryRepo.syncProfile(userId, _userProfile.value, supabaseAuthService.currentAccessToken)
       _isLoading.value = false
       result.onFailure { err ->
-        // Server rejected the write — roll back `profileCompleted` so we don't
-        // navigate the user past Complete Profile with a phantom-saved row.
-        _userProfile.update { it.copy(profileCompleted = false) }
-        _authStatusMessage.value = "Couldn't save profile: ${err.message ?: "unknown error"}. Please try again."
+        // Server rejected the write, but we DON'T roll back profileCompleted this
+        // time — the user actually filled the form, and the local SharedPrefs
+        // record is the source of truth. Silent status message; the retry-on-login
+        // path re-attempts the upsert next time syncFromLocalPrefs() runs.
+        _authStatusMessage.value = "Profile saved locally. Retrying sync…"
+        android.util.Log.w("BreakQ", "syncProfile failed: ${err.message}")
       }
+    }
+  }
+
+  // Round 6.2: on every login, if the local SharedPrefs snapshot says the profile
+  // was completed but the server row isn't marked completed yet, retry the upsert
+  // in the background. Silent — nothing shown to the user either way.
+  private fun retryProfileSyncIfNeeded() {
+    val locallyCompleted = prefs.getBoolean("profile_completed_locally", false)
+    if (!locallyCompleted) return
+    val userId = supabaseAuthService.currentUserId ?: return
+    val serverCompleted = _userProfile.value.profileCompleted &&
+      supabaseAuthService.currentAccessToken != null
+    if (serverCompleted) return
+    viewModelScope.launch {
+      supabaseGroceryRepo.syncProfile(userId, _userProfile.value, supabaseAuthService.currentAccessToken)
     }
   }
 

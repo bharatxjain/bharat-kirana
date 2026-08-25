@@ -18,6 +18,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
@@ -37,6 +38,9 @@ fun NearbyShopsScreen(
   onShopClick: (Shop) -> Unit,
   onProfileClick: () -> Unit,
   onBackClick: () -> Unit,
+  userInitial: String = "U",
+  unreadNotificationCount: Int = 0,
+  onNotificationsClick: () -> Unit = {},
   modifier: Modifier = Modifier
 ) {
   var searchQuery by remember { mutableStateOf("") }
@@ -113,21 +117,57 @@ fun NearbyShopsScreen(
               tint = BharatPurplePrimary
             )
           }
-          IconButton(onClick = onProfileClick) {
-            Box(
-              modifier = Modifier
-                .size(36.dp)
-                .clip(CircleShape)
-                .background(Color(0xFFF3E8FF)),
-              contentAlignment = Alignment.Center
+          // Notification bell with unread badge (same behavior as HomeScreen).
+          Box {
+            IconButton(
+              onClick = onNotificationsClick,
+              modifier = Modifier.size(36.dp)
             ) {
-              Image(
-                painter = painterResource(id = R.drawable.img_welcome_hero),
-                contentDescription = "Profile",
-                modifier = Modifier.fillMaxSize(),
-                contentScale = ContentScale.Crop
+              Icon(
+                imageVector = Icons.Default.Notifications,
+                contentDescription = "Notifications",
+                tint = BharatPurplePrimary
               )
             }
+            if (unreadNotificationCount > 0) {
+              Box(
+                modifier = Modifier
+                  .align(Alignment.TopEnd)
+                  .padding(top = 4.dp, end = 4.dp)
+                  .size(16.dp)
+                  .clip(CircleShape)
+                  .background(Color(0xFFDC2626)),
+                contentAlignment = Alignment.Center
+              ) {
+                Text(
+                  text = if (unreadNotificationCount > 9) "9+" else unreadNotificationCount.toString(),
+                  color = Color.White,
+                  fontSize = 9.sp,
+                  fontWeight = FontWeight.Bold
+                )
+              }
+            }
+          }
+          Spacer(modifier = Modifier.width(4.dp))
+          // Round 6.1: circular gradient avatar with the user's initial (matches Home).
+          val initial = userInitial.trim().firstOrNull()?.uppercaseChar()?.toString() ?: "U"
+          Box(
+            modifier = Modifier
+              .padding(end = 8.dp)
+              .size(36.dp)
+              .clip(CircleShape)
+              .background(
+                Brush.linearGradient(listOf(BharatPurplePrimary, BharatPurpleAccent))
+              )
+              .clickable(onClick = onProfileClick),
+            contentAlignment = Alignment.Center
+          ) {
+            Text(
+              text = initial,
+              color = Color.White,
+              fontWeight = FontWeight.Bold,
+              fontSize = 16.sp
+            )
           }
         },
         colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.White)

@@ -232,7 +232,7 @@ fun CompleteProfileScreen(
 
           Spacer(modifier = Modifier.height(16.dp))
           
-          Text(text = "Delivery Address", fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = BharatTextPrimary)
+          Text(text = "Your Address", fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = BharatTextPrimary)
           Spacer(modifier = Modifier.height(6.dp))
 
           OutlinedButton(

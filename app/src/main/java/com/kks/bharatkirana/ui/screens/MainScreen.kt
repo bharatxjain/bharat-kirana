@@ -383,7 +383,10 @@ fun MainScreen(
           onProfileClick = {
             viewModel.setTab(MainTab.PROFILE)
           },
-          onBackClick = { viewModel.navigateBack() }
+          onBackClick = { viewModel.navigateBack() },
+          userInitial = userProfile.fullName.firstOrNull()?.toString() ?: "U",
+          unreadNotificationCount = unreadNotificationCount,
+          onNotificationsClick = { viewModel.navigateTo(AppScreen.Notifications) }
         )
       }
 
@@ -575,7 +578,10 @@ fun MainScreen(
                     onProfileClick = {
                       viewModel.setTab(MainTab.PROFILE)
                     },
-                    onBackClick = { /* Home Root */ }
+                    onBackClick = { /* Home Root */ },
+                    userInitial = userProfile.fullName.firstOrNull()?.toString() ?: "U",
+                    unreadNotificationCount = unreadNotificationCount,
+                    onNotificationsClick = { viewModel.navigateTo(AppScreen.Notifications) }
                   )
                 } else {
                   HomeScreen(
@@ -620,7 +626,10 @@ fun MainScreen(
                     shops = shops,
                     onShopClick = { shop -> viewModel.selectShop(shop.id) },
                     onProfileClick = { viewModel.setTab(MainTab.PROFILE) },
-                    onBackClick = { viewModel.setTab(MainTab.HOME) }
+                    onBackClick = { viewModel.setTab(MainTab.HOME) },
+                    userInitial = userProfile.fullName.firstOrNull()?.toString() ?: "U",
+                    unreadNotificationCount = unreadNotificationCount,
+                    onNotificationsClick = { viewModel.navigateTo(AppScreen.Notifications) }
                   )
                 } else {
                   CategoriesScreen(
@@ -649,7 +658,10 @@ fun MainScreen(
                     shops = shops,
                     onShopClick = { shop -> viewModel.selectShop(shop.id) },
                     onProfileClick = { viewModel.setTab(MainTab.PROFILE) },
-                    onBackClick = { viewModel.setTab(MainTab.HOME) }
+                    onBackClick = { viewModel.setTab(MainTab.HOME) },
+                    userInitial = userProfile.fullName.firstOrNull()?.toString() ?: "U",
+                    unreadNotificationCount = unreadNotificationCount,
+                    onNotificationsClick = { viewModel.navigateTo(AppScreen.Notifications) }
                   )
                 } else {
                   SearchScreen(
