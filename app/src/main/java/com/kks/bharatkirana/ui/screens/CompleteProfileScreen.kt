@@ -62,7 +62,12 @@ fun CompleteProfileScreen(
   fun fetchAndFillAddress() {
     isFetchingLocation = true
     locationError = null
-    fusedLocationClient.lastLocation
+    // High-accuracy fresh fix, not the cached lastLocation — a stale cached fix
+    // (e.g. from before the user travelled here) would auto-fill the wrong address.
+    fusedLocationClient.getCurrentLocation(
+      com.google.android.gms.location.Priority.PRIORITY_HIGH_ACCURACY,
+      null
+    )
       .addOnSuccessListener { location ->
         if (location == null) {
           isFetchingLocation = false

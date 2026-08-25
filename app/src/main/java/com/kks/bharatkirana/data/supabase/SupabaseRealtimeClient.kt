@@ -65,13 +65,15 @@ class SupabaseRealtimeClient(
     val ws = webSocket ?: return
     token ?: return
     if (!isConnected) return
-    val msg = JSONObject().apply {
-      put("topic", "realtime:public:orders")
-      put("event", "access_token")
-      put("payload", JSONObject().put("access_token", token))
-      put("ref", nextRef())
+    for (topic in listOf("realtime:public:orders", "realtime:public:notifications")) {
+      val msg = JSONObject().apply {
+        put("topic", topic)
+        put("event", "access_token")
+        put("payload", JSONObject().put("access_token", token))
+        put("ref", nextRef())
+      }
+      ws.send(msg.toString())
     }
-    ws.send(msg.toString())
   }
 
   fun disconnect() {
@@ -98,9 +100,14 @@ class SupabaseRealtimeClient(
   private val listener = object : WebSocketListener() {
     override fun onOpen(webSocket: WebSocket, response: Response) {
       isConnected = true
+      // The JWT must be attached to the phx_join payload itself so RLS applies to
+      // the subscription from the start — sending it as a follow-up "access_token"
+      // event afterward (as this used to do, and only for the orders topic) left
+      // both channels running as the anon role, so no postgres_changes ever passed
+      // row-level security and neither orders updates nor notification inserts
+      // ever reached the client.
       joinChannel(webSocket, "realtime:public:orders", "orders")
       joinChannel(webSocket, "realtime:public:notifications", "notifications")
-      accessToken?.let { token -> pushAccessToken(webSocket, token) }
       startHeartbeat(webSocket)
     }
 
@@ -156,20 +163,11 @@ class SupabaseRealtimeClient(
             )
           )
         })
+        accessToken?.let { put("access_token", it) }
       })
       put("ref", nextRef())
     }
     webSocket.send(join.toString())
-  }
-
-  private fun pushAccessToken(webSocket: WebSocket, token: String) {
-    val msg = JSONObject().apply {
-      put("topic", "realtime:public:orders")
-      put("event", "access_token")
-      put("payload", JSONObject().put("access_token", token))
-      put("ref", nextRef())
-    }
-    webSocket.send(msg.toString())
   }
 
   private fun startHeartbeat(webSocket: WebSocket) {

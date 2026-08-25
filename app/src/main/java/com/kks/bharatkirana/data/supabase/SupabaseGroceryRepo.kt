@@ -601,12 +601,18 @@ class SupabaseGroceryRepo(
     }
 
   /**
-   * Sync or Save User Profile to Supabase
+   * Sync or Save User Profile to Supabase.
+   *
+   * Targeted PATCH by `id` (like every other profile write in this file) rather
+   * than a POST upsert with no `id` in the payload — the previous POST left it to
+   * Postgres's column default to decide which row got written, so it could land on
+   * a different row than the one `fetchProfile(userId=...)` reads back on the next
+   * login, making `profile_completed` appear to silently revert to false.
    */
-  suspend fun syncProfile(userProfile: UserProfile, accessToken: String? = null): Result<Unit> =
+  suspend fun syncProfile(userId: String, userProfile: UserProfile, accessToken: String? = null): Result<Unit> =
     withContext(Dispatchers.IO) {
       runCatching {
-        val url = "${SupabaseConfig.restUrl}/profiles"
+        val url = "${SupabaseConfig.restUrl}/profiles?id=eq.$userId"
         val payload = JSONObject().apply {
           put("email", userProfile.email.trim().lowercase())
           put("full_name", userProfile.fullName)
@@ -624,8 +630,8 @@ class SupabaseGroceryRepo(
         }
 
         val request = baseRequestBuilder(url, accessToken)
-          .addHeader("Prefer", "resolution=merge-duplicates")
-          .post(payload.toString().toRequestBody(jsonMediaType))
+          .addHeader("Prefer", "return=minimal")
+          .patch(payload.toString().toRequestBody(jsonMediaType))
           .build()
 
         val response = client.newCall(request).execute()

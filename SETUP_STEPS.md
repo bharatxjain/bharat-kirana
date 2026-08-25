@@ -190,8 +190,16 @@ async function sendPush(token: string, projectId: string, fcmToken: string,
         message: {
           token: fcmToken,
           notification: { title, body },
-          data: { orderId, type: "order_status" },
-          android: { priority: "HIGH", notification: { sound: "default", channel_id: "customer_notifications" } },
+          // Key must be order_id (snake_case) — MyFirebaseMessagingService reads
+          // data["order_id"]; the previous camelCase "orderId" never matched, so
+          // tapping a push never deep-linked to the order.
+          data: { order_id: orderId, type: "order_status" },
+          // channel_id must be a channel that actually exists on the device when
+          // this push is auto-displayed in the background. "customer_notifications"
+          // was never created there — only "bharat_kirana_orders" is (MainActivity
+          // creates it unconditionally on every app start) — so the OS was silently
+          // dropping every background push.
+          android: { priority: "HIGH", notification: { sound: "default", channel_id: "bharat_kirana_orders" } },
         },
       }),
     });
@@ -205,7 +213,7 @@ async function fetchFcmToken(email: string): Promise<string | null> {
   return d?.[0]?.fcm_token ?? null;
 }
 
-async function insertNotification(email: string, title: string, body: string) {
+async function insertNotification(email: string, title: string, body: string, orderId: string) {
   const p = await fetch(`${SUPABASE_URL}/rest/v1/profiles?email=eq.${encodeURIComponent(email)}&select=id`,
     { headers: { "apikey": SUPABASE_SERVICE_ROLE_KEY, "Authorization": `Bearer ${SUPABASE_SERVICE_ROLE_KEY}` } });
   const uid = (await p.json())?.[0]?.id;
@@ -214,7 +222,10 @@ async function insertNotification(email: string, title: string, body: string) {
     method: "POST",
     headers: { "apikey": SUPABASE_SERVICE_ROLE_KEY, "Authorization": `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
       "Content-Type": "application/json", "Prefer": "return=minimal" },
-    body: JSON.stringify({ user_id: uid, title, message: body, is_read: false }),
+    // order_id was previously omitted, so every in-app notification row had a null
+    // order_id — the Notifications screen only navigates to OrderDetails when
+    // notification.orderId != null, so tapping any of them did nothing.
+    body: JSON.stringify({ user_id: uid, title, message: body, is_read: false, order_id: orderId }),
   });
 }
 
@@ -235,7 +246,7 @@ serve(async (req) => {
     const m = msgs[newStatus];
     if (!m) return new Response("No message", { status: 200 });
 
-    await insertNotification(email, m.title, m.body);
+    await insertNotification(email, m.title, m.body, orderId);
     const fcm = await fetchFcmToken(email);
     if (!fcm) return new Response("No token (in-app only)", { status: 200 });
     const sa = JSON.parse(FIREBASE_SERVICE_ACCOUNT);

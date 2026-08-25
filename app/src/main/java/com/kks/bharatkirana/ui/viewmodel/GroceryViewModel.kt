@@ -398,7 +398,14 @@ class GroceryViewModel(
 
   fun fetchUserLocation() {
     try {
-      fusedLocationClient.lastLocation.addOnSuccessListener { location: Location? ->
+      // lastLocation only returns a cached fix (can be null, or minutes/hours stale —
+      // e.g. right after the device moved with location services off). Request a
+      // fresh high-accuracy fix instead so "nearby shops" reflects where the user
+      // actually is right now.
+      fusedLocationClient.getCurrentLocation(
+        com.google.android.gms.location.Priority.PRIORITY_HIGH_ACCURACY,
+        null
+      ).addOnSuccessListener { location: Location? ->
         if (location != null) {
           _userLocation.value = location
           updateShopDistances(location)
@@ -704,21 +711,6 @@ class GroceryViewModel(
       message = "Order #${order.id} for ₹${order.totalAmount} has been placed at ${order.storeName}.",
       channelId = "vendor_notifications",
       channelName = "Vendor Alerts"
-    )
-  }
-
-  private fun simulateCustomerNotification(order: Order, status: OrderStatus) {
-    val message = when(status) {
-      OrderStatus.PREPARING -> "Your order #${order.id} is now being prepared! 👨‍🍳"
-      OrderStatus.READY_FOR_PICKUP -> "Your order #${order.id} is ready for pickup! 🏁"
-      else -> return
-    }
-    
-    showSystemNotification(
-      title = "Order Update",
-      message = message,
-      channelId = "customer_notifications",
-      channelName = "Order Status"
     )
   }
 
@@ -1176,8 +1168,9 @@ class GroceryViewModel(
       )
     }
 
+    val userId = supabaseAuthService.currentUserId ?: return
     viewModelScope.launch {
-      supabaseGroceryRepo.syncProfile(_userProfile.value, supabaseAuthService.currentAccessToken)
+      supabaseGroceryRepo.syncProfile(userId, _userProfile.value, supabaseAuthService.currentAccessToken)
     }
   }
 
@@ -1340,11 +1333,10 @@ class GroceryViewModel(
     _orders.update { list ->
       list.map { order ->
         if (order.id == orderId) {
-          // Trigger customer notification for status changes
-          if (newStatus == OrderStatus.PREPARING || newStatus == OrderStatus.READY_FOR_PICKUP) {
-            simulateCustomerNotification(order, newStatus)
-          }
-
+          // Customer notification for this status change is sent server-side (Edge
+          // Function push + Realtime-delivered in-app notification row) — see
+          // SETUP_STEPS.md Task 3. A local notify() here used to fire on whichever
+          // device called this function (the vendor's), not the customer's.
           val updatedTimeline = order.timeline.map { item ->
             when {
               item.status.stepIndex < newStatus.stepIndex -> item.copy(isCompleted = true, isCurrent = false)

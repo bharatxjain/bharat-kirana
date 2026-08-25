@@ -381,7 +381,10 @@ fun VendorRegistrationScreen(
       contract = ActivityResultContracts.RequestPermission()
     ) { granted ->
       if (granted) {
-        fusedLocationClient.lastLocation.addOnSuccessListener { location ->
+        fusedLocationClient.getCurrentLocation(
+          com.google.android.gms.location.Priority.PRIORITY_HIGH_ACCURACY,
+          null
+        ).addOnSuccessListener { location ->
           if (location != null) {
             lat = location.latitude
             lng = location.longitude
@@ -401,7 +404,13 @@ fun VendorRegistrationScreen(
         context, Manifest.permission.ACCESS_FINE_LOCATION
       ) == PackageManager.PERMISSION_GRANTED
       if (hasPermission) {
-        fusedLocationClient.lastLocation.addOnSuccessListener { location ->
+        // High-accuracy fresh fix, not the cached lastLocation — a shop's pinned
+        // location should reflect where the owner is standing right now, not
+        // wherever the device last happened to get a GPS/network fix.
+        fusedLocationClient.getCurrentLocation(
+          com.google.android.gms.location.Priority.PRIORITY_HIGH_ACCURACY,
+          null
+        ).addOnSuccessListener { location ->
           if (location != null) {
             lat = location.latitude
             lng = location.longitude
