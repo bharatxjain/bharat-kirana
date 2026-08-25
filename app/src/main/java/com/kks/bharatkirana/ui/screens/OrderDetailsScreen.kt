@@ -37,6 +37,7 @@ fun OrderDetailsScreen(
   onRateShop: (shopId: String, orderId: String, rating: Int, review: String) -> Unit = { _, _, _, _ -> },
   onCancelOrder: (String) -> Unit = {},
   hasAlreadyRated: Boolean = false,
+  shopDistanceLabel: String? = null,
   modifier: Modifier = Modifier
 ) {
   val subtotal = order.items.sumOf { it.totalPrice }
@@ -338,6 +339,19 @@ fun OrderDetailsScreen(
                 style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.SemiBold),
                 color = BharatPurplePrimary
               )
+              if (!shopDistanceLabel.isNullOrBlank() && shopDistanceLabel != "---") {
+                Spacer(modifier = Modifier.height(4.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                  Icon(Icons.Default.LocationOn, contentDescription = null, tint = BharatPurplePrimary, modifier = Modifier.size(12.dp))
+                  Spacer(modifier = Modifier.width(3.dp))
+                  Text(
+                    text = "$shopDistanceLabel from you",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = BharatTextSecondary
+                  )
+                }
+              }
+            }
             }
           }
         }

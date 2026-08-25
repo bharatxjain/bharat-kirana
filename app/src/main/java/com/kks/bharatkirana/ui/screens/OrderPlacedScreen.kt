@@ -63,6 +63,7 @@ fun OrderPlacedScreen(
   order: Order,
   onViewOrdersClick: () -> Unit,
   onHomeClick: () -> Unit,
+  shopDistanceLabel: String? = null,
   modifier: Modifier = Modifier
 ) {
   Surface(
@@ -252,6 +253,18 @@ fun OrderPlacedScreen(
                 style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold),
                 color = BharatPurplePrimary
               )
+              if (!shopDistanceLabel.isNullOrBlank() && shopDistanceLabel != "---") {
+                Spacer(modifier = Modifier.height(4.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                  Icon(Icons.Default.LocationOn, contentDescription = null, tint = BharatPurplePrimary, modifier = Modifier.size(12.dp))
+                  Spacer(modifier = Modifier.width(3.dp))
+                  Text(
+                    text = "$shopDistanceLabel from you",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = BharatTextSecondary
+                  )
+                }
+              }
             }
           }
         }

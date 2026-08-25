@@ -1,5 +1,6 @@
 package com.kks.bharatkirana.ui.screens
 
+import android.location.Location
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -21,15 +22,28 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.lifecycle.DefaultLifecycleObserver
+import androidx.lifecycle.LifecycleOwner
 import com.kks.bharatkirana.R
+import com.kks.bharatkirana.data.maps.MapplsConfig
 import com.kks.bharatkirana.data.model.Shop
 import com.kks.bharatkirana.data.model.isCurrentlyOpen
 import com.kks.bharatkirana.ui.theme.*
+import com.mappls.sdk.maps.MapView
+import com.mappls.sdk.maps.MapplsMap
+import com.mappls.sdk.maps.OnMapReadyCallback
+import com.mappls.sdk.maps.annotations.MarkerOptions
+import com.mappls.sdk.maps.camera.CameraPosition
+import com.mappls.sdk.maps.geometry.LatLng
+import kotlin.math.max
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -41,6 +55,7 @@ fun NearbyShopsScreen(
   userInitial: String = "U",
   unreadNotificationCount: Int = 0,
   onNotificationsClick: () -> Unit = {},
+  userLocation: Location? = null,
   modifier: Modifier = Modifier
 ) {
   var searchQuery by remember { mutableStateOf("") }
@@ -260,26 +275,61 @@ fun NearbyShopsScreen(
 
       // Shop List or Empty Message or Map View
       if (isMapView) {
-        Box(
-          modifier = Modifier.weight(1f).fillMaxWidth(),
-          contentAlignment = Alignment.Center
-        ) {
-          Image(
-            painter = painterResource(id = R.drawable.img_onboarding_delivery), // Placeholder map
-            contentDescription = null,
-            modifier = Modifier.fillMaxSize(),
-            contentScale = ContentScale.Crop
-          )
-          // Simulation Markers
-          filteredShops.forEach { shop ->
-            Icon(
-              imageVector = Icons.Default.LocationOn,
-              contentDescription = null,
-              tint = BharatPurplePrimary,
-              modifier = Modifier
-                .offset(x = ((-50..50).random()).dp, y = ((-50..50).random()).dp)
-                .clickable { onShopClick(shop) }
+        Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+          if (MapplsConfig.isConfigured) {
+            NearbyShopsMap(
+              shops = filteredShops,
+              userLocation = userLocation,
+              onShopMarkerClick = onShopClick,
+              modifier = Modifier.fillMaxSize()
             )
+            // Floating hint pill for the customer.
+            Surface(
+              color = Color.Black.copy(alpha = 0.75f),
+              shape = RoundedCornerShape(20.dp),
+              modifier = Modifier
+                .align(Alignment.TopCenter)
+                .padding(top = 12.dp)
+            ) {
+              Text(
+                text = if (filteredShops.isEmpty())
+                  "No shops within ${selectedDistanceKm} km"
+                else
+                  "${filteredShops.size} shops in view · tap a pin to open",
+                color = Color.White,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Medium,
+                modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
+              )
+            }
+          } else {
+            // Mappls keys aren't set — spell it out so the vendor doesn't think
+            // the app is broken.
+            Column(
+              horizontalAlignment = Alignment.CenterHorizontally,
+              verticalArrangement = Arrangement.Center,
+              modifier = Modifier.fillMaxSize().padding(32.dp)
+            ) {
+              Icon(
+                imageVector = Icons.Default.Map,
+                contentDescription = null,
+                tint = Color(0xFFCBD5E1),
+                modifier = Modifier.size(72.dp)
+              )
+              Spacer(modifier = Modifier.height(16.dp))
+              Text(
+                "Map preview unavailable",
+                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                color = BharatTextPrimary
+              )
+              Text(
+                "Mappls SDK keys are not configured. Falling back to the list view — please switch back using the list icon in the toolbar.",
+                fontSize = 13.sp,
+                color = BharatTextSecondary,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.padding(top = 4.dp)
+              )
+            }
           }
         }
       } else if (filteredShops.isEmpty()) {
@@ -425,4 +475,113 @@ fun NearbyShopCard(shop: Shop, onClick: () -> Unit) {
       }
     }
   }
+}
+
+// Round 7: real Mappls-backed map showing every eligible shop from Supabase as a
+// clickable pin. Marker tap identifies the exact shop via a lookup keyed on the
+// pin's LatLng, then hands off to the caller-supplied onShopMarkerClick.
+@Composable
+private fun NearbyShopsMap(
+  shops: List<Shop>,
+  userLocation: Location?,
+  onShopMarkerClick: (Shop) -> Unit,
+  modifier: Modifier = Modifier
+) {
+  val context = LocalContext.current
+  val lifecycleOwner = LocalLifecycleOwner.current
+  val mapView = remember { MapView(context) }
+
+  // Skip shops whose vendor never dropped a pin — otherwise they'd cluster at (0,0).
+  val plottable = remember(shops) { shops.filter { it.lat != 0.0 || it.lng != 0.0 } }
+
+  DisposableEffect(lifecycleOwner, mapView) {
+    val observer = object : DefaultLifecycleObserver {
+      override fun onCreate(owner: LifecycleOwner) = mapView.onCreate(null)
+      override fun onStart(owner: LifecycleOwner) = mapView.onStart()
+      override fun onResume(owner: LifecycleOwner) = mapView.onResume()
+      override fun onPause(owner: LifecycleOwner) = mapView.onPause()
+      override fun onStop(owner: LifecycleOwner) = mapView.onStop()
+      override fun onDestroy(owner: LifecycleOwner) = mapView.onDestroy()
+    }
+    lifecycleOwner.lifecycle.addObserver(observer)
+    onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+  }
+
+  AndroidView(
+    modifier = modifier,
+    factory = { mapView },
+    update = { view ->
+      view.getMapAsync(object : OnMapReadyCallback {
+        override fun onMapReady(mapplsMap: MapplsMap) {
+          mapplsMap.clear()
+
+          // Key shops by "lat,lng" string so we can look them up when the user taps
+          // a marker (Mappls returns the Marker object; we round-trip through position).
+          val shopByPosition = mutableMapOf<String, Shop>()
+          plottable.forEach { shop ->
+            val key = "${shop.lat},${shop.lng}"
+            shopByPosition[key] = shop
+            val snippetBits = buildList {
+              if (shop.rating > 0f) add("★ ${"%.1f".format(shop.rating)}")
+              if (shop.distance.isNotBlank() && shop.distance != "---") add(shop.distance)
+              if (shop.isCurrentlyOpen()) add("Open") else add("Closed")
+            }
+            mapplsMap.addMarker(
+              MarkerOptions()
+                .position(LatLng(shop.lat, shop.lng))
+                .title(shop.name)
+                .snippet(snippetBits.joinToString(" · "))
+            )
+          }
+
+          if (userLocation != null) {
+            mapplsMap.addMarker(
+              MarkerOptions()
+                .position(LatLng(userLocation.latitude, userLocation.longitude))
+                .title("You are here")
+            )
+          }
+
+          mapplsMap.setOnMarkerClickListener { marker ->
+            val pos = marker.position ?: return@setOnMarkerClickListener false
+            val shop = shopByPosition["${pos.latitude},${pos.longitude}"]
+            if (shop != null) {
+              onShopMarkerClick(shop)
+              true
+            } else {
+              false
+            }
+          }
+
+          // Camera: center on the average of every plotted point (customer + shops)
+          // and pick a zoom that (roughly) fits them all. Mappls' newLatLngBounds
+          // isn't consistent across SDK versions, so we compute manually.
+          val allPoints = buildList {
+            plottable.forEach { add(LatLng(it.lat, it.lng)) }
+            if (userLocation != null) add(LatLng(userLocation.latitude, userLocation.longitude))
+          }
+          if (allPoints.isNotEmpty()) {
+            val centerLat = allPoints.sumOf { it.latitude } / allPoints.size
+            val centerLng = allPoints.sumOf { it.longitude } / allPoints.size
+            val spanLat = (allPoints.maxOf { it.latitude } - allPoints.minOf { it.latitude })
+            val spanLng = (allPoints.maxOf { it.longitude } - allPoints.minOf { it.longitude })
+            val span = max(spanLat, spanLng)
+            val zoom = when {
+              span > 0.5 -> 9.0
+              span > 0.2 -> 11.0
+              span > 0.05 -> 13.0
+              span > 0.01 -> 14.5
+              else -> 15.5
+            }
+            mapplsMap.cameraPosition = CameraPosition.Builder()
+              .target(LatLng(centerLat, centerLng))
+              .zoom(zoom)
+              .build()
+          }
+        }
+
+        override fun onMapError(code: Int, message: String?) { /* fall back to fallback UI */ }
+      })
+    }
+  )
 }

@@ -305,6 +305,7 @@ fun MainScreen(
       is AppScreen.OrderPlaced -> {
         val order = orders.find { it.id == screen.orderId } ?: orders.firstOrNull()
         if (order != null) {
+          val shopDistance = shops.firstOrNull { it.id == order.shopId }?.distance
           OrderPlacedScreen(
             order = order,
             onViewOrdersClick = {
@@ -314,7 +315,8 @@ fun MainScreen(
             onHomeClick = {
               viewModel.setTab(MainTab.HOME)
               viewModel.navigateTo(AppScreen.Main)
-            }
+            },
+            shopDistanceLabel = shopDistance
           )
         }
       }
@@ -323,6 +325,7 @@ fun MainScreen(
         val order = orders.find { it.id == screen.orderId } ?: orders.firstOrNull()
         val ratedIds by viewModel.ratedOrderIds.collectAsState()
         if (order != null) {
+          val shopDistance = shops.firstOrNull { it.id == order.shopId }?.distance
           OrderDetailsScreen(
             order = order,
             onBackClick = { viewModel.navigateBack() },
@@ -331,7 +334,8 @@ fun MainScreen(
               viewModel.rateShop(shopId, orderId, rating, review)
             },
             onCancelOrder = { orderId -> viewModel.cancelOrder(orderId) },
-            hasAlreadyRated = ratedIds.contains(order.id)
+            hasAlreadyRated = ratedIds.contains(order.id),
+            shopDistanceLabel = shopDistance
           )
         }
       }
@@ -386,7 +390,8 @@ fun MainScreen(
           onBackClick = { viewModel.navigateBack() },
           userInitial = userProfile.fullName.firstOrNull()?.toString() ?: "U",
           unreadNotificationCount = unreadNotificationCount,
-          onNotificationsClick = { viewModel.navigateTo(AppScreen.Notifications) }
+          onNotificationsClick = { viewModel.navigateTo(AppScreen.Notifications) },
+          userLocation = userLocation
         )
       }
 
@@ -447,18 +452,27 @@ fun MainScreen(
         val scannedTemplate by viewModel.scannedProductTemplate.collectAsState()
         val scannedBarcode by viewModel.scannedBarcode.collectAsState()
         val barcodeStatus by viewModel.barcodeStatusMessage.collectAsState()
+        val addProductUploading by viewModel.isLoading.collectAsState()
+        val addProductResult by viewModel.productUploadMessage.collectAsState()
 
         AddProductScreen(
           onBackClick = { viewModel.navigateBack() },
           onListProduct = { name, cat, unit, price, mrp, desc, stock, imageUris, barcode ->
              viewModel.addNewProduct(name, cat, unit, price, mrp, desc, stock, imageUris, barcode)
-             viewModel.navigateBack()
+             // Round 7: stay on the screen so the vendor sees the upload result
+             // banner; the dismiss button in the banner + back nav go home when ready.
           },
           onScanBarcode = { viewModel.navigateTo(AppScreen.BarcodeScanner) },
           scannedTemplate = scannedTemplate,
           scannedBarcode = scannedBarcode,
           barcodeStatusMessage = barcodeStatus,
-          onScanConsumed = { viewModel.clearScannedTemplate() }
+          onScanConsumed = { viewModel.clearScannedTemplate() },
+          isUploading = addProductUploading,
+          uploadResultMessage = addProductResult,
+          onUploadResultConsumed = {
+            viewModel.clearProductUploadMessage()
+            viewModel.navigateBack()
+          }
         )
       }
 
@@ -581,7 +595,8 @@ fun MainScreen(
                     onBackClick = { /* Home Root */ },
                     userInitial = userProfile.fullName.firstOrNull()?.toString() ?: "U",
                     unreadNotificationCount = unreadNotificationCount,
-                    onNotificationsClick = { viewModel.navigateTo(AppScreen.Notifications) }
+                    onNotificationsClick = { viewModel.navigateTo(AppScreen.Notifications) },
+                    userLocation = userLocation
                   )
                 } else {
                   HomeScreen(
@@ -629,7 +644,8 @@ fun MainScreen(
                     onBackClick = { viewModel.setTab(MainTab.HOME) },
                     userInitial = userProfile.fullName.firstOrNull()?.toString() ?: "U",
                     unreadNotificationCount = unreadNotificationCount,
-                    onNotificationsClick = { viewModel.navigateTo(AppScreen.Notifications) }
+                    onNotificationsClick = { viewModel.navigateTo(AppScreen.Notifications) },
+                    userLocation = userLocation
                   )
                 } else {
                   CategoriesScreen(
@@ -661,7 +677,8 @@ fun MainScreen(
                     onBackClick = { viewModel.setTab(MainTab.HOME) },
                     userInitial = userProfile.fullName.firstOrNull()?.toString() ?: "U",
                     unreadNotificationCount = unreadNotificationCount,
-                    onNotificationsClick = { viewModel.navigateTo(AppScreen.Notifications) }
+                    onNotificationsClick = { viewModel.navigateTo(AppScreen.Notifications) },
+                    userLocation = userLocation
                   )
                 } else {
                   SearchScreen(

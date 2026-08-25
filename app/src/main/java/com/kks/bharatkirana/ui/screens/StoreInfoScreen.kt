@@ -232,6 +232,63 @@ fun StoreInfoScreen(
         )
       }
 
+      // Round 7: distance + rating pill row so the customer immediately knows how
+      // far the shop is and how it's rated. Uses ViewModel-computed shop.distance
+      // (Haversine) — falls back gracefully when we lack coordinates.
+      if (shop != null) {
+        item {
+          Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+          ) {
+            if (shop.distance.isNotBlank() && shop.distance != "---") {
+              Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = BharatPurpleContainer,
+                modifier = Modifier.weight(1f)
+              ) {
+                Row(
+                  modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                  verticalAlignment = Alignment.CenterVertically
+                ) {
+                  Icon(Icons.Default.LocationOn, contentDescription = null, tint = BharatPurpleDark, modifier = Modifier.size(18.dp))
+                  Spacer(modifier = Modifier.width(6.dp))
+                  Column {
+                    Text("Distance", fontSize = 10.sp, color = BharatTextSecondary, fontWeight = FontWeight.SemiBold)
+                    Text("${shop.distance} away", fontSize = 13.sp, color = BharatPurpleDark, fontWeight = FontWeight.Bold)
+                  }
+                }
+              }
+            }
+            Surface(
+              shape = RoundedCornerShape(12.dp),
+              color = Color(0xFFFEF3C7),
+              modifier = Modifier.weight(1f)
+            ) {
+              Row(
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically
+              ) {
+                Icon(Icons.Default.Star, contentDescription = null, tint = Color(0xFFD97706), modifier = Modifier.size(18.dp))
+                Spacer(modifier = Modifier.width(6.dp))
+                Column {
+                  Text("Rating", fontSize = 10.sp, color = BharatTextSecondary, fontWeight = FontWeight.SemiBold)
+                  Text(
+                    text = if (shop.ratingCount > 0)
+                      "${"%.1f".format(shop.rating)} · ${shop.ratingCount} review${if (shop.ratingCount == 1) "" else "s"}"
+                    else
+                      "No ratings yet",
+                    fontSize = 13.sp,
+                    color = Color(0xFFD97706),
+                    fontWeight = FontWeight.Bold
+                  )
+                }
+              }
+            }
+          }
+        }
+      }
+
       // Hours Card
       item {
         Card(

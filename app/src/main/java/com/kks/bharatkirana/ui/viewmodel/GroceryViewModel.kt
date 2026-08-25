@@ -193,6 +193,13 @@ class GroceryViewModel(
   private val _ratedOrderIds = MutableStateFlow<Set<String>>(emptySet())
   val ratedOrderIds: StateFlow<Set<String>> = _ratedOrderIds.asStateFlow()
 
+  // Round 7: transient message after a vendor uploads a new product — reports
+  // per-image upload success/failure so the vendor isn't left staring at a blank
+  // screen wondering if their photos were saved.
+  private val _productUploadMessage = MutableStateFlow<String?>(null)
+  val productUploadMessage: StateFlow<String?> = _productUploadMessage.asStateFlow()
+  fun clearProductUploadMessage() { _productUploadMessage.value = null }
+
   // Round 3.5: role picked during signup (before profile is completed).
   // Set from AuthScreen → read after CompleteProfile to decide next screen.
   private val _pendingSignupRole = MutableStateFlow<UserRole?>(null)
@@ -1591,17 +1598,30 @@ class GroceryViewModel(
     val shopId = _userProfile.value.shopId ?: "s_bharat_kirana"
     
     _isLoading.value = true
+    _productUploadMessage.value = null
     viewModelScope.launch {
       val finalImageUrls = mutableListOf<String>()
+      var uploadSuccessCount = 0
+      var uploadFailCount = 0
+      var readFailCount = 0
       
       // 1. Handle Multiple Images Upload
       imageUris.forEachIndexed { index, uri ->
         val bytes = getBytesFromUri(uri)
-        if (bytes != null) {
-          val nameWithIndex = "${productId}_$index.jpg"
-          supabaseGroceryRepo.uploadProductImage(nameWithIndex, bytes, supabaseAuthService.currentAccessToken)
-            .onSuccess { url -> finalImageUrls.add(url) }
+        if (bytes == null) {
+          readFailCount++
+          return@forEachIndexed
         }
+        val nameWithIndex = "${productId}_$index.jpg"
+        supabaseGroceryRepo.uploadProductImage(nameWithIndex, bytes, supabaseAuthService.currentAccessToken)
+          .onSuccess { url ->
+            finalImageUrls.add(url)
+            uploadSuccessCount++
+          }
+          .onFailure {
+            uploadFailCount++
+            android.util.Log.w("BreakQ", "Product image upload failed: ${it.message}")
+          }
       }
 
       // 2. Create Product Object
@@ -1627,6 +1647,16 @@ class GroceryViewModel(
       _products.update { listOf(newProd) + it }
       supabaseGroceryRepo.addProduct(newProd, supabaseAuthService.currentAccessToken)
       _isLoading.value = false
+
+      // 4. Surface upload outcome so AddProductScreen can toast the vendor.
+      val totalAttempted = imageUris.size
+      _productUploadMessage.value = when {
+        totalAttempted == 0 -> "Product added (no images)."
+        uploadFailCount == 0 && readFailCount == 0 ->
+          "Product added. $uploadSuccessCount of $totalAttempted images uploaded."
+        else ->
+          "Product added, but ${uploadFailCount + readFailCount} of $totalAttempted images failed. You can edit the product to retry."
+      }
     }
   }
 

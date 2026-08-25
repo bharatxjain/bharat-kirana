@@ -25,6 +25,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import coil.compose.AsyncImage
 import com.kks.bharatkirana.data.model.*
 import com.kks.bharatkirana.ui.theme.*
 
@@ -178,6 +179,59 @@ fun VendorDashboardScreen(
                 }
               }
 
+              // Round 7: prominent "Edit Shop Details" card so the vendor doesn't
+              // have to hunt for the tiny gear icon in the toolbar. Also surfaces
+              // current average rating + review count from customer ratings.
+              item {
+                Card(
+                  onClick = { showEditShopDialog = true },
+                  shape = RoundedCornerShape(16.dp),
+                  colors = CardDefaults.cardColors(containerColor = Color.White),
+                  border = BorderStroke(1.dp, Color(0xFFE5E7EB))
+                ) {
+                  Row(
+                    modifier = Modifier.fillMaxWidth().padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                  ) {
+                    Box(
+                      modifier = Modifier.size(40.dp).clip(CircleShape).background(BharatPurpleContainer),
+                      contentAlignment = Alignment.Center
+                    ) {
+                      Icon(Icons.Default.Storefront, contentDescription = null, tint = BharatPurplePrimary, modifier = Modifier.size(20.dp))
+                    }
+                    Spacer(Modifier.width(12.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                      Text("Edit Shop Details", fontSize = 13.sp, color = BharatTextPrimary, fontWeight = FontWeight.Bold)
+                      Text(
+                        "Name, address, phone, hours",
+                        fontSize = 11.sp,
+                        color = BharatTextSecondary
+                      )
+                      if (shop.ratingCount > 0) {
+                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 4.dp)) {
+                          Icon(Icons.Default.Star, contentDescription = null, tint = Color(0xFFD97706), modifier = Modifier.size(12.dp))
+                          Spacer(Modifier.width(3.dp))
+                          Text(
+                            text = "${"%.1f".format(shop.rating)} · ${shop.ratingCount} customer review${if (shop.ratingCount == 1) "" else "s"}",
+                            fontSize = 11.sp,
+                            color = BharatTextPrimary,
+                            fontWeight = FontWeight.SemiBold
+                          )
+                        }
+                      } else {
+                        Text(
+                          "No customer ratings yet",
+                          fontSize = 11.sp,
+                          color = BharatTextMuted,
+                          modifier = Modifier.padding(top = 2.dp)
+                        )
+                      }
+                    }
+                    Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = "Edit", tint = BharatPurplePrimary)
+                  }
+                }
+              }
+
               // Stats Cards
               item {
                 StatsCardPremium(
@@ -275,8 +329,22 @@ fun VendorDashboardScreen(
                     border = BorderStroke(1.dp, Color(0xFFF1F5F9))
                   ) {
                     Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                      Box(modifier = Modifier.size(50.dp).clip(RoundedCornerShape(8.dp)).background(Color(0xFFF1F5F9)), contentAlignment = Alignment.Center) {
-                        Icon(Icons.Default.Inventory, null, tint = BharatPurplePrimary)
+                      Box(
+                        modifier = Modifier.size(50.dp).clip(RoundedCornerShape(8.dp)).background(Color(0xFFF1F5F9)),
+                        contentAlignment = Alignment.Center
+                      ) {
+                        val previewUrl = product.imageUrls.firstOrNull()?.takeIf { it.isNotBlank() }
+                          ?: product.imageUrl.takeIf { it.isNotBlank() }
+                        if (previewUrl != null) {
+                          AsyncImage(
+                            model = previewUrl,
+                            contentDescription = product.name,
+                            modifier = Modifier.fillMaxSize(),
+                            contentScale = androidx.compose.ui.layout.ContentScale.Crop
+                          )
+                        } else {
+                          Icon(Icons.Default.Inventory, null, tint = BharatPurplePrimary)
+                        }
                       }
                       Spacer(Modifier.width(12.dp))
                       Column(modifier = Modifier.weight(1f)) {

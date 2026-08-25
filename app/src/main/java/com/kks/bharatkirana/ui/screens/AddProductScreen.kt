@@ -41,6 +41,9 @@ fun AddProductScreen(
   scannedBarcode: String? = null,
   barcodeStatusMessage: String? = null,
   onScanConsumed: () -> Unit = {},
+  isUploading: Boolean = false,
+  uploadResultMessage: String? = null,
+  onUploadResultConsumed: () -> Unit = {},
   modifier: Modifier = Modifier
 ) {
   var productName by remember { mutableStateOf("") }
@@ -383,16 +386,59 @@ fun AddProductScreen(
             localBarcode ?: ""
           )
         },
-        enabled = productName.isNotBlank() && sellingPrice.isNotBlank(),
+        enabled = !isUploading && productName.isNotBlank() && sellingPrice.isNotBlank(),
         modifier = Modifier
           .fillMaxWidth()
           .height(56.dp),
         colors = ButtonDefaults.buttonColors(containerColor = BharatPurplePrimary),
         shape = RoundedCornerShape(12.dp)
       ) {
-        Icon(Icons.Default.CheckCircle, contentDescription = null)
-        Spacer(modifier = Modifier.width(10.dp))
-        Text(text = "List Product", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+        if (isUploading) {
+          CircularProgressIndicator(
+            modifier = Modifier.size(20.dp),
+            color = Color.White,
+            strokeWidth = 2.dp
+          )
+          Spacer(modifier = Modifier.width(12.dp))
+          Text(text = "Uploading…", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+        } else {
+          Icon(Icons.Default.CheckCircle, contentDescription = null)
+          Spacer(modifier = Modifier.width(10.dp))
+          Text(text = "List Product", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+        }
+      }
+
+      // Round 7: surfaces per-image upload result from the ViewModel.
+      if (!uploadResultMessage.isNullOrBlank()) {
+        Spacer(modifier = Modifier.height(12.dp))
+        val isSuccess = !uploadResultMessage.contains("failed", ignoreCase = true)
+        Surface(
+          shape = RoundedCornerShape(12.dp),
+          color = if (isSuccess) Color(0xFFDCFCE7) else Color(0xFFFEF3C7),
+          modifier = Modifier.fillMaxWidth()
+        ) {
+          Row(
+            modifier = Modifier.padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+          ) {
+            Icon(
+              imageVector = if (isSuccess) Icons.Default.CheckCircle else Icons.Default.Warning,
+              contentDescription = null,
+              tint = if (isSuccess) Color(0xFF10B981) else Color(0xFFD97706),
+              modifier = Modifier.size(20.dp)
+            )
+            Spacer(modifier = Modifier.width(10.dp))
+            Text(
+              text = uploadResultMessage,
+              modifier = Modifier.weight(1f),
+              color = BharatTextPrimary,
+              fontSize = 13.sp
+            )
+            IconButton(onClick = onUploadResultConsumed) {
+              Icon(Icons.Default.Close, contentDescription = "Dismiss", tint = BharatTextSecondary)
+            }
+          }
+        }
       }
       
       Spacer(modifier = Modifier.height(40.dp))
