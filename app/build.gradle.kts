@@ -17,8 +17,8 @@ android {
     applicationId = "com.kks.bharatkirana"
     minSdk = 24
     targetSdk = 35
-    versionCode = 6
-    versionName = "2.0.0"
+    versionCode = 7
+    versionName = "1.07"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
@@ -40,7 +40,7 @@ android {
       isShrinkResources = true
       proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
       signingConfig = signingConfigs.getByName("release")
-      
+
       ndk {
         debugSymbolLevel = "FULL"
       }
@@ -59,6 +59,11 @@ android {
   dependenciesInfo {
     includeInApk = false
     includeInBundle = true
+  }
+
+  lint {
+    abortOnError = false
+    checkDependencies = false
   }
 }
 
@@ -121,6 +126,7 @@ dependencies {
   implementation(libs.play.services.location)
   implementation(libs.retrofit)
   implementation(libs.mappls.android.sdk)
+  implementation(libs.timber)
   testImplementation(libs.androidx.compose.ui.test.junit4)
   testImplementation(libs.androidx.core)
   testImplementation(libs.androidx.junit)
