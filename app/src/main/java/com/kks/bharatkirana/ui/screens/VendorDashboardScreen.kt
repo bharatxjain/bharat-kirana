@@ -295,6 +295,7 @@ fun VendorDashboardScreen(
           }
           2 -> {
             val pending = orders.filter { it.status == OrderStatus.PLACED }
+            val confirmed = orders.filter { it.status == OrderStatus.CONFIRMED }
             val preparing = orders.filter { it.status == OrderStatus.PREPARING }
             val ready = orders.filter { it.status == OrderStatus.READY_FOR_PICKUP }
             val history = orders.filter { it.status == OrderStatus.COMPLETED || it.status == OrderStatus.CANCELLED }
@@ -321,8 +322,20 @@ fun VendorDashboardScreen(
                 items(pending, key = { it.id }) { order ->
                   VendorOrderActionCard(
                     order = order,
-                    primaryLabel = "Accept & Prepare",
+                    primaryLabel = "Confirm Order",
                     primaryColor = BharatGreen,
+                    onPrimary = { onUpdateOrderStatus(order.id, OrderStatus.CONFIRMED) },
+                    onCancel = { onCancelOrder(order.id) }
+                  )
+                }
+              }
+              if (confirmed.isNotEmpty()) {
+                item { OrderSectionHeader("Confirmed", confirmed.size, Color(0xFF10B981)) }
+                items(confirmed, key = { it.id }) { order ->
+                  VendorOrderActionCard(
+                    order = order,
+                    primaryLabel = "Start Preparing",
+                    primaryColor = Color(0xFF0284C7),
                     onPrimary = { onUpdateOrderStatus(order.id, OrderStatus.PREPARING) },
                     onCancel = { onCancelOrder(order.id) }
                   )
@@ -761,6 +774,7 @@ fun RecentOrderRow(order: Order) {
       
       val statusColor = when(order.status) {
         OrderStatus.PLACED -> Color(0xFFFEF3C7)
+        OrderStatus.CONFIRMED -> Color(0xFFDCFCE7)
         OrderStatus.PREPARING -> Color(0xFFE0F2FE)
         OrderStatus.READY_FOR_PICKUP -> Color(0xFFF0FDF4)
         OrderStatus.COMPLETED -> Color(0xFFF1F5F9)
@@ -768,6 +782,7 @@ fun RecentOrderRow(order: Order) {
       }
       val textTint = when(order.status) {
         OrderStatus.PLACED -> Color(0xFFD97706)
+        OrderStatus.CONFIRMED -> Color(0xFF10B981)
         OrderStatus.PREPARING -> Color(0xFF0284C7)
         OrderStatus.READY_FOR_PICKUP -> Color(0xFF166534)
         OrderStatus.COMPLETED -> BharatTextSecondary

@@ -110,6 +110,7 @@ fun ProfileScreen(
   onDeleteAccount: () -> Unit = {},
   hasSupport: Boolean = false,
   onSupportClick: () -> Unit = {},
+  profileFetchComplete: Boolean = true,
   modifier: Modifier = Modifier
 ) {
   var editingProfile by remember { mutableStateOf(false) }
@@ -394,6 +395,37 @@ fun ProfileScreen(
                   )
                 )
                 OutlinedTextField(
+                  value = editMobile,
+                  onValueChange = { input -> editMobile = input.filter { it.isDigit() }.take(10) },
+                  label = { Text("Mobile Number") },
+                  leadingIcon = { Text("+91", color = BharatTextSecondary, fontWeight = FontWeight.Bold) },
+                  singleLine = true,
+                  keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                    keyboardType = androidx.compose.ui.text.input.KeyboardType.Phone
+                  ),
+                  modifier = Modifier.fillMaxWidth(),
+                  colors = OutlinedTextFieldDefaults.colors(
+                    focusedTextColor = BharatTextPrimary,
+                    unfocusedTextColor = BharatTextPrimary,
+                    focusedBorderColor = BharatPurplePrimary
+                  )
+                )
+                // Email field shown but disabled — the login identity can't be changed here.
+                OutlinedTextField(
+                  value = userProfile.email,
+                  onValueChange = { },
+                  label = { Text("Email (locked)") },
+                  singleLine = true,
+                  enabled = false,
+                  trailingIcon = { Icon(Icons.Default.Lock, contentDescription = null, tint = BharatTextMuted, modifier = Modifier.size(16.dp)) },
+                  modifier = Modifier.fillMaxWidth(),
+                  colors = OutlinedTextFieldDefaults.colors(
+                    disabledTextColor = BharatTextSecondary,
+                    disabledBorderColor = Color(0xFFE5E7EB),
+                    disabledLabelColor = BharatTextMuted
+                  )
+                )
+                OutlinedTextField(
                   value = editAddress,
                   onValueChange = { editAddress = it },
                   label = { Text("Delivery / Pickup Address") },
@@ -406,26 +438,13 @@ fun ProfileScreen(
                   )
                 )
                 Row(
-                  modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
-                  verticalAlignment = Alignment.CenterVertically
-                ) {
-                  Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-                    Icon(Icons.Default.Lock, contentDescription = null, tint = BharatTextMuted, modifier = Modifier.size(12.dp))
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text(
-                      text = "Email and mobile are locked (login identity).",
-                      fontSize = 10.sp,
-                      color = BharatTextMuted
-                    )
-                  }
-                }
-                Row(
                   modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
                   horizontalArrangement = Arrangement.End,
                   verticalAlignment = Alignment.CenterVertically
                 ) {
                   TextButton(onClick = {
                     editName = userProfile.fullName
+                    editMobile = userProfile.mobileNumber
                     editAddress = userProfile.address
                     editingProfile = false
                   }) {
@@ -434,10 +453,14 @@ fun ProfileScreen(
                   Spacer(modifier = Modifier.width(8.dp))
                   Button(
                     onClick = {
-                      onUpdateProfile(editName.trim(), userProfile.email, userProfile.mobileNumber, editAddress.trim())
+                      onUpdateProfile(editName.trim(), userProfile.email, editMobile.trim(), editAddress.trim())
                       editingProfile = false
                     },
-                    enabled = editName.isNotBlank() && (editName.trim() != userProfile.fullName || editAddress.trim() != userProfile.address),
+                    enabled = editName.isNotBlank() && editMobile.length == 10 && (
+                      editName.trim() != userProfile.fullName ||
+                      editMobile.trim() != userProfile.mobileNumber ||
+                      editAddress.trim() != userProfile.address
+                    ),
                     colors = ButtonDefaults.buttonColors(containerColor = BharatPurplePrimary),
                     shape = RoundedCornerShape(10.dp)
                   ) {
@@ -581,8 +604,10 @@ fun ProfileScreen(
         }
       }
 
-      // Vendor Onboarding Card
-      if (!userProfile.isAdmin && !userProfile.isVendor) {
+      // Vendor Onboarding Card — only shown once the server profile has actually
+      // loaded, so we don't flicker the CTA for a returning vendor whose shopId
+      // is still null in the initial local state.
+      if (profileFetchComplete && !userProfile.isAdmin && !userProfile.isVendor) {
         item {
           Card(
             shape = RoundedCornerShape(20.dp),

@@ -78,6 +78,7 @@ fun MainScreen(
   val promoStatusMessage by viewModel.promoStatusMessage.collectAsState()
   val searchSuggestions by viewModel.searchSuggestions.collectAsState()
   val tierCapMessage by viewModel.tierCapMessage.collectAsState()
+  val profileFetchComplete by viewModel.profileFetchComplete.collectAsState()
   var updateDialogDismissed by rememberSaveable { mutableStateOf(false) }
 
   val totalCartCount = cartItems.sumOf { it.quantity }
@@ -320,6 +321,7 @@ fun MainScreen(
 
       is AppScreen.OrderDetails -> {
         val order = orders.find { it.id == screen.orderId } ?: orders.firstOrNull()
+        val ratedIds by viewModel.ratedOrderIds.collectAsState()
         if (order != null) {
           OrderDetailsScreen(
             order = order,
@@ -328,7 +330,8 @@ fun MainScreen(
             onRateShop = { shopId, orderId, rating, review ->
               viewModel.rateShop(shopId, orderId, rating, review)
             },
-            onCancelOrder = { orderId -> viewModel.cancelOrder(orderId) }
+            onCancelOrder = { orderId -> viewModel.cancelOrder(orderId) },
+            hasAlreadyRated = ratedIds.contains(order.id)
           )
         }
       }
@@ -765,7 +768,8 @@ fun MainScreen(
                       viewModel.deleteAccount()
                     },
                     hasSupport = supportWhatsappNumber.isNotBlank(),
-                    onSupportClick = { viewModel.openSupportWhatsApp() }
+                    onSupportClick = { viewModel.openSupportWhatsApp() },
+                    profileFetchComplete = profileFetchComplete
                   )
                 }
               }

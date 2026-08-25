@@ -391,6 +391,7 @@ class SupabaseGroceryRepo(
             val qrCodePayload = obj.optString("qr_code_payload", "ORDER:$id")
 
             val status = when (statusStr) {
+              OrderStatus.CONFIRMED.label -> OrderStatus.CONFIRMED
               OrderStatus.PREPARING.label -> OrderStatus.PREPARING
               OrderStatus.READY_FOR_PICKUP.label -> OrderStatus.READY_FOR_PICKUP
               OrderStatus.COMPLETED.label -> OrderStatus.COMPLETED
@@ -398,12 +399,12 @@ class SupabaseGroceryRepo(
               else -> OrderStatus.PLACED
             }
 
-            // Timeline reconstruction
-            val timeline = listOf(
-              OrderTimelineItem(OrderStatus.PLACED, orderDate, isCompleted = true),
-              OrderTimelineItem(OrderStatus.PREPARING, orderDate, isCompleted = status.stepIndex >= 1, isCurrent = status == OrderStatus.PREPARING),
-              OrderTimelineItem(OrderStatus.READY_FOR_PICKUP, "Counter 1", isCompleted = status.stepIndex >= 2, isCurrent = status == OrderStatus.READY_FOR_PICKUP),
-              OrderTimelineItem(OrderStatus.COMPLETED, "Collected", isCompleted = status == OrderStatus.COMPLETED, isCurrent = status == OrderStatus.COMPLETED)
+            // Round 6: reuse the same helper the client uses at insert time so
+            // the customer sees a consistent 5-step timeline everywhere.
+            val timeline = com.kks.bharatkirana.data.model.buildOrderTimeline(
+              currentStatus = status,
+              orderDate = orderDate,
+              nowLabel = orderDate
             )
 
             orderList.add(
@@ -608,12 +609,21 @@ class SupabaseGroceryRepo(
    * Postgres's column default to decide which row got written, so it could land on
    * a different row than the one `fetchProfile(userId=...)` reads back on the next
    * login, making `profile_completed` appear to silently revert to false.
+   *
+   * Round 6: switched to a real UPSERT (POST + `Prefer: resolution=merge-duplicates`)
+   * WITH `id` in the payload. This means:
+   *   - Row exists → Supabase does ON CONFLICT (id) DO UPDATE (same effect as PATCH).
+   *   - Row missing → Supabase INSERTs a fresh row keyed by the supplied id.
+   * The previous PATCH silently affected 0 rows when the row didn't exist yet
+   * (e.g. after email OTP signup before the auth trigger fires), which is why
+   * mobile_number and profile_completed appeared "not to save".
    */
   suspend fun syncProfile(userId: String, userProfile: UserProfile, accessToken: String? = null): Result<Unit> =
     withContext(Dispatchers.IO) {
       runCatching {
-        val url = "${SupabaseConfig.restUrl}/profiles?id=eq.$userId"
+        val url = "${SupabaseConfig.restUrl}/profiles"
         val payload = JSONObject().apply {
+          put("id", userId)
           put("email", userProfile.email.trim().lowercase())
           put("full_name", userProfile.fullName)
           put("mobile_number", userProfile.mobileNumber)
@@ -630,13 +640,13 @@ class SupabaseGroceryRepo(
         }
 
         val request = baseRequestBuilder(url, accessToken)
-          .addHeader("Prefer", "return=minimal")
-          .patch(payload.toString().toRequestBody(jsonMediaType))
+          .addHeader("Prefer", "resolution=merge-duplicates,return=minimal")
+          .post(payload.toString().toRequestBody(jsonMediaType))
           .build()
 
         val response = client.newCall(request).execute()
         if (!response.isSuccessful) {
-          throw Exception("Profile sync failed: HTTP ${response.code}")
+          throw Exception("Profile sync failed: HTTP ${response.code} — ${response.body?.string().orEmpty()}")
         }
       }
     }
@@ -754,6 +764,27 @@ class SupabaseGroceryRepo(
         if (!response.isSuccessful) {
           throw Exception("Failed to submit rating: HTTP ${response.code}")
         }
+      }
+    }
+
+  // Round 6.1: which order IDs has this customer already rated? Called on login
+  // so OrderDetailsScreen can suppress the star form for orders they've reviewed.
+  suspend fun fetchRatedOrderIds(customerId: String, accessToken: String? = null): Result<Set<String>> =
+    withContext(Dispatchers.IO) {
+      runCatching {
+        val url = "${SupabaseConfig.restUrl}/shop_ratings?customer_id=eq.$customerId&select=order_id"
+        val request = baseRequestBuilder(url, accessToken).get().build()
+        val response = client.newCall(request).execute()
+        val body = response.body?.string() ?: ""
+        if (!response.isSuccessful) throw Exception("Failed to fetch ratings: HTTP ${response.code}")
+        val array = JSONArray(body)
+        val ids = mutableSetOf<String>()
+        for (i in 0 until array.length()) {
+          val o = array.optJSONObject(i) ?: continue
+          val id = o.optString("order_id")
+          if (id.isNotBlank()) ids.add(id)
+        }
+        ids
       }
     }
 

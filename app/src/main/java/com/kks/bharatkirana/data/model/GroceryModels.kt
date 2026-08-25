@@ -147,8 +147,8 @@ data class UserProfile(
   val isLoyaltyMember: Boolean = false,
   val loyaltyPoints: Int = 0,
   val walletBalance: Int = 0,
-  val activeStore: String = "BreakQ Store, Hyderabad",
-  val activeStoreAddress: String = "BreakQ Store, Banjara Hills Rd 12, Hyderabad",
+  val activeStore: String = "",
+  val activeStoreAddress: String = "",
   val shopId: String? = null, // For vendors
   val profileCompleted: Boolean = false,
   val phoneVerified: Boolean = false,
@@ -188,10 +188,20 @@ data class UserProfile(
 
 enum class OrderStatus(val label: String, val stepIndex: Int) {
   PLACED("Order Placed", 0),
-  PREPARING("Preparing", 1),
-  READY_FOR_PICKUP("Ready for Pickup", 2),
-  COMPLETED("Completed", 3),
-  CANCELLED("Cancelled", 4)
+  CONFIRMED("Order Confirmed", 1),
+  PREPARING("Preparing", 2),
+  READY_FOR_PICKUP("Ready for Pickup", 3),
+  COMPLETED("Completed", 4),
+  CANCELLED("Cancelled", 5)
+}
+
+// Round 6.1: single format used for both the profile QR (no order ref) and the
+// order-pickup QR (with 4-digit ref). Vendor's scanner sees the same schema.
+fun buildCustomerQrPayload(userEmail: String, orderId: String? = null): String {
+  val user = userEmail.trim().lowercase().ifBlank { "unknown" }
+  val base = "BREAKQ:USER:$user"
+  val ref = orderId?.takeLast(4)?.uppercase()
+  return if (ref.isNullOrBlank()) base else "$base:REF:$ref"
 }
 
 data class OrderTimelineItem(
@@ -200,6 +210,42 @@ data class OrderTimelineItem(
   val isCompleted: Boolean,
   val isCurrent: Boolean = false
 )
+
+// Round 6: single source of truth for how the 5-step customer timeline looks
+// at any given backend status. Called both when the customer inserts an order
+// (initial = PLACED) and when the Realtime UPDATE arrives after a vendor action.
+fun buildOrderTimeline(currentStatus: OrderStatus, orderDate: String, nowLabel: String = orderDate): List<OrderTimelineItem> {
+  val progressSteps = listOf(
+    OrderStatus.PLACED,
+    OrderStatus.CONFIRMED,
+    OrderStatus.PREPARING,
+    OrderStatus.READY_FOR_PICKUP,
+    OrderStatus.COMPLETED
+  )
+  // Terminal cancel state — collapse the timeline to Placed + a Cancelled marker
+  // so the customer sees "you ordered, we stopped" without a ghost progress bar.
+  if (currentStatus == OrderStatus.CANCELLED) {
+    return listOf(
+      OrderTimelineItem(OrderStatus.PLACED, orderDate, isCompleted = true, isCurrent = false),
+      OrderTimelineItem(OrderStatus.CANCELLED, nowLabel, isCompleted = true, isCurrent = true)
+    )
+  }
+  return progressSteps.map { step ->
+    val defaultTimeText = when (step) {
+      OrderStatus.PLACED -> orderDate
+      OrderStatus.CONFIRMED -> "Waiting for shop"
+      OrderStatus.PREPARING -> "Not started"
+      OrderStatus.READY_FOR_PICKUP -> "Not ready yet"
+      OrderStatus.COMPLETED -> "Pending pickup"
+      else -> ""
+    }
+    when {
+      step.stepIndex < currentStatus.stepIndex -> OrderTimelineItem(step, defaultTimeText, isCompleted = true)
+      step == currentStatus -> OrderTimelineItem(step, nowLabel, isCompleted = true, isCurrent = true)
+      else -> OrderTimelineItem(step, defaultTimeText, isCompleted = false)
+    }
+  }
+}
 
 data class Order(
   val id: String, // e.g. "KIR-7F42"

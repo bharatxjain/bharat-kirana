@@ -36,6 +36,7 @@ fun OrderDetailsScreen(
   onReorder: (Order) -> Unit,
   onRateShop: (shopId: String, orderId: String, rating: Int, review: String) -> Unit = { _, _, _, _ -> },
   onCancelOrder: (String) -> Unit = {},
+  hasAlreadyRated: Boolean = false,
   modifier: Modifier = Modifier
 ) {
   val subtotal = order.items.sumOf { it.totalPrice }
@@ -43,7 +44,9 @@ fun OrderDetailsScreen(
 
   var ratingValue by remember { mutableIntStateOf(0) }
   var reviewText by remember { mutableStateOf("") }
-  var showRatingForm by remember { mutableStateOf(order.status == OrderStatus.COMPLETED) }
+  // Star form appears ONLY when the order is completed AND the customer hasn't
+  // already submitted a rating for it — fixes the "prompted every visit" bug.
+  val showRatingForm = order.status == OrderStatus.COMPLETED && !hasAlreadyRated
   var ratingSubmitted by remember { mutableStateOf(false) }
   var ratingDismissed by remember { mutableStateOf(false) }
   var showCancelDialog by remember { mutableStateOf(false) }
@@ -173,7 +176,7 @@ fun OrderDetailsScreen(
             Spacer(modifier = Modifier.height(8.dp))
 
             Text(
-              text = "Pickup Verification Code: ${order.backupCode}",
+              text = "Pickup Code: ${order.id}",
               style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
               color = BharatTextPrimary
             )

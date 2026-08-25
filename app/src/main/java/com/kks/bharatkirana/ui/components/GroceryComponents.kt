@@ -170,17 +170,25 @@ fun StoreLocationHeader(
       }
       Spacer(modifier = Modifier.width(4.dp))
 
-      IconButton(
-        onClick = onProfileClick,
+      // Round 6: circular avatar with the user's first-name initial (Blinkit-style)
+      // instead of the old generic hero image. Falls back to "U" when the profile
+      // hasn't loaded yet or is unavailable.
+      val initial = userInitial.trim().firstOrNull()?.uppercaseChar()?.toString() ?: "U"
+      Box(
         modifier = Modifier
           .size(36.dp)
           .clip(CircleShape)
+          .background(
+            Brush.linearGradient(listOf(BharatPurplePrimary, BharatPurpleAccent))
+          )
+          .clickable(onClick = onProfileClick),
+        contentAlignment = Alignment.Center
       ) {
-        Image(
-          painter = painterResource(id = R.drawable.img_welcome_hero),
-          contentDescription = "Profile",
-          modifier = Modifier.fillMaxSize(),
-          contentScale = ContentScale.Crop
+        Text(
+          text = initial,
+          color = Color.White,
+          fontWeight = FontWeight.Bold,
+          fontSize = 16.sp
         )
       }
     }

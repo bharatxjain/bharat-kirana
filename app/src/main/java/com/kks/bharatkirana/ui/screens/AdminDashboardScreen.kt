@@ -1358,6 +1358,7 @@ fun AdminLiveOrdersView(
                 shape = RoundedCornerShape(8.dp),
                 color = when (order.status) {
                   OrderStatus.PLACED -> Color(0xFFFEF3C7)
+                  OrderStatus.CONFIRMED -> Color(0xFFDCFCE7)
                   OrderStatus.PREPARING -> Color(0xFFE0F2FE)
                   OrderStatus.READY_FOR_PICKUP -> BharatGreenLight
                   OrderStatus.COMPLETED -> Color(0xFFF1F5F9)
@@ -1368,6 +1369,7 @@ fun AdminLiveOrdersView(
                   text = order.status.label,
                   color = when (order.status) {
                     OrderStatus.PLACED -> Color(0xFFD97706)
+                    OrderStatus.CONFIRMED -> Color(0xFF10B981)
                     OrderStatus.PREPARING -> Color(0xFF0284C7)
                     OrderStatus.READY_FOR_PICKUP -> BharatGreen
                     OrderStatus.COMPLETED -> BharatTextSecondary
@@ -1427,13 +1429,25 @@ fun AdminLiveOrdersView(
               when (order.status) {
                 OrderStatus.PLACED -> {
                   Button(
+                    onClick = { onUpdateOrderStatus(order.id, OrderStatus.CONFIRMED) },
+                    colors = ButtonDefaults.buttonColors(containerColor = BharatGreen),
+                    shape = RoundedCornerShape(8.dp),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                    modifier = Modifier.height(34.dp)
+                  ) {
+                    Text("Confirm Order", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                  }
+                }
+
+                OrderStatus.CONFIRMED -> {
+                  Button(
                     onClick = { onUpdateOrderStatus(order.id, OrderStatus.PREPARING) },
                     colors = ButtonDefaults.buttonColors(containerColor = BharatPurplePrimary),
                     shape = RoundedCornerShape(8.dp),
                     contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
                     modifier = Modifier.height(34.dp)
                   ) {
-                    Text("Prepare Order", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    Text("Start Preparing", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                   }
                 }
 

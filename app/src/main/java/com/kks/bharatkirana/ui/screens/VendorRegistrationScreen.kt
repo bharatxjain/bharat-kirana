@@ -182,12 +182,17 @@ fun VendorRegistrationScreen(
               Spacer(modifier = Modifier.height(12.dp))
               Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 CategorySelectCard(title = "Medical", icon = Icons.Default.LocalPharmacy, isSelected = selectedCategory == "Medical", onClick = { selectedCategory = "Medical" }, modifier = Modifier.weight(1f))
-                CategorySelectCard(title = "Electronics", icon = Icons.Default.Devices, isSelected = selectedCategory == "Electronics", onClick = { selectedCategory = "Electronics" }, modifier = Modifier.weight(1f))
+                CategorySelectCard(title = "Beauty", icon = Icons.Default.Face, isSelected = selectedCategory == "Beauty", onClick = { selectedCategory = "Beauty" }, modifier = Modifier.weight(1f))
               }
               Spacer(modifier = Modifier.height(12.dp))
               Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                CategorySelectCard(title = "Electronics", icon = Icons.Default.Devices, isSelected = selectedCategory == "Electronics", onClick = { selectedCategory = "Electronics" }, modifier = Modifier.weight(1f))
                 CategorySelectCard(title = "Pashu Aahar", icon = Icons.Default.Agriculture, isSelected = selectedCategory == "Pashu Aahar", onClick = { selectedCategory = "Pashu Aahar" }, modifier = Modifier.weight(1f))
+              }
+              Spacer(modifier = Modifier.height(12.dp))
+              Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 CategorySelectCard(title = "Others", icon = Icons.Default.Storefront, isSelected = selectedCategory == "Others", onClick = { selectedCategory = "Others" }, modifier = Modifier.weight(1f))
+                Spacer(modifier = Modifier.weight(1f))
               }
             }
 

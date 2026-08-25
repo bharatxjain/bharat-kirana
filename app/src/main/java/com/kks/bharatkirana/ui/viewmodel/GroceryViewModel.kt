@@ -180,6 +180,19 @@ class GroceryViewModel(
   private val _tierCapMessage = MutableStateFlow<String?>(null)
   val tierCapMessage: StateFlow<String?> = _tierCapMessage.asStateFlow()
 
+  // Round 6.1: flips to true after the very first fetchProfile call completes on
+  // login (whether it succeeded, failed, or returned "row not found"). Used by
+  // ProfileScreen to gate the "Register Your Shop" CTA so it doesn't flicker on
+  // cold start before we know whether this user is already a vendor.
+  private val _profileFetchComplete = MutableStateFlow(false)
+  val profileFetchComplete: StateFlow<Boolean> = _profileFetchComplete.asStateFlow()
+
+  // Set of order IDs the current user has already left a rating for — populated
+  // on login from shop_ratings and appended on every successful rateShop() call.
+  // OrderDetailsScreen reads this to decide whether the star form should render.
+  private val _ratedOrderIds = MutableStateFlow<Set<String>>(emptySet())
+  val ratedOrderIds: StateFlow<Set<String>> = _ratedOrderIds.asStateFlow()
+
   // Round 3.5: role picked during signup (before profile is completed).
   // Set from AuthScreen → read after CompleteProfile to decide next screen.
   private val _pendingSignupRole = MutableStateFlow<UserRole?>(null)
@@ -220,7 +233,14 @@ class GroceryViewModel(
         .onSuccess { match ->
           if (match != null) {
             _scannedProductTemplate.value = match
-            _barcodeStatusMessage.value = "Found: ${match.name}"
+            // Blank `id` means the match came from the OpenFoodFacts fallback, not
+            // our own products table — tell the vendor so they know why the image
+            // and category look different from a colleague's earlier scan.
+            _barcodeStatusMessage.value = if (match.id.isBlank()) {
+              "Found on OpenFoodFacts: ${match.name}"
+            } else {
+              "Found in BreakQ catalog: ${match.name}"
+            }
           } else {
             _scannedProductTemplate.value = null
             _barcodeStatusMessage.value = "New product — please fill details"
@@ -273,18 +293,12 @@ class GroceryViewModel(
         _orders.update { list ->
           list.map { order ->
             if (order.id != orderId) return@map order
-            val updatedTimeline = order.timeline.map { item ->
-              when {
-                item.status.stepIndex < status.stepIndex -> item.copy(isCompleted = true, isCurrent = false)
-                item.status == status -> item.copy(
-                  isCompleted = true,
-                  isCurrent = true,
-                  time = if (item.time.contains("Pending") || item.time.contains("Expected")) "Today, $now" else item.time
-                )
-                else -> item.copy(isCompleted = false, isCurrent = false)
-              }
-            }
-            order.copy(status = status, timeline = updatedTimeline)
+            val rebuilt = buildOrderTimeline(
+              currentStatus = status,
+              orderDate = order.orderDate,
+              nowLabel = "Today, $now"
+            )
+            order.copy(status = status, timeline = rebuilt)
           }
         }
       }
@@ -424,10 +438,21 @@ class GroceryViewModel(
 
   fun fetchUserLocation() {
     try {
-      // lastLocation only returns a cached fix (can be null, or minutes/hours stale —
-      // e.g. right after the device moved with location services off). Request a
-      // fresh high-accuracy fix instead so "nearby shops" reflects where the user
-      // actually is right now.
+      // Two-stage strategy so the map / "delivering to" pill fills in instantly
+      // like Blinkit/Zomato, instead of showing a blank state for 10-30 seconds
+      // while GPS locks:
+      //
+      // Stage 1 (instant, cached): lastLocation returns whatever Play Services
+      // has in memory — may be minutes old but good enough to render the UI
+      // immediately after login.
+      fusedLocationClient.lastLocation.addOnSuccessListener { location: Location? ->
+        if (location != null && _userLocation.value == null) {
+          _userLocation.value = location
+          updateShopDistances(location)
+        }
+      }
+      // Stage 2 (fresh, accurate): overrides the cached fix as soon as a real
+      // GPS lock arrives — usually within 2-5 seconds when GPS is on.
       fusedLocationClient.getCurrentLocation(
         com.google.android.gms.location.Priority.PRIORITY_HIGH_ACCURACY,
         null
@@ -438,7 +463,8 @@ class GroceryViewModel(
         }
       }
     } catch (e: SecurityException) {
-      // Permission not granted
+      // Permission not granted — MainScreen's permission launcher will re-invoke us
+      // after the user says yes.
     }
   }
 
@@ -475,12 +501,11 @@ class GroceryViewModel(
       }
 
       // Sync live shops (Round 2)
+      // Round 6.1: overwrite even when server returns empty so a stale seed shop
+      // doesn't linger in the UI after the DB was cleared. Empty list = empty UI.
       supabaseGroceryRepo.fetchShops(supabaseAuthService.currentAccessToken).onSuccess { liveShops ->
-        if (liveShops.isNotEmpty()) {
-          _shops.value = liveShops
-          // Re-run distance sort if we already have a location fix.
-          _userLocation.value?.let { updateShopDistances(it) }
-        }
+        _shops.value = liveShops
+        _userLocation.value?.let { updateShopDistances(it) }
       }
 
       // Sync orders
@@ -657,17 +682,16 @@ class GroceryViewModel(
       items = items,
       totalAmount = totalAmount,
       orderDate = "Today, $currentTime",
-      status = OrderStatus.READY_FOR_PICKUP,
-      expectedPickupTime = "Today by 5:30 PM",
+      status = OrderStatus.PLACED,
+      expectedPickupTime = "Awaiting shop confirmation",
       storeName = _userProfile.value.activeStore,
       storeAddress = _userProfile.value.activeStoreAddress,
-      timeline = listOf(
-        OrderTimelineItem(OrderStatus.PLACED, "Today, $currentTime", isCompleted = true),
-        OrderTimelineItem(OrderStatus.PREPARING, "Today, $currentTime", isCompleted = true),
-        OrderTimelineItem(OrderStatus.READY_FOR_PICKUP, "Expected by 5:30 PM", isCompleted = true, isCurrent = true),
-        OrderTimelineItem(OrderStatus.COMPLETED, "Pending counter pickup", isCompleted = false)
+      timeline = buildOrderTimeline(
+        currentStatus = OrderStatus.PLACED,
+        orderDate = "Today, $currentTime",
+        nowLabel = "Today, $currentTime"
       ),
-      qrCodePayload = "ORDER:$orderId:BHARAT_KIRANA"
+      qrCodePayload = buildCustomerQrPayload(_userProfile.value.email, orderId)
     )
 
     _orders.update { listOf(newOrder) + it }
@@ -962,6 +986,7 @@ class GroceryViewModel(
     )
     _authStatusMessage.value = null
     _cartItems.value = emptyList()
+    _profileFetchComplete.value = false
     screenBackStack.clear()
     _currentScreen.value = AppScreen.Auth
   }
@@ -1042,6 +1067,8 @@ class GroceryViewModel(
             }
           }
       }
+      // Flip regardless of success/failure — the UI just needs to know "we tried".
+      _profileFetchComplete.value = true
 
       // Only decide profile-completeness-dependent navigation once the server's
       // profile_completed value has actually loaded — reading _userProfile.value
@@ -1057,6 +1084,19 @@ class GroceryViewModel(
       // Overview screen can show tier badge and enforce item cap without a spinner.
       loadSubscriptionTiers()
       loadVendorSubscription()
+
+      // Round 6: warm the location cache the second the user logs in so the
+      // "delivering to" pill and nearby shops are ready by the time Home renders —
+      // no-op if permission isn't granted yet (MainScreen will retry after prompt).
+      fetchUserLocation()
+
+      // Round 6.1: preload the set of orders this customer has already rated so
+      // OrderDetailsScreen can hide the star form for those. Silent on failure.
+      val currentUserId = supabaseAuthService.currentUserId
+      if (!currentUserId.isNullOrBlank()) {
+        supabaseGroceryRepo.fetchRatedOrderIds(currentUserId, supabaseAuthService.currentAccessToken)
+          .onSuccess { ids -> _ratedOrderIds.value = ids }
+      }
 
       // Load orders using the (possibly updated) admin flag
       val effectiveIsAdmin = _userProfile.value.isAdmin
@@ -1186,6 +1226,11 @@ class GroceryViewModel(
 
   fun updateProfile(fullName: String, email: String, mobileNumber: String, address: String) {
     val cleanEmail = email.trim()
+    val userId = supabaseAuthService.currentUserId ?: run {
+      _authStatusMessage.value = "Session expired. Please log in again."
+      return
+    }
+    // Optimistic local update so the UI feels instant.
     _userProfile.update {
       it.copy(
         fullName = fullName.trim(),
@@ -1196,10 +1241,16 @@ class GroceryViewModel(
         phoneVerified = true
       )
     }
-
-    val userId = supabaseAuthService.currentUserId ?: return
+    _isLoading.value = true
     viewModelScope.launch {
-      supabaseGroceryRepo.syncProfile(userId, _userProfile.value, supabaseAuthService.currentAccessToken)
+      val result = supabaseGroceryRepo.syncProfile(userId, _userProfile.value, supabaseAuthService.currentAccessToken)
+      _isLoading.value = false
+      result.onFailure { err ->
+        // Server rejected the write — roll back `profileCompleted` so we don't
+        // navigate the user past Complete Profile with a phantom-saved row.
+        _userProfile.update { it.copy(profileCompleted = false) }
+        _authStatusMessage.value = "Couldn't save profile: ${err.message ?: "unknown error"}. Please try again."
+      }
     }
   }
 
@@ -1611,6 +1662,9 @@ class GroceryViewModel(
         review = review,
         accessToken = supabaseAuthService.currentAccessToken
       ).onSuccess {
+        // Mark this order as rated so OrderDetailsScreen stops re-prompting the
+        // customer every time they open the order.
+        _ratedOrderIds.update { it + orderId }
         // Optimistically bump local shop aggregate; the server trigger keeps DB truth.
         _shops.update { list ->
           list.map { shop ->

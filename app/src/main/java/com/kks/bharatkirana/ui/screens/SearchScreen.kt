@@ -31,10 +31,16 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -67,6 +73,33 @@ fun SearchScreen(
   modifier: Modifier = Modifier
 ) {
   val popularKeywords = listOf("Atta", "Basmati Rice", "Amul Milk", "Sunflower Oil", "Spinach", "Bread", "Tata Salt")
+
+  // Round 6.1: last 3 committed searches, persisted in SharedPreferences so they
+  // survive app kill. New entries push older ones out, most recent first.
+  val context = LocalContext.current
+  val prefs = remember { context.getSharedPreferences("bharat_kirana_prefs", android.content.Context.MODE_PRIVATE) }
+  var recentSearches by remember {
+    mutableStateOf(
+      prefs.getString("recent_searches", "")
+        ?.split("|")
+        ?.filter { it.isNotBlank() }
+        ?.take(3)
+        ?: emptyList()
+    )
+  }
+  // Debounced write: once the user stops typing for 1 s and the query is meaningful,
+  // promote it to the top of the recent-searches list and persist.
+  LaunchedEffect(searchQuery) {
+    val q = searchQuery.trim()
+    if (q.length < 2) return@LaunchedEffect
+    kotlinx.coroutines.delay(1000)
+    if (q != searchQuery.trim()) return@LaunchedEffect
+    val updated = (listOf(q) + recentSearches.filter { !it.equals(q, ignoreCase = true) }).take(3)
+    if (updated != recentSearches) {
+      recentSearches = updated
+      prefs.edit().putString("recent_searches", updated.joinToString("|")).apply()
+    }
+  }
 
   val filteredProducts = if (searchQuery.trim().isEmpty()) {
     products
@@ -110,6 +143,48 @@ fun SearchScreen(
       }
 
       Spacer(modifier = Modifier.height(12.dp))
+
+      if (recentSearches.isNotEmpty() && searchQuery.trim().isEmpty()) {
+        Text(
+          text = "Recent Searches",
+          style = MaterialTheme.typography.labelMedium,
+          color = BharatTextSecondary
+        )
+        Spacer(modifier = Modifier.height(6.dp))
+        LazyRow(
+          horizontalArrangement = Arrangement.spacedBy(8.dp),
+          modifier = Modifier.fillMaxWidth()
+        ) {
+          items(recentSearches) { keyword ->
+            Surface(
+              onClick = { onSearchQueryChange(keyword) },
+              shape = RoundedCornerShape(20.dp),
+              color = BharatPurpleContainer,
+              border = androidx.compose.foundation.BorderStroke(1.dp, BharatPurplePrimary.copy(alpha = 0.3f))
+            ) {
+              Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+              ) {
+                Icon(
+                  Icons.Default.Storefront,
+                  contentDescription = null,
+                  tint = BharatPurplePrimary,
+                  modifier = Modifier.size(12.dp)
+                )
+                Spacer(modifier = Modifier.width(4.dp))
+                Text(
+                  text = keyword,
+                  color = BharatPurplePrimary,
+                  fontWeight = FontWeight.Medium,
+                  fontSize = 12.sp
+                )
+              }
+            }
+          }
+        }
+        Spacer(modifier = Modifier.height(16.dp))
+      }
 
       // Trending Search chips
       Text(
