@@ -40,8 +40,10 @@ import com.kks.bharatkirana.ui.theme.*
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun VendorRegistrationScreen(
-  onRegisterClick: (name: String, owner: String, address: String, phone: String, category: String, lat: Double, lng: Double) -> Unit,
+  onRegisterClick: (name: String, owner: String, address: String, phone: String, category: String, lat: Double, lng: Double, shopPhoto: Uri?, businessProof: Uri?) -> Unit,
   onBackClick: () -> Unit,
+  isLoading: Boolean = false,
+  uploadProgress: Float = 0f,
   modifier: Modifier = Modifier
 ) {
   var step by remember { mutableIntStateOf(1) }
@@ -135,6 +137,31 @@ fun VendorRegistrationScreen(
         RegistrationStepItem(number = 1, label = "Basic", isActive = step >= 1)
         RegistrationStepItem(number = 2, label = "Contact", isActive = step >= 2)
         RegistrationStepItem(number = 3, label = "Verify", isActive = step >= 3)
+      }
+
+      if (isLoading) {
+        Column(
+          modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 8.dp),
+          horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+          LinearProgressIndicator(
+            progress = { uploadProgress },
+            modifier = Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(4.dp)),
+            color = BharatPurplePrimary,
+            trackColor = BharatPurpleContainer
+          )
+          Spacer(modifier = Modifier.height(4.dp))
+          Text(
+            text = when {
+              uploadProgress < 0.5f -> "Uploading shop photo..."
+              uploadProgress < 0.9f -> "Uploading business proof..."
+              else -> "Finalizing registration..."
+            },
+            fontSize = 11.sp,
+            color = BharatPurplePrimary,
+            fontWeight = FontWeight.Bold
+          )
+        }
       }
 
       Spacer(modifier = Modifier.height(8.dp))
@@ -342,9 +369,9 @@ fun VendorRegistrationScreen(
 
           Button(
             onClick = {
-              if (step < 3) step++ else onRegisterClick(shopName, ownerName, shopAddress, phoneNumber, selectedCategory, lat, lng)
+              if (step < 3) step++ else onRegisterClick(shopName, ownerName, shopAddress, phoneNumber, selectedCategory, lat, lng, shopPhotoUri, businessProofUri)
             },
-            enabled = when(step) {
+            enabled = !isLoading && when(step) {
               1 -> shopName.isNotBlank()
               2 -> ownerName.isNotBlank() && phoneNumber.isNotBlank() && shopAddress.isNotBlank()
               else -> shopPhotoUri != null

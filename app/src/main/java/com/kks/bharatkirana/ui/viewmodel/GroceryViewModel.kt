@@ -134,6 +134,9 @@ class GroceryViewModel(
   private val _isLoading = MutableStateFlow(false)
   val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
 
+  private val _uploadProgress = MutableStateFlow(0f)
+  val uploadProgress: StateFlow<Float> = _uploadProgress.asStateFlow()
+
   private val _isOrderPlacing = MutableStateFlow(false)
   val isOrderPlacing: StateFlow<Boolean> = _isOrderPlacing.asStateFlow()
 
@@ -1194,29 +1197,61 @@ class GroceryViewModel(
     phone: String,
     category: String = "Grocery",
     lat: Double = 0.0,
-    lng: Double = 0.0
+    lng: Double = 0.0,
+    shopPhotoUri: Uri? = null,
+    businessProofUri: Uri? = null
   ) {
     val shopId = "s_${System.currentTimeMillis()}"
     val userId = supabaseAuthService.currentUserId ?: return
     val token = supabaseAuthService.currentAccessToken
 
-    val newShop = Shop(
-      id = shopId,
-      name = name,
-      ownerName = owner,
-      address = address,
-      phone = phone,
-      lat = lat,
-      lng = lng,
-      primaryCategory = category,
-      isPartner = false,
-      status = VendorStatus.PENDING
-    )
-
     _isLoading.value = true
+    _uploadProgress.value = 0f
     viewModelScope.launch {
+      var uploadedImageUrl = ""
+      var uploadedProofUrl = ""
+
+      // 1. Upload Shop Photo (0% -> 50%)
+      if (shopPhotoUri != null) {
+        val bytes = getBytesFromUri(shopPhotoUri)
+        if (bytes != null) {
+          val fileName = "${shopId}_photo.jpg"
+          supabaseGroceryRepo.uploadFile("shop-images", fileName, bytes, token)
+            .onSuccess { url -> uploadedImageUrl = url }
+        }
+      }
+      _uploadProgress.value = 0.5f
+
+      // 2. Upload Business Proof (50% -> 90%)
+      if (businessProofUri != null) {
+        val bytes = getBytesFromUri(businessProofUri)
+        if (bytes != null) {
+          val fileName = "${shopId}_proof.jpg"
+          supabaseGroceryRepo.uploadFile("shop-proofs", fileName, bytes, token)
+            .onSuccess { url -> uploadedProofUrl = url }
+        }
+      }
+      _uploadProgress.value = 0.9f
+
+      // 3. Create and Register Shop (90% -> 100%)
+      val newShop = Shop(
+        id = shopId,
+        name = name,
+        ownerName = owner,
+        address = address,
+        phone = phone,
+        lat = lat,
+        lng = lng,
+        imageUrl = uploadedImageUrl,
+        proofUrl = uploadedProofUrl,
+        primaryCategory = category,
+        isPartner = false,
+        status = VendorStatus.PENDING
+      )
+
       supabaseGroceryRepo.registerShop(newShop, userId, token)
         .onSuccess {
+          _uploadProgress.value = 1.0f
           _isLoading.value = false
           // Update local profile
           _userProfile.update { it.copy(shopId = shopId) }
@@ -1598,6 +1633,7 @@ class GroceryViewModel(
     val shopId = _userProfile.value.shopId ?: "s_bharat_kirana"
     
     _isLoading.value = true
+    _uploadProgress.value = 0f
     _productUploadMessage.value = null
     viewModelScope.launch {
       val finalImageUrls = mutableListOf<String>()
@@ -1605,6 +1641,8 @@ class GroceryViewModel(
       var uploadFailCount = 0
       var readFailCount = 0
       
+      val totalAttempted = imageUris.size
+
       // 1. Handle Multiple Images Upload
       imageUris.forEachIndexed { index, uri ->
         val bytes = getBytesFromUri(uri)
@@ -1622,6 +1660,9 @@ class GroceryViewModel(
             uploadFailCount++
             android.util.Log.w("BreakQ", "Product image upload failed: ${it.message}")
           }
+        
+        // Update progress per image (0% -> 90%)
+        _uploadProgress.value = (index + 1).toFloat() / totalAttempted * 0.9f
       }
 
       // 2. Create Product Object
@@ -1646,10 +1687,10 @@ class GroceryViewModel(
       // 3. Sync to Supabase & Local
       _products.update { listOf(newProd) + it }
       supabaseGroceryRepo.addProduct(newProd, supabaseAuthService.currentAccessToken)
+      _uploadProgress.value = 1.0f
       _isLoading.value = false
 
       // 4. Surface upload outcome so AddProductScreen can toast the vendor.
-      val totalAttempted = imageUris.size
       _productUploadMessage.value = when {
         totalAttempted == 0 -> "Product added (no images)."
         uploadFailCount == 0 && readFailCount == 0 ->

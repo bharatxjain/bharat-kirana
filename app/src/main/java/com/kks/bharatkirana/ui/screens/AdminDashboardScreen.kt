@@ -116,7 +116,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.kks.bharatkirana.data.model.*
-import com.kks.bharatkirana.ui.components.CameraPreview
+import com.kks.bharatkirana.ui.components.QrScannerView
 import com.kks.bharatkirana.ui.components.CustomQrCodePattern
 import com.kks.bharatkirana.ui.theme.BharatBackground
 import com.kks.bharatkirana.ui.theme.BharatGreen
@@ -613,48 +613,21 @@ fun AdminDashboardScreen(
   }
 
   if (showCameraScanner) {
-    AlertDialog(
+    androidx.compose.ui.window.Dialog(
       onDismissRequest = { showCameraScanner = false },
-      title = { Text("Scan Pickup QR", fontWeight = FontWeight.Bold) },
-      text = {
-        Box(
-          modifier = Modifier
-            .fillMaxWidth()
-            .height(300.dp)
-            .clip(RoundedCornerShape(16.dp))
-            .background(Color.Black)
-        ) {
-          CameraPreview(modifier = Modifier.fillMaxSize())
-          
-          // Overlay UI for scanning
-          Box(
-            modifier = Modifier
-              .size(200.dp)
-              .border(2.dp, Color.White.copy(alpha = 0.5f), RoundedCornerShape(20.dp))
-              .align(Alignment.Center)
-          )
-        }
-      },
-      confirmButton = {
-        Button(onClick = { 
-           // In a real implementation, you'd process the image frame for QR
-           // Simulating finding an order from the list
-           val sample = orders.firstOrNull()
-           if (sample != null) {
-              qrVerificationInput = sample.id
-              verifiedOrderResult = sample
-           }
-           showCameraScanner = false 
-        }) {
-          Text("Simulate Scan Success")
-        }
-      },
-      dismissButton = {
-        TextButton(onClick = { showCameraScanner = false }) {
-          Text("Cancel")
-        }
+      properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+      Surface(modifier = Modifier.fillMaxSize()) {
+        QrScannerView(
+          onCodeScanned = { code ->
+            qrVerificationInput = code
+            verifiedOrderResult = onVerifyPickupCode(code)
+            showCameraScanner = false
+          },
+          onClose = { showCameraScanner = false }
+        )
       }
-    )
+    }
   }
 
   // Edit Product Dialog (Expanded)

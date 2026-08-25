@@ -42,6 +42,7 @@ fun AddProductScreen(
   barcodeStatusMessage: String? = null,
   onScanConsumed: () -> Unit = {},
   isUploading: Boolean = false,
+  uploadProgress: Float = 0f,
   uploadResultMessage: String? = null,
   onUploadResultConsumed: () -> Unit = {},
   modifier: Modifier = Modifier
@@ -123,6 +124,15 @@ fun AddProductScreen(
         .padding(20.dp),
       verticalArrangement = Arrangement.spacedBy(20.dp)
     ) {
+      if (isUploading) {
+        LinearProgressIndicator(
+          progress = { uploadProgress },
+          modifier = Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(4.dp)),
+          color = BharatPurplePrimary,
+          trackColor = BharatPurpleContainer
+        )
+      }
+
       // Scan Barcode entry point (Round 4)
       OutlinedCard(
         onClick = onScanBarcode,

@@ -396,11 +396,14 @@ fun MainScreen(
       }
 
       is AppScreen.VendorRegistration -> {
+        val uploadProgress by viewModel.uploadProgress.collectAsState()
         VendorRegistrationScreen(
-          onRegisterClick = { name, owner, addr, phone, category, lat, lng ->
-            viewModel.registerVendorShop(name, owner, addr, phone, category, lat, lng)
+          onRegisterClick = { name, owner, addr, phone, category, lat, lng, photo, proof ->
+            viewModel.registerVendorShop(name, owner, addr, phone, category, lat, lng, photo, proof)
           },
-          onBackClick = { viewModel.navigateBack() }
+          onBackClick = { viewModel.navigateBack() },
+          isLoading = isLoading,
+          uploadProgress = uploadProgress
         )
       }
 
@@ -454,13 +457,12 @@ fun MainScreen(
         val barcodeStatus by viewModel.barcodeStatusMessage.collectAsState()
         val addProductUploading by viewModel.isLoading.collectAsState()
         val addProductResult by viewModel.productUploadMessage.collectAsState()
+        val uploadProgress by viewModel.uploadProgress.collectAsState()
 
         AddProductScreen(
           onBackClick = { viewModel.navigateBack() },
           onListProduct = { name, cat, unit, price, mrp, desc, stock, imageUris, barcode ->
              viewModel.addNewProduct(name, cat, unit, price, mrp, desc, stock, imageUris, barcode)
-             // Round 7: stay on the screen so the vendor sees the upload result
-             // banner; the dismiss button in the banner + back nav go home when ready.
           },
           onScanBarcode = { viewModel.navigateTo(AppScreen.BarcodeScanner) },
           scannedTemplate = scannedTemplate,
@@ -468,6 +470,7 @@ fun MainScreen(
           barcodeStatusMessage = barcodeStatus,
           onScanConsumed = { viewModel.clearScannedTemplate() },
           isUploading = addProductUploading,
+          uploadProgress = uploadProgress,
           uploadResultMessage = addProductResult,
           onUploadResultConsumed = {
             viewModel.clearProductUploadMessage()

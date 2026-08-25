@@ -45,6 +45,7 @@ data class Shop(
   val ratingCount: Int = 0,
   val deliveryTime: String = "20-30 mins",
   val imageUrl: String = "",
+  val proofUrl: String = "",
   @DrawableRes val localImageRes: Int? = null,
   val isPartner: Boolean = true,
   val phone: String = "",

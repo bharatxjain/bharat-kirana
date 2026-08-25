@@ -517,6 +517,8 @@ class SupabaseGroceryRepo(
           put("accepting_orders", shop.isOpen)
           put("open_time", shop.openTime)
           put("close_time", shop.closeTime)
+          if (shop.imageUrl.isNotBlank()) put("image_url", shop.imageUrl)
+          if (shop.proofUrl.isNotBlank()) put("business_proof_url", shop.proofUrl)
         }
 
         val shopRequest = baseRequestBuilder(shopUrl, accessToken)
@@ -582,22 +584,26 @@ class SupabaseGroceryRepo(
    * Returns the public URL of the uploaded image
    */
   suspend fun uploadProductImage(imageName: String, imageBytes: ByteArray, accessToken: String? = null): Result<String> =
+    uploadFile("product-images", imageName, imageBytes, accessToken)
+
+  /**
+   * Generic file upload to Supabase Storage
+   */
+  suspend fun uploadFile(bucket: String, fileName: String, fileBytes: ByteArray, accessToken: String? = null): Result<String> =
     withContext(Dispatchers.IO) {
       runCatching {
-        // 1. Upload to Storage (Bucket: 'product-images')
-        val url = "${SupabaseConfig.storageUrl}/object/product-images/$imageName"
+        val url = "${SupabaseConfig.storageUrl}/object/$bucket/$fileName"
         
         val request = baseRequestBuilder(url, accessToken)
-          .post(imageBytes.toRequestBody("image/jpeg".toMediaType()))
+          .post(fileBytes.toRequestBody("image/jpeg".toMediaType())) // Assumes JPEG for now
           .build()
 
         val response = client.newCall(request).execute()
-        if (!response.isSuccessful && response.code != 409) { // 409 = already exists, we might want to update
-           throw Exception("Storage upload failed: ${response.code}")
+        if (!response.isSuccessful && response.code != 409) {
+           throw Exception("Storage upload failed ($bucket): HTTP ${response.code}")
         }
 
-        // 2. Get Public URL
-        "${SupabaseConfig.storageUrl}/public/product-images/$imageName"
+        "${SupabaseConfig.storageUrl}/public/$bucket/$fileName"
       }
     }
 

@@ -51,7 +51,6 @@ fun OrderDetailsScreen(
   var ratingSubmitted by remember { mutableStateOf(false) }
   var ratingDismissed by remember { mutableStateOf(false) }
   var showCancelDialog by remember { mutableStateOf(false) }
-
   val canCancel = order.status == OrderStatus.PLACED || order.status == OrderStatus.PREPARING
 
   if (showCancelDialog) {
@@ -66,14 +65,18 @@ fun OrderDetailsScreen(
             onCancelOrder(order.id)
           },
           colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626))
-        ) { Text("Yes, cancel") }
+        ) {
+          Text("Yes, cancel")
+        }
       },
       dismissButton = {
-        OutlinedButton(onClick = { showCancelDialog = false }) { Text("Keep order") }
+        OutlinedButton(onClick = { showCancelDialog = false }) {
+          Text("Keep order")
+        }
       }
     )
   }
-
+  
   Surface(
     modifier = modifier.fillMaxSize(),
     color = BharatBackground
@@ -117,7 +120,7 @@ fun OrderDetailsScreen(
           )
         }
       }
-
+              
       Column(
         modifier = Modifier
           .weight(1f)
@@ -160,7 +163,7 @@ fun OrderDetailsScreen(
                 )
               }
             }
-
+                          
             Spacer(modifier = Modifier.height(16.dp))
 
             Box(
@@ -173,7 +176,7 @@ fun OrderDetailsScreen(
             ) {
               CustomQrCodePattern(tint = BharatPurpleDark)
             }
-
+            
             Spacer(modifier = Modifier.height(8.dp))
 
             Text(
@@ -189,7 +192,7 @@ fun OrderDetailsScreen(
             )
           }
         }
-
+                  
         if (canCancel) {
           OutlinedButton(
             onClick = { showCancelDialog = true },
@@ -204,7 +207,7 @@ fun OrderDetailsScreen(
             Text("Cancel Order", color = Color(0xFFDC2626), fontWeight = FontWeight.Bold)
           }
         }
-
+                  
         // Rating Section
         if (showRatingForm && !ratingSubmitted && !ratingDismissed) {
           Card(
@@ -278,7 +281,7 @@ fun OrderDetailsScreen(
             }
           }
         }
-
+                              
         // Timeline
         Card(
           shape = RoundedCornerShape(16.dp),
@@ -295,7 +298,7 @@ fun OrderDetailsScreen(
             OrderTimelineView(timeline = order.timeline)
           }
         }
-
+                  
         // Store Details
         Card(
           shape = RoundedCornerShape(16.dp),
@@ -352,10 +355,9 @@ fun OrderDetailsScreen(
                 }
               }
             }
-            }
           }
         }
-
+                                                                        
         // Items Purchased
         Card(
           shape = RoundedCornerShape(16.dp),
@@ -400,7 +402,7 @@ fun OrderDetailsScreen(
                     )
                   }
                 }
-
+                                  
                 Spacer(modifier = Modifier.width(12.dp))
 
                 Column(modifier = Modifier.weight(1f)) {
@@ -415,7 +417,7 @@ fun OrderDetailsScreen(
                     color = BharatTextSecondary
                   )
                 }
-
+                
                 Text(
                   text = "₹${item.totalPrice}",
                   style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
@@ -423,7 +425,7 @@ fun OrderDetailsScreen(
                 )
               }
             }
-
+                          
             Spacer(modifier = Modifier.height(12.dp))
             HorizontalDivider(color = Color(0xFFF1F5F9))
             Spacer(modifier = Modifier.height(12.dp))
@@ -476,7 +478,7 @@ fun OrderDetailsScreen(
           }
         }
       }
-
+                                    
       // Reorder Footer
       Surface(
         color = Color.White,
