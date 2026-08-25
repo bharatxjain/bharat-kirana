@@ -13,6 +13,7 @@ import androidx.activity.viewModels
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.ui.Modifier
 import androidx.core.content.ContextCompat
+import com.kks.bharatkirana.data.maps.MapplsConfig
 import com.kks.bharatkirana.service.MyFirebaseMessagingService
 import com.kks.bharatkirana.ui.screens.MainScreen
 import com.kks.bharatkirana.ui.theme.BharatKiranaTheme
@@ -31,6 +32,10 @@ class MainActivity : ComponentActivity() {
     // Round 4b: register the FCM channel up-front so the very first push renders
     // correctly on Android 8+ even if MyFirebaseMessagingService hasn't run yet.
     MyFirebaseMessagingService.ensureChannel(this)
+
+    // Must run before any screen tries to render a MapplsMap. No-ops until real
+    // keys are added to .env — see MapplsConfig.
+    MapplsConfig.initialize(this)
 
     // Android 13+ requires this runtime permission — without it, notify() calls in
     // MyFirebaseMessagingService silently no-op and pushes never appear.

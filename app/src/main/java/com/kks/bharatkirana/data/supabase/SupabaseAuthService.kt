@@ -21,6 +21,9 @@ class SupabaseAuthService(
   var currentAccessToken: String? = null
     private set
 
+  var currentRefreshToken: String? = null
+    private set
+
   var currentUserEmail: String? = null
     private set
 
@@ -53,6 +56,7 @@ class SupabaseAuthService(
       if (response.isSuccessful) {
         val obj = JSONObject(responseBody)
         val accessToken = obj.optString("access_token")
+        val refreshToken = obj.optString("refresh_token")
         val userObj = obj.optJSONObject("user")
         val userId = userObj?.optString("id") ?: ""
         val userEmail = userObj?.optString("email") ?: email.trim().lowercase()
@@ -60,12 +64,14 @@ class SupabaseAuthService(
         // Access token might be null if email confirmation is required
         if (accessToken.isNotBlank()) {
           currentAccessToken = accessToken
+          currentRefreshToken = refreshToken
           currentUserEmail = userEmail
           currentUserId = userId
         }
 
         AuthSession(
           accessToken = accessToken,
+          refreshToken = refreshToken,
           userId = userId,
           email = userEmail
         )
@@ -105,16 +111,19 @@ class SupabaseAuthService(
       if (response.isSuccessful) {
         val obj = JSONObject(responseBody)
         val accessToken = obj.optString("access_token")
+        val refreshToken = obj.optString("refresh_token")
         val userObj = obj.optJSONObject("user")
         val userId = userObj?.optString("id") ?: ""
         val userEmail = userObj?.optString("email") ?: email.trim().lowercase()
 
         currentAccessToken = accessToken
+        currentRefreshToken = refreshToken
         currentUserEmail = userEmail
         currentUserId = userId
 
         AuthSession(
           accessToken = accessToken,
+          refreshToken = refreshToken,
           userId = userId,
           email = userEmail
         )
@@ -191,16 +200,19 @@ class SupabaseAuthService(
       if (response.isSuccessful) {
         val obj = JSONObject(responseBody)
         val accessToken = obj.optString("access_token")
+        val refreshToken = obj.optString("refresh_token")
         val userObj = obj.optJSONObject("user")
         val userId = userObj?.optString("id") ?: ""
         val userEmail = userObj?.optString("email") ?: email.trim().lowercase()
 
         currentAccessToken = accessToken
+        currentRefreshToken = refreshToken
         currentUserEmail = userEmail
         currentUserId = userId
 
         AuthSession(
           accessToken = accessToken,
+          refreshToken = refreshToken,
           userId = userId,
           email = userEmail
         )
@@ -211,6 +223,58 @@ class SupabaseAuthService(
           "Verification failed with code ${response.code}"
         }
         throw Exception(errorMsg)
+      }
+    }
+  }
+
+  /**
+   * Restore a session from a persisted refresh token (called on cold app start).
+   * Without this, the app only ever remembered the user's *email* locally and
+   * called GroceryViewModel.login(email) with no real Supabase session behind
+   * it — every REST call and the Realtime socket then silently ran as the
+   * anonymous role, so RLS hid all data: order status never updated live,
+   * push/in-app notifications never fired, and profile edits appeared to not
+   * persist after a restart.
+   */
+  suspend fun restoreSession(refreshToken: String): Result<AuthSession> = withContext(Dispatchers.IO) {
+    runCatching {
+      val url = "${SupabaseConfig.authUrl}/token?grant_type=refresh_token"
+      val json = JSONObject().apply {
+        put("refresh_token", refreshToken)
+      }
+
+      val request = Request.Builder()
+        .url(url)
+        .addHeader("apikey", SupabaseConfig.API_KEY)
+        .addHeader("Authorization", "Bearer ${SupabaseConfig.API_KEY}")
+        .addHeader("Content-Type", "application/json")
+        .post(json.toString().toRequestBody(jsonMediaType))
+        .build()
+
+      val response = client.newCall(request).execute()
+      val responseBody = response.body?.string() ?: ""
+
+      if (response.isSuccessful) {
+        val obj = JSONObject(responseBody)
+        val accessToken = obj.optString("access_token")
+        val newRefreshToken = obj.optString("refresh_token")
+        val userObj = obj.optJSONObject("user")
+        val userId = userObj?.optString("id") ?: ""
+        val userEmail = userObj?.optString("email") ?: ""
+
+        currentAccessToken = accessToken
+        currentRefreshToken = newRefreshToken
+        currentUserEmail = userEmail
+        currentUserId = userId
+
+        AuthSession(
+          accessToken = accessToken,
+          refreshToken = newRefreshToken,
+          userId = userId,
+          email = userEmail
+        )
+      } else {
+        throw Exception("Session refresh failed: HTTP ${response.code}")
       }
     }
   }
@@ -295,6 +359,7 @@ class SupabaseAuthService(
         client.newCall(request).execute()
       }
       currentAccessToken = null
+      currentRefreshToken = null
       currentUserEmail = null
       currentUserId = null
     }
@@ -303,6 +368,7 @@ class SupabaseAuthService(
 
 data class AuthSession(
   val accessToken: String,
+  val refreshToken: String,
   val userId: String,
   val email: String
 )

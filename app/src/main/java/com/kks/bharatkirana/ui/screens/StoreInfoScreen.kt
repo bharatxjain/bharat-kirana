@@ -1,6 +1,8 @@
 package com.kks.bharatkirana.ui.screens
 
 import android.content.Intent
+import android.graphics.Color as AndroidColor
+import android.location.Location
 import android.net.Uri
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
@@ -46,6 +48,8 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -53,11 +57,16 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.lifecycle.DefaultLifecycleObserver
+import androidx.lifecycle.LifecycleOwner
 import com.kks.bharatkirana.R
+import com.kks.bharatkirana.data.maps.MapplsConfig
 import com.kks.bharatkirana.data.model.Shop
 import com.kks.bharatkirana.data.model.isCurrentlyOpen
 import com.kks.bharatkirana.ui.theme.BharatBackground
@@ -67,6 +76,13 @@ import com.kks.bharatkirana.ui.theme.BharatPurpleDark
 import com.kks.bharatkirana.ui.theme.BharatPurplePrimary
 import com.kks.bharatkirana.ui.theme.BharatTextPrimary
 import com.kks.bharatkirana.ui.theme.BharatTextSecondary
+import com.mappls.sdk.maps.MapView
+import com.mappls.sdk.maps.MapplsMap
+import com.mappls.sdk.maps.OnMapReadyCallback
+import com.mappls.sdk.maps.annotations.MarkerOptions
+import com.mappls.sdk.maps.annotations.PolylineOptions
+import com.mappls.sdk.maps.camera.CameraPosition
+import com.mappls.sdk.maps.geometry.LatLng
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -75,6 +91,7 @@ fun StoreInfoScreen(
   onBackClick: () -> Unit,
   onViewCatalog: () -> Unit,
   onOpenDirections: (address: String, lat: Double, lng: Double) -> Unit = { _, _, _ -> },
+  userLocation: Location? = null,
   modifier: Modifier = Modifier
 ) {
   val context = LocalContext.current
@@ -129,7 +146,9 @@ fun StoreInfoScreen(
     ) {
       item { Spacer(modifier = Modifier.height(8.dp)) }
 
-      // Map Snippet (Clickable)
+      // Map Snippet (Clickable) — live embedded map with a route line from the
+      // user's current location to the store once Mappls keys are configured
+      // (see .env.example); otherwise falls back to the static "open in Maps" card.
       item {
         Card(
           onClick = openMaps,
@@ -139,40 +158,65 @@ fun StoreInfoScreen(
             .height(200.dp),
           elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
         ) {
-          Box(modifier = Modifier.fillMaxSize()) {
-            Image(
-              painter = painterResource(id = R.drawable.img_onboarding_delivery), // Placeholder map image
-              contentDescription = "Store Location Map",
-              modifier = Modifier.fillMaxSize(),
-              contentScale = ContentScale.Crop
-            )
-            Box(
-              modifier = Modifier
-                .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.05f))
-            )
-            // Centered Marker
-            Icon(
-              imageVector = Icons.Default.LocationOn,
-              contentDescription = null,
-              tint = BharatPurplePrimary,
-              modifier = Modifier
-                .size(48.dp)
-                .align(Alignment.Center)
-            )
-            
-            // "Tap to view on Maps" overlay
-            Surface(
-              color = Color.Black.copy(alpha = 0.6f),
-              shape = RoundedCornerShape(50.dp),
-              modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 12.dp)
-            ) {
-              Text(
-                text = if (hasCoords) "Tap to view exact location on Maps" else "Tap to search this address on Maps",
-                color = Color.White,
-                fontSize = 11.sp,
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+          if (MapplsConfig.isConfigured && hasCoords) {
+            Box(modifier = Modifier.fillMaxSize()) {
+              StoreRouteMap(
+                storeLocation = LatLng(shop!!.lat, shop.lng),
+                storeName = storeName,
+                userLocation = userLocation,
+                modifier = Modifier.fillMaxSize()
               )
+              // "Tap to open full directions" overlay — the embedded map is a
+              // preview; tapping still hands off to Maps for turn-by-turn nav.
+              Surface(
+                color = Color.Black.copy(alpha = 0.6f),
+                shape = RoundedCornerShape(50.dp),
+                modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 12.dp)
+              ) {
+                Text(
+                  text = "Tap for turn-by-turn directions",
+                  color = Color.White,
+                  fontSize = 11.sp,
+                  modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                )
+              }
+            }
+          } else {
+            Box(modifier = Modifier.fillMaxSize()) {
+              Image(
+                painter = painterResource(id = R.drawable.img_onboarding_delivery), // Placeholder map image
+                contentDescription = "Store Location Map",
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Crop
+              )
+              Box(
+                modifier = Modifier
+                  .fillMaxSize()
+                  .background(Color.Black.copy(alpha = 0.05f))
+              )
+              // Centered Marker
+              Icon(
+                imageVector = Icons.Default.LocationOn,
+                contentDescription = null,
+                tint = BharatPurplePrimary,
+                modifier = Modifier
+                  .size(48.dp)
+                  .align(Alignment.Center)
+              )
+
+              // "Tap to view on Maps" overlay
+              Surface(
+                color = Color.Black.copy(alpha = 0.6f),
+                shape = RoundedCornerShape(50.dp),
+                modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 12.dp)
+              ) {
+                Text(
+                  text = if (hasCoords) "Tap to view exact location on Maps" else "Tap to search this address on Maps",
+                  color = Color.White,
+                  fontSize = 11.sp,
+                  modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                )
+              }
             }
           }
         }
@@ -282,6 +326,75 @@ fun StoreInfoScreen(
       item { Spacer(modifier = Modifier.height(24.dp)) }
     }
   }
+}
+
+/**
+ * Live Mappls map showing the store and (when available) the user's current
+ * location, connected by a route line — the in-app preview equivalent of what
+ * Zepto/Blinkit show before handing off to full turn-by-turn navigation.
+ */
+@Composable
+private fun StoreRouteMap(
+  storeLocation: LatLng,
+  storeName: String,
+  userLocation: Location?,
+  modifier: Modifier = Modifier
+) {
+  val context = LocalContext.current
+  val lifecycleOwner = LocalLifecycleOwner.current
+  val mapView = remember { MapView(context) }
+
+  DisposableEffect(lifecycleOwner, mapView) {
+    val observer = object : DefaultLifecycleObserver {
+      override fun onCreate(owner: LifecycleOwner) = mapView.onCreate(null)
+      override fun onStart(owner: LifecycleOwner) = mapView.onStart()
+      override fun onResume(owner: LifecycleOwner) = mapView.onResume()
+      override fun onPause(owner: LifecycleOwner) = mapView.onPause()
+      override fun onStop(owner: LifecycleOwner) = mapView.onStop()
+      override fun onDestroy(owner: LifecycleOwner) = mapView.onDestroy()
+    }
+    lifecycleOwner.lifecycle.addObserver(observer)
+    onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+  }
+
+  AndroidView(
+    modifier = modifier,
+    factory = { mapView },
+    update = { view ->
+      view.getMapAsync(object : OnMapReadyCallback {
+        override fun onMapReady(mapplsMap: MapplsMap) {
+          mapplsMap.clear()
+          mapplsMap.addMarker(MarkerOptions().position(storeLocation).title(storeName))
+
+          var targetLat = storeLocation.latitude
+          var targetLng = storeLocation.longitude
+          var zoom = 15.0
+
+          if (userLocation != null) {
+            val userLatLng = LatLng(userLocation)
+            mapplsMap.addMarker(MarkerOptions().position(userLatLng).title("Your location"))
+            mapplsMap.addPolyline(
+              PolylineOptions()
+                .add(userLatLng)
+                .add(storeLocation)
+                .color(AndroidColor.parseColor("#6C00FF"))
+                .width(4f)
+            )
+            targetLat = (storeLocation.latitude + userLatLng.latitude) / 2
+            targetLng = (storeLocation.longitude + userLatLng.longitude) / 2
+            zoom = 13.5
+          }
+
+          mapplsMap.cameraPosition = CameraPosition.Builder()
+            .target(LatLng(targetLat, targetLng))
+            .zoom(zoom)
+            .build()
+        }
+
+        override fun onMapError(code: Int, message: String?) { /* falls back to the static card's own error state visually — nothing to draw */ }
+      })
+    }
+  )
 }
 
 @Composable

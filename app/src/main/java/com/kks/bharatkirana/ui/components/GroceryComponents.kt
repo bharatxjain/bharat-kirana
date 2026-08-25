@@ -146,7 +146,7 @@ fun StoreLocationHeader(
           Icon(
             imageVector = Icons.Default.Notifications,
             contentDescription = "Notifications",
-            tint = BharatTextPrimary
+            tint = BharatPurplePrimary
           )
         }
         if (unreadNotificationCount > 0) {

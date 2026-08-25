@@ -50,6 +50,7 @@ fun MainScreen(
   val categories by viewModel.categories.collectAsState()
   val cartItems by viewModel.cartItems.collectAsState()
   val orders by viewModel.orders.collectAsState()
+  val userLocation by viewModel.userLocation.collectAsState()
   val selectedProduct by viewModel.selectedProduct.collectAsState()
   val selectedCategory by viewModel.selectedCategory.collectAsState()
   val searchQuery by viewModel.searchQuery.collectAsState()
@@ -351,7 +352,8 @@ fun MainScreen(
           onViewCatalog = {
             viewModel.setTab(MainTab.HOME)
           },
-          onOpenDirections = { addr, lat, lng -> viewModel.openDirections(addr, lat, lng) }
+          onOpenDirections = { addr, lat, lng -> viewModel.openDirections(addr, lat, lng) },
+          userLocation = userLocation
         )
       }
 

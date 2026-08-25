@@ -138,6 +138,7 @@ class GroceryViewModel(
   val isOrderPlacing: StateFlow<Boolean> = _isOrderPlacing.asStateFlow()
 
   private val _userLocation = MutableStateFlow<Location?>(null)
+  val userLocation: StateFlow<Location?> = _userLocation.asStateFlow()
 
   // ---- Round 3: Firebase Remote Config-driven state ----
   private val _handlingFee = MutableStateFlow(5)
@@ -374,17 +375,37 @@ class GroceryViewModel(
 
   private fun loadSavedSession() {
     val email = prefs.getString("user_email", "") ?: ""
-    if (email.isNotBlank()) {
-      login(email) { user ->
-        // Decided only after the server profile has loaded, so a returning user
-        // whose profile is actually complete doesn't get bounced back here.
-        if (!user.profileCompleted) {
-          _currentScreen.value = AppScreen.CompleteProfile
-        } else {
-          _currentScreen.value = AppScreen.Main
-          _activeShopId.value = null
+    val refreshToken = prefs.getString("refresh_token", null)
+    if (email.isBlank()) return
+    if (refreshToken.isNullOrBlank()) {
+      // We only ever persisted the email, not a real Supabase session — calling
+      // login(email) with no token behind it used to silently run every REST
+      // call and the Realtime socket as the anonymous role (RLS then hides
+      // everything), which is why order status never updated live and push
+      // never fired after an app restart. Without a refresh token there's no
+      // way to actually re-authenticate, so drop the stale local session.
+      clearSavedSession()
+      return
+    }
+    viewModelScope.launch {
+      supabaseAuthService.restoreSession(refreshToken)
+        .onSuccess { session ->
+          persistRefreshToken(session.refreshToken)
+          login(session.email) { user ->
+            // Decided only after the server profile has loaded, so a returning user
+            // whose profile is actually complete doesn't get bounced back here.
+            if (!user.profileCompleted) {
+              _currentScreen.value = AppScreen.CompleteProfile
+            } else {
+              _currentScreen.value = AppScreen.Main
+              _activeShopId.value = null
+            }
+          }
         }
-      }
+        .onFailure {
+          // Refresh token expired or was revoked — the user has to log in again.
+          clearSavedSession()
+        }
     }
   }
 
@@ -392,8 +413,13 @@ class GroceryViewModel(
     prefs.edit().putString("user_email", email).apply()
   }
 
+  private fun persistRefreshToken(refreshToken: String) {
+    if (refreshToken.isBlank()) return
+    prefs.edit().putString("refresh_token", refreshToken).apply()
+  }
+
   private fun clearSavedSession() {
-    prefs.edit().remove("user_email").apply()
+    prefs.edit().remove("user_email").remove("refresh_token").apply()
   }
 
   fun fetchUserLocation() {
@@ -762,6 +788,7 @@ class GroceryViewModel(
             onResult(true, "Please check your email for verification link/OTP.")
           } else {
             _authStatusMessage.value = "Account created successfully!"
+            persistRefreshToken(session.refreshToken)
             login(cleanEmail, name, mobile, AuthPath.EMAIL)
             updateProfile(name, cleanEmail, mobile, address)
             onResult(true, "Signup successful")
@@ -786,6 +813,7 @@ class GroceryViewModel(
         .onSuccess { session ->
           _isAuthLoading.value = false
           _authStatusMessage.value = "Welcome back!"
+          persistRefreshToken(session.refreshToken)
           login(cleanEmail, authPath = AuthPath.EMAIL)
           loadSupabaseData()
           onResult(true, "Login successful")
@@ -896,6 +924,7 @@ class GroceryViewModel(
         .onSuccess { session ->
           _isAuthLoading.value = false
           _authStatusMessage.value = "Successfully authenticated!"
+          persistRefreshToken(session.refreshToken)
           val pendingName = _pendingSignupName.value.orEmpty()
           val pendingMobile = _pendingSignupMobile.value.orEmpty()
           login(cleanEmail, pendingName, pendingMobile, authPath = AuthPath.EMAIL)
