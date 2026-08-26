@@ -707,8 +707,9 @@ class SupabaseGroceryRepo(
           // NOTE: `role` is intentionally NOT sent from the client. It is set only by
           // a super admin via the Supabase Table Editor (or a future admin-only Edge
           // Function). RLS on user_profiles must reject any client attempt to set role.
-          put("wallet_balance", userProfile.walletBalance)
-          put("loyalty_points", userProfile.loyaltyPoints)
+          // wallet_balance and loyalty_points are likewise server-owned: this upsert
+          // sends the whole row, so including them would overwrite a server-side
+          // credit with whatever stale value the client happens to hold.
           put("profile_completed", userProfile.profileCompleted)
           put("phone_verified", userProfile.phoneVerified)
           put("auth_provider", userProfile.authPath?.name?.lowercase() ?: "phone")

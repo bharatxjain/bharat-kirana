@@ -313,23 +313,27 @@ fun AdminDashboardScreen(
           }
 
           // Navigation Sub-tabs
+          // Index against visibleTabs, not AdminTab.ordinal: VENDOR_MANAGEMENT is
+          // filtered out for non-super-admins, so STORE_SETTINGS' ordinal of 4
+          // would index past the end of a 4-item tabPositions list.
+          val visibleTabs = AdminTab.values().filter {
+            if (it == AdminTab.VENDOR_MANAGEMENT) userProfile.isSuperAdmin else true
+          }
+          val selectedIndex = visibleTabs.indexOf(selectedTab).coerceAtLeast(0)
+
           ScrollableTabRow(
-            selectedTabIndex = selectedTab.ordinal,
+            selectedTabIndex = selectedIndex,
             edgePadding = 16.dp,
             containerColor = Color.White,
             contentColor = BharatPurplePrimary,
             indicator = { tabPositions ->
               TabRowDefaults.SecondaryIndicator(
-                modifier = Modifier.tabIndicatorOffset(tabPositions[selectedTab.ordinal]),
+                modifier = Modifier.tabIndicatorOffset(tabPositions[selectedIndex]),
                 color = BharatPurplePrimary,
                 height = 3.dp
               )
             }
           ) {
-            val visibleTabs = AdminTab.values().filter { 
-              if (it == AdminTab.VENDOR_MANAGEMENT) userProfile.isSuperAdmin else true 
-            }
-            
             visibleTabs.forEach { tab ->
               Tab(
                 selected = selectedTab == tab,

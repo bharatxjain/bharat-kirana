@@ -143,6 +143,10 @@ class GroceryViewModel(
   private val _isLoading = MutableStateFlow(false)
   val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
 
+  // True when a profile edit is saved on-device but not yet accepted by Supabase.
+  private val _profileSyncPending = MutableStateFlow(prefs.getBoolean("profile_pending_sync", false))
+  val profileSyncPending: StateFlow<Boolean> = _profileSyncPending.asStateFlow()
+
   private val _isOrderPlacing = MutableStateFlow(false)
   val isOrderPlacing: StateFlow<Boolean> = _isOrderPlacing.asStateFlow()
 
@@ -1503,20 +1507,27 @@ class GroceryViewModel(
       .putString("profile_full_name", cleanName)
       .putString("profile_mobile", cleanMobile)
       .putString("profile_address", cleanAddress)
+      .putBoolean("profile_pending_sync", true)
       .apply()
+    _profileSyncPending.value = true
 
     _isLoading.value = true
     viewModelScope.launch {
       val result = supabaseGroceryRepo.syncProfile(userId, _userProfile.value, supabaseAuthService.currentAccessToken)
       _isLoading.value = false
-      result.onFailure { err ->
-        // Server rejected the write, but we DON'T roll back profileCompleted this
-        // time — the user actually filled the form, and the local SharedPrefs
-        // record is the source of truth. Silent status message; the retry-on-login
-        // path re-attempts the upsert next time syncFromLocalPrefs() runs.
-        _authStatusMessage.value = "Profile saved locally. Retrying sync…"
-        android.util.Log.w("BreakQ", "syncProfile failed: ${err.message}")
-      }
+      result
+        .onSuccess {
+          prefs.edit().putBoolean("profile_pending_sync", false).apply()
+          _profileSyncPending.value = false
+          _authStatusMessage.value = "Profile saved."
+        }
+        .onFailure { err ->
+          // Keep profileCompleted — the user really did fill the form — but leave
+          // the pending flag set so retryProfileSyncIfNeeded() picks it up and the
+          // Save button stays live for a manual retry.
+          _authStatusMessage.value = "Couldn't save to server — saved on this device only. Tap Save again to retry."
+          android.util.Log.w("BreakQ", "syncProfile failed: ${err.message}")
+        }
     }
   }
 
@@ -1524,14 +1535,18 @@ class GroceryViewModel(
   // was completed but the server row isn't marked completed yet, retry the upsert
   // in the background. Silent — nothing shown to the user either way.
   private fun retryProfileSyncIfNeeded() {
-    val locallyCompleted = prefs.getBoolean("profile_completed_locally", false)
-    if (!locallyCompleted) return
+    // Previously this checked _userProfile.value.profileCompleted, which is the
+    // LOCAL flag that updateProfile() had just set to true — so it always returned
+    // early and never retried anything.
+    if (!prefs.getBoolean("profile_pending_sync", false)) return
     val userId = supabaseAuthService.currentUserId ?: return
-    val serverCompleted = _userProfile.value.profileCompleted &&
-      supabaseAuthService.currentAccessToken != null
-    if (serverCompleted) return
+    val token = supabaseAuthService.currentAccessToken ?: return
     viewModelScope.launch {
-      supabaseGroceryRepo.syncProfile(userId, _userProfile.value, supabaseAuthService.currentAccessToken)
+      supabaseGroceryRepo.syncProfile(userId, _userProfile.value, token)
+        .onSuccess {
+          prefs.edit().putBoolean("profile_pending_sync", false).apply()
+          _profileSyncPending.value = false
+        }
     }
   }
 

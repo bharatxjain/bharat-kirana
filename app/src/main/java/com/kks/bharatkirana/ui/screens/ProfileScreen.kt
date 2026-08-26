@@ -111,6 +111,7 @@ fun ProfileScreen(
   hasSupport: Boolean = false,
   onSupportClick: () -> Unit = {},
   profileFetchComplete: Boolean = true,
+  syncPending: Boolean = false,
   modifier: Modifier = Modifier
 ) {
   var editingProfile by remember { mutableStateOf(false) }
@@ -457,6 +458,9 @@ fun ProfileScreen(
                       editingProfile = false
                     },
                     enabled = editName.isNotBlank() && editMobile.length == 10 && (
+                      // syncPending keeps Save live after a failed upload; without it
+                      // the fields match local state and the button dies forever.
+                      syncPending ||
                       editName.trim() != userProfile.fullName ||
                       editMobile.trim() != userProfile.mobileNumber ||
                       editAddress.trim() != userProfile.address

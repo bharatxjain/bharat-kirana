@@ -79,6 +79,7 @@ fun MainScreen(
   val searchSuggestions by viewModel.searchSuggestions.collectAsState()
   val tierCapMessage by viewModel.tierCapMessage.collectAsState()
   val profileFetchComplete by viewModel.profileFetchComplete.collectAsState()
+  val profileSyncPending by viewModel.profileSyncPending.collectAsState()
   var updateDialogDismissed by rememberSaveable { mutableStateOf(false) }
 
   val totalCartCount = cartItems.sumOf { it.quantity }
@@ -846,7 +847,8 @@ fun MainScreen(
                     },
                     hasSupport = supportWhatsappNumber.isNotBlank(),
                     onSupportClick = { viewModel.openSupportWhatsApp() },
-                    profileFetchComplete = profileFetchComplete
+                    profileFetchComplete = profileFetchComplete,
+                    syncPending = profileSyncPending
                   )
                 }
               }
