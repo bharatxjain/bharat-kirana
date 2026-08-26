@@ -11,6 +11,7 @@ import com.kks.bharatkirana.data.model.Shop
 import com.kks.bharatkirana.data.model.SubscriptionTier
 import com.kks.bharatkirana.data.model.UserProfile
 import com.kks.bharatkirana.data.model.UserRole
+import com.kks.bharatkirana.data.model.VendorAnalytics
 import com.kks.bharatkirana.data.model.VendorStatus
 import com.kks.bharatkirana.data.model.VendorSubscription
 import com.kks.bharatkirana.data.model.WeightOption
