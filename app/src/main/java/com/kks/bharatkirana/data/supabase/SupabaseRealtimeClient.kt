@@ -108,6 +108,9 @@ class SupabaseRealtimeClient(
       // ever reached the client.
       joinChannel(webSocket, "realtime:public:orders", "orders")
       joinChannel(webSocket, "realtime:public:notifications", "notifications")
+      // So a customer browsing the catalog sees a shopkeeper's stock toggle
+      // without needing to pull-to-refresh.
+      joinChannel(webSocket, "realtime:public:products", "products")
       startHeartbeat(webSocket)
     }
 

@@ -35,7 +35,7 @@ import com.kks.bharatkirana.ui.theme.*
 @Composable
 fun AddProductScreen(
   onBackClick: () -> Unit,
-  onListProduct: (String, String, String, Int, Int, String, Boolean, List<Uri>, String) -> Unit,
+  onListProduct: (String, String, String, Int, Int, String, Boolean, Int?, List<Uri>, String, String) -> Unit,
   onScanBarcode: () -> Unit = {},
   scannedTemplate: Product? = null,
   scannedBarcode: String? = null,
@@ -54,8 +54,12 @@ fun AddProductScreen(
   var mrp by remember { mutableStateOf("") }
   var description by remember { mutableStateOf("") }
   var inStock by remember { mutableStateOf(true) }
+  var stockQty by remember { mutableStateOf("") }
   var selectedImageUris by remember { mutableStateOf<List<Uri>>(emptyList()) }
   var localBarcode by remember { mutableStateOf<String?>(null) }
+  // OpenFoodFacts hands back a remote image URL, not a gallery Uri, so it can't
+  // live in selectedImageUris. Kept separately and passed through on save.
+  var scannedImageUrl by remember { mutableStateOf("") }
 
   // Pre-fill fields from a scanned catalog match; keep localBarcode set even after the
   // ViewModel state is cleared so it survives on Save.
@@ -81,6 +85,9 @@ fun AddProductScreen(
         }
         if (mrp.isBlank() && scannedTemplate.originalPrice > 0) {
           mrp = scannedTemplate.originalPrice.toString()
+        }
+        if (scannedImageUrl.isBlank() && scannedTemplate.imageUrl.isNotBlank()) {
+          scannedImageUrl = scannedTemplate.imageUrl
         }
       }
       onScanConsumed()
@@ -193,6 +200,48 @@ fun AddProductScreen(
           modifier = Modifier.fillMaxWidth(),
           horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
+          // Image pulled from the barcode lookup — vendor can drop it and shoot
+          // their own instead.
+          if (scannedImageUrl.isNotBlank()) {
+            Box(
+              modifier = Modifier
+                .weight(1f)
+                .height(100.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .border(BorderStroke(1.dp, BharatGreen), RoundedCornerShape(12.dp))
+            ) {
+              AsyncImage(
+                model = scannedImageUrl,
+                contentDescription = "Scanned product image",
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Crop
+              )
+              Surface(
+                color = BharatGreen,
+                modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth()
+              ) {
+                Text(
+                  "From barcode",
+                  color = Color.White,
+                  fontSize = 9.sp,
+                  fontWeight = FontWeight.Bold,
+                  textAlign = TextAlign.Center,
+                  modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)
+                )
+              }
+              IconButton(
+                onClick = { scannedImageUrl = "" },
+                modifier = Modifier
+                  .size(24.dp)
+                  .align(Alignment.TopEnd)
+                  .padding(4.dp)
+                  .background(Color.Black.copy(alpha = 0.5f), CircleShape)
+              ) {
+                Icon(Icons.Default.Close, contentDescription = "Remove", tint = Color.White, modifier = Modifier.size(14.dp))
+              }
+            }
+          }
+
           selectedImageUris.forEachIndexed { index, uri ->
             Box(
               modifier = Modifier
@@ -370,6 +419,38 @@ fun AddProductScreen(
         )
       }
 
+      // Stock quantity drives the customer-facing badge: a number shows
+      // "In Stock"/"Low Stock", leaving it blank shows "Call to Confirm".
+      if (inStock) {
+        OutlinedTextField(
+          value = stockQty,
+          onValueChange = { input -> stockQty = input.filter { it.isDigit() }.take(5) },
+          label = { Text("Stock Quantity (Optional)") },
+          placeholder = { Text("e.g. 24") },
+          singleLine = true,
+          keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+          supportingText = {
+            Text(
+              text = when (val q = stockQty.toIntOrNull()) {
+                null -> "⚠️ Blank = \"Call to Confirm\" — use only if you can't count right now"
+                0 -> "Customers will see \"Out of Stock\""
+                in 1..5 -> "Customers will see \"Low Stock\""
+                else -> "🟢 Customers will see \"In Stock\""
+              },
+              fontSize = 11.sp,
+              color = BharatTextSecondary
+            )
+          },
+          modifier = Modifier.fillMaxWidth(),
+          shape = RoundedCornerShape(12.dp),
+          colors = OutlinedTextFieldDefaults.colors(
+            focusedTextColor = BharatTextPrimary,
+            unfocusedTextColor = BharatTextPrimary,
+            focusedBorderColor = BharatPurplePrimary
+          )
+        )
+      }
+
       Spacer(modifier = Modifier.height(24.dp))
 
       Button(
@@ -382,8 +463,10 @@ fun AddProductScreen(
             mrp.toIntOrNull() ?: 0,
             description,
             inStock,
+            stockQty.toIntOrNull(),
             selectedImageUris,
-            localBarcode ?: ""
+            localBarcode ?: "",
+            scannedImageUrl
           )
         },
         enabled = !isUploading && productName.isNotBlank() && sellingPrice.isNotBlank(),

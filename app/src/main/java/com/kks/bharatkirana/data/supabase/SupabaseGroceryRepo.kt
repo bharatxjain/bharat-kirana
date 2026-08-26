@@ -16,13 +16,40 @@ import com.kks.bharatkirana.data.model.VendorSubscription
 import com.kks.bharatkirana.data.model.WeightOption
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import okhttp3.MediaType
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
+import okio.BufferedSink
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.TimeUnit
+
+// Streams bytes to the server in small chunks and reports 0..100 progress as it
+// goes, so the vendor sees a real percentage instead of a fake staged bar.
+private class ProgressRequestBody(
+  private val bytes: ByteArray,
+  private val contentType: MediaType?,
+  private val onProgress: (Int) -> Unit
+) : RequestBody() {
+  override fun contentType(): MediaType? = contentType
+  override fun contentLength(): Long = bytes.size.toLong()
+
+  override fun writeTo(sink: BufferedSink) {
+    val chunk = 8 * 1024
+    var written = 0
+    onProgress(0)
+    while (written < bytes.size) {
+      val count = minOf(chunk, bytes.size - written)
+      sink.write(bytes, written, count)
+      sink.flush()
+      written += count
+      onProgress(((written * 100L) / bytes.size).toInt().coerceIn(0, 100))
+    }
+  }
+}
 
 class SupabaseGroceryRepo(
   private val client: OkHttpClient = OkHttpClient.Builder()
@@ -67,6 +94,9 @@ class SupabaseGroceryRepo(
           val unit = obj.optString("unit", "1 unit")
           val description = obj.optString("description", "")
           val inStock = obj.optBoolean("in_stock", true)
+          // SQL NULL means the vendor never declared a count — keep it null so
+          // the badge can say "Call to Confirm" rather than "Out of Stock".
+          val stockQty = if (obj.isNull("stock_qty")) null else obj.optInt("stock_qty")
 
           val imageUrls = mutableListOf<String>()
           val urlsArr = obj.optJSONArray("image_urls")
@@ -103,6 +133,7 @@ class SupabaseGroceryRepo(
               name = name,
               brand = brand,
               categoryId = categoryId,
+              shopId = obj.optString("shop_id", "default_shop"),
               currentPrice = currentPrice,
               originalPrice = originalPrice,
               discountPercent = discountPercent,
@@ -110,6 +141,7 @@ class SupabaseGroceryRepo(
               subtitle = "$unit • $brand",
               description = description,
               inStock = inStock,
+              stockQty = stockQty,
               imageUrl = imageUrls.firstOrNull() ?: obj.optString("image_url", ""),
               imageUrls = imageUrls,
               weightOptions = weightOptions,
@@ -142,6 +174,27 @@ class SupabaseGroceryRepo(
         val response = client.newCall(request).execute()
         if (!response.isSuccessful) {
           throw Exception("Failed to update stock: HTTP ${response.code}")
+        }
+      }
+    }
+
+  // Round 10: null clears the count back to "untracked" (Call to Confirm);
+  // 0 explicitly means sold out.
+  suspend fun updateProductStockQty(productId: String, stockQty: Int?, accessToken: String? = null): Result<Unit> =
+    withContext(Dispatchers.IO) {
+      runCatching {
+        val url = "${SupabaseConfig.restUrl}/products?id=eq.$productId"
+        val payload = JSONObject().apply {
+          if (stockQty == null) put("stock_qty", JSONObject.NULL)
+          else put("stock_qty", stockQty.coerceAtLeast(0))
+        }
+        val request = baseRequestBuilder(url, accessToken)
+          .addHeader("Prefer", "return=minimal")
+          .patch(payload.toString().toRequestBody(jsonMediaType))
+          .build()
+        val response = client.newCall(request).execute()
+        if (!response.isSuccessful) {
+          throw Exception("Failed to update stock quantity: HTTP ${response.code}")
         }
       }
     }
@@ -262,6 +315,7 @@ class SupabaseGroceryRepo(
           put("unit", product.unit)
           put("description", product.description)
           put("in_stock", product.inStock)
+          put("stock_qty", product.stockQty ?: JSONObject.NULL)
           put("weight_options", weightsJson)
           put("image_urls", JSONArray(product.imageUrls))
           put("image_url", product.imageUrl)
@@ -498,7 +552,13 @@ class SupabaseGroceryRepo(
   /**
    * Register a new Shop and link it to the user
    */
-  suspend fun registerShop(shop: com.kks.bharatkirana.data.model.Shop, ownerId: String, accessToken: String? = null): Result<Unit> =
+  suspend fun registerShop(
+    shop: com.kks.bharatkirana.data.model.Shop,
+    ownerId: String,
+    accessToken: String? = null,
+    shopImageUrl: String? = null,
+    businessProofUrl: String? = null
+  ): Result<Unit> =
     withContext(Dispatchers.IO) {
       runCatching {
         // 1. Create the Shop
@@ -513,10 +573,13 @@ class SupabaseGroceryRepo(
           put("lat", shop.lat)
           put("lng", shop.lng)
           put("primary_category", shop.primaryCategory)
+          put("years_in_business", shop.yearsInBusiness)
           put("is_partner", false)
           put("accepting_orders", shop.isOpen)
           put("open_time", shop.openTime)
           put("close_time", shop.closeTime)
+          if (!shopImageUrl.isNullOrBlank()) put("image_url", shopImageUrl)
+          if (!businessProofUrl.isNullOrBlank()) put("business_proof_url", businessProofUrl)
         }
 
         val shopRequest = baseRequestBuilder(shopUrl, accessToken)
@@ -582,22 +645,34 @@ class SupabaseGroceryRepo(
    * Returns the public URL of the uploaded image
    */
   suspend fun uploadProductImage(imageName: String, imageBytes: ByteArray, accessToken: String? = null): Result<String> =
+    uploadImage("product-images", imageName, imageBytes, accessToken)
+
+  // Round 7.2: generic Storage upload used by both product photos and vendor
+  // registration documents (shop photo / business proof). Uses upsert so a retry
+  // overwrites cleanly instead of silently swallowing a 409.
+  suspend fun uploadImage(
+    bucket: String,
+    imageName: String,
+    imageBytes: ByteArray,
+    accessToken: String? = null,
+    onProgress: (Int) -> Unit = {}
+  ): Result<String> =
     withContext(Dispatchers.IO) {
       runCatching {
-        // 1. Upload to Storage (Bucket: 'product-images')
-        val url = "${SupabaseConfig.storageUrl}/object/product-images/$imageName"
-        
+        val url = "${SupabaseConfig.storageUrl}/object/$bucket/$imageName"
+        val body = ProgressRequestBody(imageBytes, "image/jpeg".toMediaType(), onProgress)
         val request = baseRequestBuilder(url, accessToken)
-          .post(imageBytes.toRequestBody("image/jpeg".toMediaType()))
+          .addHeader("x-upsert", "true")
+          .post(body)
           .build()
 
         val response = client.newCall(request).execute()
-        if (!response.isSuccessful && response.code != 409) { // 409 = already exists, we might want to update
-           throw Exception("Storage upload failed: ${response.code}")
+        if (!response.isSuccessful) {
+          val errBody = response.body?.string().orEmpty()
+          throw Exception("Storage upload failed (${response.code}): $errBody")
         }
-
-        // 2. Get Public URL
-        "${SupabaseConfig.storageUrl}/public/product-images/$imageName"
+        onProgress(100)
+        "${SupabaseConfig.storageUrl}/public/$bucket/$imageName"
       }
     }
 
@@ -717,8 +792,9 @@ class SupabaseGroceryRepo(
               phone = obj.optString("phone", ""),
               lat = obj.optDouble("lat", 0.0),
               lng = obj.optDouble("lng", 0.0),
-              rating = obj.optDouble("avg_rating", 4.5).toFloat(),
+              rating = obj.optDouble("avg_rating", 0.0).toFloat(),
               ratingCount = obj.optInt("rating_count", 0),
+              yearsInBusiness = obj.optInt("years_in_business", 0),
               deliveryTime = obj.optString("delivery_time", "20-30 mins"),
               imageUrl = obj.optString("image_url", ""),
               isPartner = obj.optBoolean("is_partner", false),
@@ -951,12 +1027,23 @@ class SupabaseGroceryRepo(
               id = o.optString("id"),
               displayName = o.optString("display_name"),
               priceRupees = o.optInt("price_rupees", 0),
-              itemCap = o.optInt("item_cap", 10),
+              itemCap = o.optInt("item_cap", 500),
               priorityRank = o.optInt("priority_rank", 0),
               canPromote = o.optBoolean("can_promote", false),
               promoteDailyCapRupees = o.optInt("promote_daily_cap_rupees", 0),
               commissionPercent = o.optDouble("commission_percent", 0.0),
-              features = features
+              features = features,
+              tagline = o.optString("tagline", ""),
+              hasBasicAnalytics = o.optBoolean("has_basic_analytics", false),
+              hasFullAnalytics = o.optBoolean("has_full_analytics", false),
+              hasPriorityPlacement = o.optBoolean("has_priority_placement", false),
+              hasTopBoost = o.optBoolean("has_top_boost", false),
+              hideBreakqBranding = o.optBoolean("hide_breakq_branding", false),
+              hasWhatsappAlerts = o.optBoolean("has_whatsapp_alerts", false),
+              hasMultiStaff = o.optBoolean("has_multi_staff", false),
+              hasCompetitorPricing = o.optBoolean("has_competitor_pricing", false),
+              isLimitedTime = o.optBoolean("is_limited_time", false),
+              offerEndsAt = if (o.isNull("offer_ends_at")) null else o.optString("offer_ends_at")
             )
           )
         }
@@ -985,6 +1072,128 @@ class SupabaseGroceryRepo(
           amountPaidRupees = o.optInt("amount_paid_rupees", 0),
           commissionLockedAtPercent = o.optDouble("commission_locked_at_percent", 0.0)
         )
+      }
+    }
+
+  // Round 8: Razorpay orders MUST be created server-side (the key secret can
+  // never ship in the APK). This calls the `create-razorpay-order` Edge Function,
+  // which returns the order_id the Checkout SDK needs.
+  data class RazorpayOrder(val orderId: String, val amountPaise: Int, val currency: String, val keyId: String)
+
+  suspend fun createRazorpayOrder(
+    shopId: String,
+    tierId: String,
+    accessToken: String? = null
+  ): Result<RazorpayOrder> =
+    withContext(Dispatchers.IO) {
+      runCatching {
+        val url = "${SupabaseConfig.functionsUrl}/create-razorpay-order"
+        val payload = JSONObject().apply {
+          put("shop_id", shopId)
+          put("tier_id", tierId)
+        }
+        val request = baseRequestBuilder(url, accessToken)
+          .post(payload.toString().toRequestBody(jsonMediaType))
+          .build()
+        val response = client.newCall(request).execute()
+        val body = response.body?.string().orEmpty()
+        if (!response.isSuccessful) throw Exception("Could not start payment (${response.code}): $body")
+        val o = JSONObject(body)
+        RazorpayOrder(
+          orderId = o.optString("order_id"),
+          amountPaise = o.optInt("amount", 0),
+          currency = o.optString("currency", "INR"),
+          keyId = o.optString("key_id")
+        )
+      }
+    }
+
+  // Called after Razorpay Checkout succeeds. The Edge Function re-verifies the
+  // HMAC signature against the key secret before flipping the vendor's tier —
+  // the client's word alone is never trusted.
+  suspend fun verifyRazorpayPayment(
+    razorpayOrderId: String,
+    razorpayPaymentId: String,
+    razorpaySignature: String,
+    accessToken: String? = null
+  ): Result<Unit> =
+    withContext(Dispatchers.IO) {
+      runCatching {
+        val url = "${SupabaseConfig.functionsUrl}/verify-razorpay-payment"
+        val payload = JSONObject().apply {
+          put("razorpay_order_id", razorpayOrderId)
+          put("razorpay_payment_id", razorpayPaymentId)
+          put("razorpay_signature", razorpaySignature)
+        }
+        val request = baseRequestBuilder(url, accessToken)
+          .post(payload.toString().toRequestBody(jsonMediaType))
+          .build()
+        val response = client.newCall(request).execute()
+        val body = response.body?.string().orEmpty()
+        if (!response.isSuccessful) throw Exception("Payment verification failed (${response.code}): $body")
+      }
+    }
+
+  // Round 8: aggregates the shop_view_events table into the numbers the Advance
+  // and Pro tiers pay for. Free-tier callers simply never invoke this.
+  suspend fun fetchVendorAnalytics(shopId: String, accessToken: String? = null): Result<VendorAnalytics> =
+    withContext(Dispatchers.IO) {
+      runCatching {
+        val url = "${SupabaseConfig.restUrl}/shop_view_events" +
+          "?shop_id=eq.$shopId&select=event_type,search_term,product_id&limit=5000"
+        val request = baseRequestBuilder(url, accessToken).get().build()
+        val response = client.newCall(request).execute()
+        val body = response.body?.string().orEmpty()
+        if (!response.isSuccessful) throw Exception("Failed to fetch analytics: HTTP ${response.code}")
+
+        val array = JSONArray(body)
+        var shopViews = 0
+        var productViews = 0
+        val searchCounts = mutableMapOf<String, Int>()
+        for (i in 0 until array.length()) {
+          val o = array.optJSONObject(i) ?: continue
+          when (o.optString("event_type")) {
+            "shop_view" -> shopViews++
+            "product_view" -> productViews++
+            "search_hit" -> {
+              val term = o.optString("search_term").trim().lowercase()
+              if (term.isNotBlank()) searchCounts[term] = (searchCounts[term] ?: 0) + 1
+            }
+          }
+        }
+        VendorAnalytics(
+          shopViews = shopViews,
+          productViews = productViews,
+          topSearchedProducts = searchCounts.entries
+            .sortedByDescending { it.value }
+            .take(5)
+            .map { it.key.replaceFirstChar { c -> c.uppercase() } to it.value }
+        )
+      }
+    }
+
+  // Fire-and-forget analytics ping from the customer app.
+  suspend fun logShopViewEvent(
+    shopId: String,
+    eventType: String,
+    productId: String? = null,
+    searchTerm: String? = null,
+    accessToken: String? = null
+  ): Result<Unit> =
+    withContext(Dispatchers.IO) {
+      runCatching {
+        val url = "${SupabaseConfig.restUrl}/shop_view_events"
+        val payload = JSONObject().apply {
+          put("shop_id", shopId)
+          put("event_type", eventType)
+          if (!productId.isNullOrBlank()) put("product_id", productId)
+          if (!searchTerm.isNullOrBlank()) put("search_term", searchTerm)
+        }
+        val request = baseRequestBuilder(url, accessToken)
+          .addHeader("Prefer", "return=minimal")
+          .post(payload.toString().toRequestBody(jsonMediaType))
+          .build()
+        client.newCall(request).execute().close()
       }
     }
 }

@@ -397,14 +397,20 @@ fun ProductGridCard(
       val statusColor = when(product.stockStatus) {
         "In Stock" -> BharatGreen
         "Low Stock" -> Color(0xFFF59E0B)
+        "Call to Confirm" -> Color(0xFFD97706)
         else -> Color(0xFFDC2626)
+      }
+      val statusPrefix = when(product.stockStatus) {
+        "In Stock" -> "🟢 "
+        "Call to Confirm" -> "⚠️ "
+        else -> ""
       }
       Surface(
         color = statusColor.copy(alpha = 0.1f),
         shape = RoundedCornerShape(4.dp)
       ) {
         Text(
-          text = product.stockStatus,
+          text = "$statusPrefix${product.stockStatus}",
           color = statusColor,
           fontSize = 10.sp,
           fontWeight = FontWeight.Bold,

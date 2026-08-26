@@ -15,4 +15,5 @@ object SupabaseConfig {
   val authUrl: String get() = "$PROJECT_URL/auth/v1"
   val restUrl: String get() = "$PROJECT_URL/rest/v1"
   val storageUrl: String get() = "$PROJECT_URL/storage/v1"
+  val functionsUrl: String get() = "$PROJECT_URL/functions/v1"
 }

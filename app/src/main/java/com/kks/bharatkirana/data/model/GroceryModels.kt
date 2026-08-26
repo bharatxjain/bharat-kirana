@@ -41,8 +41,12 @@ data class Shop(
   val distance: String = "---",
   val lat: Double = 0.0,
   val lng: Double = 0.0,
-  val rating: Float = 4.5f,
+  // 0f with ratingCount 0 means "no ratings yet" — never fake a score for a shop
+  // nobody has actually reviewed.
+  val rating: Float = 0f,
   val ratingCount: Int = 0,
+  // Vendor-declared tenure. 0 = not provided.
+  val yearsInBusiness: Int = 0,
   val deliveryTime: String = "20-30 mins",
   val imageUrl: String = "",
   @DrawableRes val localImageRes: Int? = null,
@@ -55,7 +59,9 @@ data class Shop(
   val packingTime: Int = 15,
   val openTime: String = "08:00", // 24-hour "HH:mm"
   val closeTime: String = "21:00"
-)
+) {
+  val hasRatings: Boolean get() = ratingCount > 0
+}
 
 /**
  * Returns true only if the shop is manually open (accepting_orders) AND the current
@@ -87,7 +93,9 @@ data class Product(
   val features: List<ProductFeature> = emptyList(),
   val rating: Float = 4.8f,
   val reviewCount: Int = 128,
-  val stockQty: Int = 10,
+  // null = vendor never declared a count (untracked). 0 = genuinely sold out.
+  // The distinction is what separates "Call to Confirm" from "Out of Stock".
+  val stockQty: Int? = null,
   val inStock: Boolean = true,
   val isPopular: Boolean = false,
   val isDailyEssential: Boolean = false,
@@ -95,7 +103,9 @@ data class Product(
 ) {
   val stockStatus: String
     get() = when {
-      !inStock || stockQty <= 0 -> "Out of Stock"
+      !inStock -> "Out of Stock"
+      stockQty == null -> "Call to Confirm"
+      stockQty <= 0 -> "Out of Stock"
       stockQty <= 5 -> "Low Stock"
       else -> "In Stock"
     }
@@ -263,6 +273,9 @@ data class Order(
 )
 
 sealed class AppScreen {
+  // Shown only while a persisted Supabase session is being refreshed on cold
+  // start, so a logged-in user never sees the onboarding pager again.
+  data object Restoring : AppScreen()
   data object Onboarding : AppScreen()
   data object Auth : AppScreen()
   data class SignupSplash(val userEmail: String, val role: String = "Customer") : AppScreen()
@@ -317,9 +330,11 @@ sealed class SearchSuggestion {
   data class ShopSuggestion(val shop: Shop) : SearchSuggestion()
 }
 
-// Round 5: monetization catalog. Mirrors subscription_tiers table row-for-row.
+// Monetization catalog. Mirrors subscription_tiers table row-for-row.
+// Round 8: the paywall is feature-based (analytics / placement / branding), not
+// catalog-size based — itemCap stays only as a spam backstop.
 data class SubscriptionTier(
-  val id: String,           // "free" | "starter" | "standard" | "pro"
+  val id: String,           // "free" | "founding" | "advance" | "pro"
   val displayName: String,
   val priceRupees: Int,
   val itemCap: Int,         // -1 = unlimited
@@ -327,7 +342,18 @@ data class SubscriptionTier(
   val canPromote: Boolean,
   val promoteDailyCapRupees: Int,
   val commissionPercent: Double,
-  val features: List<String>
+  val features: List<String>,
+  val tagline: String = "",
+  val hasBasicAnalytics: Boolean = false,
+  val hasFullAnalytics: Boolean = false,
+  val hasPriorityPlacement: Boolean = false,
+  val hasTopBoost: Boolean = false,
+  val hideBreakqBranding: Boolean = false,
+  val hasWhatsappAlerts: Boolean = false,
+  val hasMultiStaff: Boolean = false,
+  val hasCompetitorPricing: Boolean = false,
+  val isLimitedTime: Boolean = false,
+  val offerEndsAt: String? = null
 )
 
 // Vendor's currently-active subscription row (one per shop).
@@ -340,6 +366,15 @@ data class VendorSubscription(
   val expiresAt: String?,
   val amountPaidRupees: Int,
   val commissionLockedAtPercent: Double
+)
+
+// Round 8: what the vendor sees on the Insights tab. Empty/zeroed for Free tier.
+data class VendorAnalytics(
+  val shopViews: Int = 0,
+  val productViews: Int = 0,
+  val ordersToday: Int = 0,
+  val topSearchedProducts: List<Pair<String, Int>> = emptyList(),
+  val repeatCustomerPercent: Int = 0
 )
 
 enum class MainTab(val title: String, val testTag: String) {

@@ -21,6 +21,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
+import coil.compose.AsyncImage
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -40,8 +41,12 @@ import com.kks.bharatkirana.ui.theme.*
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun VendorRegistrationScreen(
-  onRegisterClick: (name: String, owner: String, address: String, phone: String, category: String, lat: Double, lng: Double) -> Unit,
+  onRegisterClick: (name: String, owner: String, address: String, phone: String, category: String, lat: Double, lng: Double, yearsInBusiness: Int, shopPhoto: Uri?, businessProof: Uri?) -> Unit,
   onBackClick: () -> Unit,
+  uploadState: String = "IDLE",
+  uploadPercent: Int = 0,
+  uploadError: String? = null,
+  onDismissUploadError: () -> Unit = {},
   modifier: Modifier = Modifier
 ) {
   var step by remember { mutableIntStateOf(1) }
@@ -49,6 +54,7 @@ fun VendorRegistrationScreen(
   // Step 1: Basic Info
   var shopName by remember { mutableStateOf("") }
   var selectedCategory by remember { mutableStateOf("Grocery") }
+  var yearsInBusiness by remember { mutableStateOf("") }
   
   // Step 2: Contact & Address
   var ownerName by remember { mutableStateOf("") }
@@ -65,6 +71,17 @@ fun VendorRegistrationScreen(
 
   val photoPickerLauncher = rememberLauncherForActivityResult(contract = ActivityResultContracts.PickVisualMedia(), onResult = { uri -> shopPhotoUri = uri })
   val proofPickerLauncher = rememberLauncherForActivityResult(contract = ActivityResultContracts.PickVisualMedia(), onResult = { uri -> businessProofUri = uri })
+
+  // Driven by GroceryViewModel.VendorUploadState — passed in as a plain String so
+  // this screen stays free of a ViewModel dependency.
+  val isUploading = uploadState != "IDLE"
+  val uploadStatusText = when (uploadState) {
+    "UPLOADING_PHOTO" -> "Uploading shop photo… $uploadPercent%"
+    "UPLOADING_PROOF" -> "Uploading business proof… $uploadPercent%"
+    "SAVING_SHOP" -> "Saving your shop details…"
+    else -> ""
+  }
+  val uploadProgressFraction = (uploadPercent.coerceIn(0, 100)) / 100f
 
   Scaffold(
     topBar = {
@@ -172,6 +189,33 @@ fun VendorRegistrationScreen(
                 )
               )
 
+              Spacer(modifier = Modifier.height(16.dp))
+
+              // Surfaced to customers on the store page as a trust signal.
+              OutlinedTextField(
+                value = yearsInBusiness,
+                onValueChange = { input -> yearsInBusiness = input.filter { it.isDigit() }.take(2) },
+                label = { Text("Years in Business") },
+                placeholder = { Text("e.g., 8", color = BharatTextMuted) },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                supportingText = {
+                  Text(
+                    text = "Shown to customers as \"${yearsInBusiness.ifBlank { "8" }} years in business\" — builds trust with first-time buyers",
+                    fontSize = 11.sp,
+                    color = BharatTextSecondary
+                  )
+                },
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp),
+                colors = OutlinedTextFieldDefaults.colors(
+                  focusedTextColor = BharatTextPrimary,
+                  unfocusedTextColor = BharatTextPrimary,
+                  focusedBorderColor = BharatPurplePrimary,
+                  unfocusedBorderColor = Color(0xFFE5E7EB)
+                )
+              )
+
               Spacer(modifier = Modifier.height(24.dp))
               Text(text = "Primary Category", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = BharatTextPrimary, modifier = Modifier.padding(bottom = 12.dp))
 
@@ -268,15 +312,53 @@ fun VendorRegistrationScreen(
               Box(
                 modifier = Modifier
                   .fillMaxWidth()
-                  .height(120.dp)
+                  .height(140.dp)
                   .clip(RoundedCornerShape(12.dp))
                   .background(Color(0xFFF8FAFC))
-                  .border(1.dp, Color(0xFFE2E8F0), RoundedCornerShape(12.dp))
-                  .clickable { photoPickerLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+                  .border(
+                    1.dp,
+                    if (shopPhotoUri != null) BharatGreen else Color(0xFFE2E8F0),
+                    RoundedCornerShape(12.dp)
+                  )
+                  .clickable(enabled = !isUploading) {
+                    photoPickerLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                  },
                 contentAlignment = Alignment.Center
               ) {
                 if (shopPhotoUri != null) {
-                  Text("Photo Selected", color = BharatGreen, fontWeight = FontWeight.Bold)
+                  AsyncImage(
+                    model = shopPhotoUri,
+                    contentDescription = "Shop photo preview",
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Crop
+                  )
+                  // Green "selected" chip in the corner + a tap-to-replace hint.
+                  Surface(
+                    color = BharatGreen,
+                    shape = RoundedCornerShape(50.dp),
+                    modifier = Modifier.align(Alignment.TopEnd).padding(8.dp)
+                  ) {
+                    Row(
+                      verticalAlignment = Alignment.CenterVertically,
+                      modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                    ) {
+                      Icon(Icons.Default.CheckCircle, contentDescription = null, tint = Color.White, modifier = Modifier.size(12.dp))
+                      Spacer(modifier = Modifier.width(4.dp))
+                      Text("Selected", color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                    }
+                  }
+                  Surface(
+                    color = Color.Black.copy(alpha = 0.55f),
+                    modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth()
+                  ) {
+                    Text(
+                      "Tap to change photo",
+                      color = Color.White,
+                      fontSize = 11.sp,
+                      textAlign = TextAlign.Center,
+                      modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+                    )
+                  }
                 } else {
                   Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Icon(Icons.Default.AddPhotoAlternate, contentDescription = null, tint = BharatPurplePrimary)
@@ -302,16 +384,133 @@ fun VendorRegistrationScreen(
               // Business Proof (optional)
               Text(text = "Business Proof (Utility bill / License) (Optional)", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = BharatTextPrimary)
               Spacer(modifier = Modifier.height(8.dp))
-              Button(
-                onClick = { proofPickerLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
-                modifier = Modifier.fillMaxWidth(),
-                colors = ButtonDefaults.buttonColors(containerColor = Color.White),
-                shape = RoundedCornerShape(12.dp),
-                border = BorderStroke(1.dp, Color(0xFFD1D5DB))
-              ) {
-                Icon(Icons.Default.UploadFile, contentDescription = null, tint = BharatTextSecondary)
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(text = if (businessProofUri != null) "Proof Uploaded" else "Upload Proof", color = BharatTextPrimary)
+              if (businessProofUri != null) {
+                Box(
+                  modifier = Modifier
+                    .fillMaxWidth()
+                    .height(110.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .border(1.dp, BharatGreen, RoundedCornerShape(12.dp))
+                    .clickable(enabled = !isUploading) {
+                      proofPickerLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                    }
+                ) {
+                  AsyncImage(
+                    model = businessProofUri,
+                    contentDescription = "Business proof preview",
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Crop
+                  )
+                  Surface(
+                    color = Color.Black.copy(alpha = 0.55f),
+                    modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth()
+                  ) {
+                    Text(
+                      "Proof selected · tap to change",
+                      color = Color.White,
+                      fontSize = 11.sp,
+                      textAlign = TextAlign.Center,
+                      modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+                    )
+                  }
+                  IconButton(
+                    onClick = { businessProofUri = null },
+                    modifier = Modifier.align(Alignment.TopEnd)
+                  ) {
+                    Surface(color = Color.Black.copy(alpha = 0.6f), shape = RoundedCornerShape(50.dp)) {
+                      Icon(
+                        Icons.Default.Close,
+                        contentDescription = "Remove proof",
+                        tint = Color.White,
+                        modifier = Modifier.padding(4.dp).size(14.dp)
+                      )
+                    }
+                  }
+                }
+              } else {
+                Button(
+                  onClick = { proofPickerLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+                  enabled = !isUploading,
+                  modifier = Modifier.fillMaxWidth(),
+                  colors = ButtonDefaults.buttonColors(containerColor = Color.White),
+                  shape = RoundedCornerShape(12.dp),
+                  border = BorderStroke(1.dp, Color(0xFFD1D5DB))
+                ) {
+                  Icon(Icons.Default.UploadFile, contentDescription = null, tint = BharatTextSecondary)
+                  Spacer(modifier = Modifier.width(8.dp))
+                  Text(text = "Upload Proof", color = BharatTextPrimary)
+                }
+              }
+
+              // Live upload progress while the wizard pushes files to Supabase Storage.
+              if (isUploading) {
+                Spacer(modifier = Modifier.height(16.dp))
+                Surface(
+                  color = BharatPurpleContainer,
+                  shape = RoundedCornerShape(12.dp),
+                  modifier = Modifier.fillMaxWidth()
+                ) {
+                  Column(modifier = Modifier.padding(14.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                      CircularProgressIndicator(
+                        modifier = Modifier.size(18.dp),
+                        color = BharatPurplePrimary,
+                        strokeWidth = 2.dp
+                      )
+                      Spacer(modifier = Modifier.width(12.dp))
+                      Text(
+                        text = uploadStatusText,
+                        color = BharatPurpleDark,
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 13.sp
+                      )
+                    }
+                    Spacer(modifier = Modifier.height(10.dp))
+                    LinearProgressIndicator(
+                      progress = { uploadProgressFraction },
+                      modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)),
+                      color = BharatPurplePrimary,
+                      trackColor = Color.White
+                    )
+                  }
+                }
+              }
+
+              // Upload / registration failure — actionable, dismissible.
+              if (!uploadError.isNullOrBlank()) {
+                Spacer(modifier = Modifier.height(16.dp))
+                Surface(
+                  color = Color(0xFFFFE4E6),
+                  shape = RoundedCornerShape(12.dp),
+                  modifier = Modifier.fillMaxWidth()
+                ) {
+                  Row(
+                    modifier = Modifier.padding(14.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                  ) {
+                    Icon(
+                      Icons.Default.Warning,
+                      contentDescription = null,
+                      tint = Color(0xFFDC2626),
+                      modifier = Modifier.size(20.dp)
+                    )
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Text(
+                      text = uploadError,
+                      color = Color(0xFF991B1B),
+                      fontSize = 12.sp,
+                      modifier = Modifier.weight(1f)
+                    )
+                    IconButton(onClick = onDismissUploadError, modifier = Modifier.size(28.dp)) {
+                      Icon(
+                        Icons.Default.Close,
+                        contentDescription = "Dismiss",
+                        tint = Color(0xFF991B1B),
+                        modifier = Modifier.size(16.dp)
+                      )
+                    }
+                  }
+                }
               }
 
               Spacer(modifier = Modifier.height(24.dp))
@@ -342,9 +541,10 @@ fun VendorRegistrationScreen(
 
           Button(
             onClick = {
-              if (step < 3) step++ else onRegisterClick(shopName, ownerName, shopAddress, phoneNumber, selectedCategory, lat, lng)
+              if (step < 3) step++
+              else onRegisterClick(shopName, ownerName, shopAddress, phoneNumber, selectedCategory, lat, lng, yearsInBusiness.toIntOrNull() ?: 0, shopPhotoUri, businessProofUri)
             },
-            enabled = when(step) {
+            enabled = !isUploading && when(step) {
               1 -> shopName.isNotBlank()
               2 -> ownerName.isNotBlank() && phoneNumber.isNotBlank() && shopAddress.isNotBlank()
               else -> shopPhotoUri != null
@@ -353,17 +553,27 @@ fun VendorRegistrationScreen(
               .align(Alignment.End)
               .fillMaxWidth()
               .height(56.dp),
-            colors = ButtonDefaults.buttonColors(containerColor = if (step == 3) BharatGreen else BharatPurplePrimary),
+            colors = ButtonDefaults.buttonColors(containerColor = BharatPurplePrimary),
             shape = RoundedCornerShape(16.dp)
           ) {
-            Text(
-              text = if (step == 3) "Submit Application" else "Continue",
-              fontWeight = FontWeight.Bold, 
-              fontSize = 16.sp
-            )
-            if (step < 3) {
-              Spacer(modifier = Modifier.width(8.dp))
-              Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null, modifier = Modifier.size(20.dp))
+            if (isUploading) {
+              CircularProgressIndicator(
+                modifier = Modifier.size(20.dp),
+                color = Color.White,
+                strokeWidth = 2.dp
+              )
+              Spacer(modifier = Modifier.width(10.dp))
+              Text(text = "Submitting…", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+            } else {
+              Text(
+                text = if (step == 3) "Submit Application" else "Continue",
+                fontWeight = FontWeight.Bold, 
+                fontSize = 16.sp
+              )
+              if (step < 3) {
+                Spacer(modifier = Modifier.width(8.dp))
+                Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null, modifier = Modifier.size(20.dp))
+              }
             }
           }
           

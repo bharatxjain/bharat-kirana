@@ -46,9 +46,9 @@ fun AuthScreen(
   statusMessage: String? = null,
   onPrivacyPolicyClick: () -> Unit = {},
   onTermsClick: () -> Unit = {},
+  onGoogleSignIn: () -> Unit = {},
   modifier: Modifier = Modifier
 ) {
-  var showChoiceScreen by remember { mutableStateOf(true) }
   var selectedTab by remember { mutableIntStateOf(0) } // 0: Login, 1: Signup, 2: OTP Verification, 3: Forgot Password
   var authRole by remember { mutableStateOf(UserRole.CUSTOMER) }
   var signupRoleChosen by remember { mutableStateOf(false) }
@@ -68,19 +68,6 @@ fun AuthScreen(
 
   val effectiveLoading = isLoading || isLocalLoading
   val effectiveStatus = statusMessage ?: localStatusMessage
-
-  if (showChoiceScreen) {
-    AuthChoiceView(
-      onEmailChoice = {
-        authPath = AuthPath.EMAIL
-        showChoiceScreen = false
-      },
-      onPrivacyPolicyClick = onPrivacyPolicyClick,
-      onTermsClick = onTermsClick,
-      modifier = modifier
-    )
-    return
-  }
 
   Surface(
     modifier = modifier.fillMaxSize(),
@@ -490,6 +477,57 @@ fun AuthScreen(
             }
           }
 
+          // Round 9: Google lives here now instead of on a separate gate screen.
+          // Hidden during OTP entry / password reset where it makes no sense.
+          if (selectedTab == 0 || selectedTab == 1) {
+            Spacer(modifier = Modifier.height(20.dp))
+            Row(
+              verticalAlignment = Alignment.CenterVertically,
+              modifier = Modifier.fillMaxWidth()
+            ) {
+              HorizontalDivider(modifier = Modifier.weight(1f), color = Color(0xFFE5E7EB))
+              Text(
+                text = "OR",
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Bold,
+                color = BharatTextMuted,
+                modifier = Modifier.padding(horizontal = 12.dp)
+              )
+              HorizontalDivider(modifier = Modifier.weight(1f), color = Color(0xFFE5E7EB))
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            OutlinedButton(
+              onClick = {
+                authPath = AuthPath.GOOGLE
+                onGoogleSignIn()
+              },
+              enabled = !effectiveLoading,
+              modifier = Modifier
+                .fillMaxWidth()
+                .height(52.dp)
+                .testTag("google_sign_in_button"),
+              shape = RoundedCornerShape(14.dp),
+              border = BorderStroke(1.dp, Color(0xFFD1D5DB)),
+              colors = ButtonDefaults.outlinedButtonColors(containerColor = Color.White)
+            ) {
+              Icon(
+                imageVector = Icons.Default.AccountCircle,
+                contentDescription = null,
+                tint = Color(0xFF4285F4),
+                modifier = Modifier.size(20.dp)
+              )
+              Spacer(modifier = Modifier.width(10.dp))
+              Text(
+                text = "Continue with Google",
+                color = BharatTextPrimary,
+                fontWeight = FontWeight.SemiBold,
+                fontSize = 15.sp
+              )
+            }
+          }
+
           Spacer(modifier = Modifier.height(24.dp))
 
           // Footer Links
@@ -521,96 +559,6 @@ fun AuthScreen(
             }
           }
         }
-      }
-    }
-  }
-}
-
-@Composable
-fun AuthChoiceView(
-  onEmailChoice: () -> Unit,
-  onPrivacyPolicyClick: () -> Unit,
-  onTermsClick: () -> Unit,
-  modifier: Modifier = Modifier
-) {
-  Surface(
-    modifier = modifier.fillMaxSize(),
-    color = Color(0xFFF9F6FE)
-  ) {
-    Column(
-      modifier = Modifier
-        .fillMaxSize()
-        .padding(24.dp),
-      horizontalAlignment = Alignment.CenterHorizontally,
-      verticalArrangement = Arrangement.Center
-    ) {
-      Box(
-        modifier = Modifier
-          .size(80.dp)
-          .clip(CircleShape)
-          .background(BharatPurplePrimary),
-        contentAlignment = Alignment.Center
-      ) {
-        Icon(
-          imageVector = Icons.Default.Storefront,
-          contentDescription = null,
-          tint = Color.White,
-          modifier = Modifier.size(40.dp)
-        )
-      }
-
-      Spacer(modifier = Modifier.height(24.dp))
-
-      Text(
-        text = "BreakQ",
-        style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.Bold),
-        color = BharatTextPrimary
-      )
-      Text(
-        text = "Your Neighborhood Marketplace",
-        style = MaterialTheme.typography.bodyMedium,
-        color = BharatTextSecondary
-      )
-
-      Spacer(modifier = Modifier.height(48.dp))
-
-      Button(
-        onClick = onEmailChoice,
-        modifier = Modifier.fillMaxWidth().height(56.dp),
-        colors = ButtonDefaults.buttonColors(containerColor = BharatPurplePrimary),
-        shape = RoundedCornerShape(16.dp)
-      ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-          Icon(Icons.Default.Email, contentDescription = null, tint = Color.White)
-          Spacer(modifier = Modifier.width(12.dp))
-          Text("Continue with Email", color = Color.White, fontWeight = FontWeight.Bold)
-        }
-      }
-
-      Spacer(modifier = Modifier.height(32.dp))
-
-      // Footer
-      Text(
-        text = "By continuing, you agree to our",
-        style = MaterialTheme.typography.bodySmall,
-        color = BharatTextMuted
-      )
-      Row {
-        Text(
-          text = "Terms",
-          color = BharatPurplePrimary,
-          fontWeight = FontWeight.Bold,
-          fontSize = 12.sp,
-          modifier = Modifier.clickable { onTermsClick() }.padding(4.dp)
-        )
-        Text("and", color = BharatTextMuted, fontSize = 12.sp, modifier = Modifier.padding(vertical = 4.dp))
-        Text(
-          text = "Privacy Policy",
-          color = BharatPurplePrimary,
-          fontWeight = FontWeight.Bold,
-          fontSize = 12.sp,
-          modifier = Modifier.clickable { onPrivacyPolicyClick() }.padding(4.dp)
-        )
       }
     }
   }

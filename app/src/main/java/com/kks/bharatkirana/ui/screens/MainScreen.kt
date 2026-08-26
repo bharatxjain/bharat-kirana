@@ -123,12 +123,37 @@ fun MainScreen(
   Box(
     modifier = modifier
       .fillMaxSize()
+      // Single place the whole app reacts to the keyboard. Because MainActivity
+      // calls enableEdgeToEdge(), the window no longer resizes on its own — every
+      // screen hosted below would otherwise sit *under* the IME. Shrinking here
+      // lets each form's existing verticalScroll/LazyColumn auto-scroll the
+      // focused TextField into view, instead of patching field by field.
+      .imePadding()
       .background(BharatBackground)
   ) {
     if (isMaintenanceMode) {
       MaintenanceOverlay()
     } else {
     when (val screen = currentScreen) {
+      // Brief branded loader while a persisted session is refreshed — replaces
+      // showing the onboarding pager to an already-signed-in user.
+      is AppScreen.Restoring -> {
+        Box(
+          modifier = Modifier.fillMaxSize().background(Color.White),
+          contentAlignment = Alignment.Center
+        ) {
+          Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(
+              text = "BreakQ",
+              style = MaterialTheme.typography.headlineLarge.copy(fontWeight = FontWeight.ExtraBold),
+              color = BharatPurplePrimary
+            )
+            Spacer(modifier = Modifier.height(20.dp))
+            CircularProgressIndicator(color = BharatPurplePrimary, strokeWidth = 3.dp)
+          }
+        }
+      }
+
       is AppScreen.Onboarding -> {
         OnboardingScreen(
           onComplete = { viewModel.navigateTo(AppScreen.Auth) }
@@ -161,6 +186,7 @@ fun MainScreen(
           onTermsClick = {
             viewModel.navigateTo(AppScreen.TermsOfService)
           },
+          onGoogleSignIn = { viewModel.signInWithGoogle() },
           onAuthSuccess = { email: String, role: UserRole, path: AuthPath ->
             viewModel.login(email, authPath = path) { user ->
               val isAdmin = user.isAdmin
@@ -396,11 +422,18 @@ fun MainScreen(
       }
 
       is AppScreen.VendorRegistration -> {
+        val vendorUpload by viewModel.vendorUploadState.collectAsState()
+        val vendorUploadPct by viewModel.vendorUploadPercent.collectAsState()
+        val vendorUploadErr by viewModel.vendorUploadError.collectAsState()
         VendorRegistrationScreen(
-          onRegisterClick = { name, owner, addr, phone, category, lat, lng ->
-            viewModel.registerVendorShop(name, owner, addr, phone, category, lat, lng)
+          onRegisterClick = { name, owner, addr, phone, category, lat, lng, years, shopPhoto, proof ->
+            viewModel.registerVendorShop(name, owner, addr, phone, category, lat, lng, years, shopPhoto, proof)
           },
-          onBackClick = { viewModel.navigateBack() }
+          onBackClick = { viewModel.navigateBack() },
+          uploadState = vendorUpload.name,
+          uploadPercent = vendorUploadPct,
+          uploadError = vendorUploadErr,
+          onDismissUploadError = { viewModel.clearVendorUploadError() }
         )
       }
 
@@ -414,7 +447,7 @@ fun MainScreen(
           orders = orders.filter { it.shopId == vendorShop.id },
           products = products.filter { it.shopId == vendorShop.id },
           currentTierName = currentTier?.displayName,
-          currentTierItemCap = currentTier?.itemCap ?: 10,
+          currentTierItemCap = currentTier?.itemCap ?: 500,
           onLogout = { viewModel.logout() },
           onManageProducts = { 
             viewModel.navigateTo(AppScreen.AddProduct)
@@ -428,6 +461,7 @@ fun MainScreen(
           onCancelOrder = { orderId -> viewModel.cancelOrder(orderId) },
           onUpdateProductStock = { prodId, inStock -> viewModel.updateProductStock(prodId, inStock) },
           onUpdateProductPrice = { prodId, price -> viewModel.updateProductPrice(prodId, price) },
+          onUpdateProductQty = { prodId, qty -> viewModel.updateProductQty(prodId, qty) },
           onSupportClick = { viewModel.openSupportWhatsApp() },
           onRefreshStatus = { viewModel.loadSupabaseData() },
           onManagePlan = { viewModel.navigateTo(AppScreen.Subscription) }
@@ -437,6 +471,7 @@ fun MainScreen(
       is AppScreen.Subscription -> {
         val vendorSub by viewModel.vendorSubscription.collectAsState()
         val tiers by viewModel.subscriptionTiers.collectAsState()
+        val checkout by viewModel.checkoutState.collectAsState()
         val vendorShopId = userProfile.shopId
         val productCount = products.count { it.shopId == vendorShopId }
         SubscriptionScreen(
@@ -444,7 +479,20 @@ fun MainScreen(
           currentSubscription = vendorSub,
           currentProductCount = productCount,
           onBackClick = { viewModel.navigateBack() },
-          onUpgradeClick = { tierId -> viewModel.requestPlanUpgrade(tierId) }
+          onUpgradeClick = { tierId -> viewModel.startPlanCheckout(tierId) },
+          checkoutStatusText = when (val c = checkout) {
+            is GroceryViewModel.CheckoutState.CreatingOrder -> "Starting secure payment…"
+            is GroceryViewModel.CheckoutState.ReadyToPay -> "Opening Razorpay…"
+            is GroceryViewModel.CheckoutState.Verifying -> "Confirming your payment…"
+            is GroceryViewModel.CheckoutState.Success -> "${c.tierName} plan is now active. Enjoy!"
+            is GroceryViewModel.CheckoutState.Failed -> c.reason
+            else -> null
+          },
+          checkoutIsBusy = checkout is GroceryViewModel.CheckoutState.CreatingOrder ||
+            checkout is GroceryViewModel.CheckoutState.ReadyToPay ||
+            checkout is GroceryViewModel.CheckoutState.Verifying,
+          checkoutSucceeded = checkout is GroceryViewModel.CheckoutState.Success,
+          onCheckoutMessageDismiss = { viewModel.clearCheckoutState() }
         )
       }
 
@@ -457,8 +505,8 @@ fun MainScreen(
 
         AddProductScreen(
           onBackClick = { viewModel.navigateBack() },
-          onListProduct = { name, cat, unit, price, mrp, desc, stock, imageUris, barcode ->
-             viewModel.addNewProduct(name, cat, unit, price, mrp, desc, stock, imageUris, barcode)
+          onListProduct = { name, cat, unit, price, mrp, desc, stock, stockQty, imageUris, barcode, scannedImage ->
+             viewModel.addNewProduct(name, cat, unit, price, mrp, desc, stock, stockQty, imageUris, barcode, scannedImage)
              // Round 7: stay on the screen so the vendor sees the upload result
              // banner; the dismiss button in the banner + back nav go home when ready.
           },

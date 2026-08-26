@@ -274,14 +274,98 @@ fun StoreInfoScreen(
                 Column {
                   Text("Rating", fontSize = 10.sp, color = BharatTextSecondary, fontWeight = FontWeight.SemiBold)
                   Text(
-                    text = if (shop.ratingCount > 0)
+                    text = if (shop.hasRatings)
                       "${"%.1f".format(shop.rating)} · ${shop.ratingCount} review${if (shop.ratingCount == 1) "" else "s"}"
                     else
-                      "No ratings yet",
+                      "New shop",
                     fontSize = 13.sp,
                     color = Color(0xFFD97706),
                     fontWeight = FontWeight.Bold
                   )
+                }
+              }
+            }
+          }
+        }
+
+        // Trust signals: verified-customer rating summary + vendor tenure. Only
+        // rendered when we actually have something truthful to show.
+        if (shop.hasRatings || shop.yearsInBusiness > 0) {
+          item {
+            Card(
+              shape = RoundedCornerShape(20.dp),
+              colors = CardDefaults.cardColors(containerColor = Color.White),
+              border = BorderStroke(1.dp, Color(0xFFF1F5F9)),
+              modifier = Modifier.fillMaxWidth()
+            ) {
+              Column(modifier = Modifier.padding(16.dp)) {
+                Text(
+                  text = "WHY YOU CAN TRUST THIS SHOP",
+                  fontSize = 10.sp,
+                  fontWeight = FontWeight.ExtraBold,
+                  color = BharatTextSecondary,
+                  letterSpacing = 0.5.sp
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+
+                if (shop.yearsInBusiness > 0) {
+                  Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                      Icons.Default.Storefront,
+                      contentDescription = null,
+                      tint = BharatPurplePrimary,
+                      modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Column {
+                      Text(
+                        text = "${shop.yearsInBusiness} year${if (shop.yearsInBusiness == 1) "" else "s"} in business",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = BharatTextPrimary
+                      )
+                      Text(
+                        text = "Serving this neighbourhood since ${java.util.Calendar.getInstance().get(java.util.Calendar.YEAR) - shop.yearsInBusiness}",
+                        fontSize = 11.sp,
+                        color = BharatTextSecondary
+                      )
+                    }
+                  }
+                }
+
+                if (shop.hasRatings && shop.yearsInBusiness > 0) {
+                  Spacer(modifier = Modifier.height(12.dp))
+                  HorizontalDivider(color = Color(0xFFF1F5F9))
+                  Spacer(modifier = Modifier.height(12.dp))
+                }
+
+                if (shop.hasRatings) {
+                  Row(verticalAlignment = Alignment.CenterVertically) {
+                    Row {
+                      repeat(5) { index ->
+                        Icon(
+                          imageVector = if (index < shop.rating.toInt()) Icons.Default.Star else Icons.Default.StarBorder,
+                          contentDescription = null,
+                          tint = Color(0xFFD97706),
+                          modifier = Modifier.size(16.dp)
+                        )
+                      }
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Column {
+                      Text(
+                        text = "${"%.1f".format(shop.rating)} out of 5",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = BharatTextPrimary
+                      )
+                      Text(
+                        text = "From ${shop.ratingCount} verified pickup${if (shop.ratingCount == 1) "" else "s"}",
+                        fontSize = 11.sp,
+                        color = BharatTextSecondary
+                      )
+                    }
+                  }
                 }
               }
             }

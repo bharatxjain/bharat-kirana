@@ -864,7 +864,6 @@ fun ProfileScreen(
 
         Spacer(modifier = Modifier.height(12.dp))
 
-        // App Version and Package identification
         Column(
           modifier = Modifier
             .fillMaxWidth()
@@ -872,15 +871,9 @@ fun ProfileScreen(
           horizontalAlignment = Alignment.CenterHorizontally
         ) {
           Text(
-            text = "BreakQ v1.0.0 • com.kks.bharatkirana",
+            text = "Made in India with ❤️",
             fontSize = 11.sp,
             color = BharatTextMuted,
-            textAlign = TextAlign.Center
-          )
-          Text(
-            text = "Operated by KKS PVT • Made with ❤️ for Indian Kiranas",
-            fontSize = 10.sp,
-            color = BharatTextMuted.copy(alpha = 0.8f),
             textAlign = TextAlign.Center
           )
         }

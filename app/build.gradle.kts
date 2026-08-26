@@ -127,6 +127,7 @@ dependencies {
   implementation(libs.retrofit)
   implementation(libs.mappls.android.sdk)
   implementation(libs.timber)
+  implementation(libs.razorpay.checkout)
   testImplementation(libs.androidx.compose.ui.test.junit4)
   testImplementation(libs.androidx.core)
   testImplementation(libs.androidx.junit)

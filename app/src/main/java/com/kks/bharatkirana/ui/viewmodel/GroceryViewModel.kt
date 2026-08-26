@@ -40,9 +40,18 @@ class GroceryViewModel(
   private val prefs = application.getSharedPreferences("bharat_kirana_prefs", Context.MODE_PRIVATE)
   private val fusedLocationClient = LocationServices.getFusedLocationProviderClient(application)
 
+  // Round 9: a returning user with a live Supabase session should never see the
+  // onboarding pager again. We read the token synchronously here (SharedPreferences
+  // is memory-mapped, so this is microseconds) and open on a lightweight
+  // "Restoring" screen that loadSavedSession() swaps out once the profile lands.
+  private val hasPersistedSession: Boolean =
+    !prefs.getString("refresh_token", null).isNullOrBlank()
+
   private val screenBackStack = mutableListOf<AppScreen>(AppScreen.Onboarding)
 
-  private val _currentScreen = MutableStateFlow<AppScreen>(AppScreen.Onboarding)
+  private val _currentScreen = MutableStateFlow<AppScreen>(
+    if (hasPersistedSession) AppScreen.Restoring else AppScreen.Onboarding
+  )
   val currentScreen: StateFlow<AppScreen> = _currentScreen.asStateFlow()
 
   private val _currentTab = MutableStateFlow(MainTab.HOME)
@@ -200,6 +209,22 @@ class GroceryViewModel(
   val productUploadMessage: StateFlow<String?> = _productUploadMessage.asStateFlow()
   fun clearProductUploadMessage() { _productUploadMessage.value = null }
 
+  // Round 7.2: granular progress for the vendor-registration document uploads so
+  // the wizard can show exactly which file is being pushed to Storage.
+  enum class VendorUploadState { IDLE, UPLOADING_PHOTO, UPLOADING_PROOF, SAVING_SHOP }
+  private val _vendorUploadState = MutableStateFlow(VendorUploadState.IDLE)
+  val vendorUploadState: StateFlow<VendorUploadState> = _vendorUploadState.asStateFlow()
+
+  // 0..100 for the file currently being uploaded.
+  private val _vendorUploadPercent = MutableStateFlow(0)
+  val vendorUploadPercent: StateFlow<Int> = _vendorUploadPercent.asStateFlow()
+
+  // Non-null when a document failed to upload, so the wizard can say so instead
+  // of pretending everything worked.
+  private val _vendorUploadError = MutableStateFlow<String?>(null)
+  val vendorUploadError: StateFlow<String?> = _vendorUploadError.asStateFlow()
+  fun clearVendorUploadError() { _vendorUploadError.value = null }
+
   // Round 3.5: role picked during signup (before profile is completed).
   // Set from AuthScreen → read after CompleteProfile to decide next screen.
   private val _pendingSignupRole = MutableStateFlow<UserRole?>(null)
@@ -282,6 +307,27 @@ class GroceryViewModel(
       supabaseRealtime.changes.collect { change ->
         if (change.table == "orders") applyOrderChange(change)
         if (change.table == "notifications" && change.type == "INSERT") applyNewNotification(change)
+        if (change.table == "products" && change.type == "UPDATE") applyProductChange(change)
+      }
+    }
+  }
+
+  // Keeps the customer's availability badge honest when a shopkeeper flips a
+  // switch mid-browse. Only touches stock/price so we don't clobber locally
+  // cached images or weight options with a partial realtime payload.
+  private fun applyProductChange(change: SupabaseRealtimeClient.RealtimeChange) {
+    val record = change.record ?: return
+    val productId = record.optString("id").takeIf { it.isNotBlank() } ?: return
+    _products.update { list ->
+      list.map { product ->
+        if (product.id != productId) return@map product
+        product.copy(
+          inStock = record.optBoolean("in_stock", product.inStock),
+          stockQty = if (record.has("stock_qty")) {
+            if (record.isNull("stock_qty")) null else record.optInt("stock_qty")
+          } else product.stockQty,
+          currentPrice = record.optInt("current_price", product.currentPrice)
+        )
       }
     }
   }
@@ -397,7 +443,12 @@ class GroceryViewModel(
   private fun loadSavedSession() {
     val email = prefs.getString("user_email", "") ?: ""
     val refreshToken = prefs.getString("refresh_token", null)
-    if (email.isBlank()) return
+    // Any early exit must also drop the Restoring screen, or a user with a
+    // half-written session would be stuck on the loader forever.
+    if (email.isBlank()) {
+      if (_currentScreen.value is AppScreen.Restoring) _currentScreen.value = AppScreen.Onboarding
+      return
+    }
     if (refreshToken.isNullOrBlank()) {
       // We only ever persisted the email, not a real Supabase session — calling
       // login(email) with no token behind it used to silently run every REST
@@ -406,6 +457,7 @@ class GroceryViewModel(
       // never fired after an app restart. Without a refresh token there's no
       // way to actually re-authenticate, so drop the stale local session.
       clearSavedSession()
+      if (_currentScreen.value is AppScreen.Restoring) _currentScreen.value = AppScreen.Onboarding
       return
     }
     viewModelScope.launch {
@@ -415,23 +467,36 @@ class GroceryViewModel(
           login(session.email) { user ->
             // Decided only after the server profile has loaded, so a returning user
             // whose profile is actually complete doesn't get bounced back here.
-            if (!user.profileCompleted) {
-              _currentScreen.value = AppScreen.CompleteProfile
-            } else {
-              _currentScreen.value = AppScreen.Main
-              _activeShopId.value = null
+            _currentScreen.value = when {
+              !user.profileCompleted -> AppScreen.CompleteProfile
+              user.isAdmin -> AppScreen.AdminDashboard
+              user.isVendor -> AppScreen.VendorDashboard
+              else -> {
+                _activeShopId.value = null
+                AppScreen.Main
+              }
             }
           }
         }
         .onFailure {
           // Refresh token expired or was revoked — the user has to log in again.
           clearSavedSession()
+          _currentScreen.value = AppScreen.Auth
         }
     }
   }
 
   private fun saveSession(email: String) {
     prefs.edit().putString("user_email", email).apply()
+  }
+
+  // Google Sign-In needs the Credential Manager + googleid deps (currently
+  // commented out in app/build.gradle.kts) plus a Web Client ID from the
+  // Firebase console. Until those are in place we tell the user rather than
+  // silently doing nothing.
+  fun signInWithGoogle() {
+    _authStatusMessage.value =
+      "Google Sign-In is being set up. Please use email for now."
   }
 
   private fun persistRefreshToken(refreshToken: String) {
@@ -447,6 +512,9 @@ class GroceryViewModel(
       .remove("profile_full_name")
       .remove("profile_mobile")
       .remove("profile_address")
+      // Cart is per-account — never let the next person to sign in inherit it.
+      .remove("cart_items")
+      .remove("active_shop_id")
       .apply()
   }
 
@@ -513,6 +581,9 @@ class GroceryViewModel(
           _products.value = liveProducts
         }
       }
+      // Catalog is in memory now, so a cart saved before the process died can be
+      // rebuilt against current prices/stock.
+      restoreCartFromPrefs()
 
       // Sync live shops (Round 2)
       // Round 6.1: overwrite even when server returns empty so a stale seed shop
@@ -637,6 +708,7 @@ class GroceryViewModel(
       }
       mutable
     }
+    persistCart()
   }
 
   fun updateCartQuantity(productId: String, weightLabel: String, delta: Int) {
@@ -656,6 +728,7 @@ class GroceryViewModel(
       }
       mutable
     }
+    persistCart()
   }
 
   fun getCartItemQuantity(productId: String): Int {
@@ -666,6 +739,63 @@ class GroceryViewModel(
 
   fun clearCart() {
     _cartItems.value = emptyList()
+    persistCart()
+  }
+
+  // ---- Cart persistence -----------------------------------------------------
+  // We store only (productId, weightLabel, qty) rather than the whole Product.
+  // Rehydrating against the live catalog means a restored cart always reflects
+  // current prices/stock instead of resurrecting a stale snapshot.
+
+  private fun persistCart() {
+    val arr = org.json.JSONArray()
+    _cartItems.value.forEach { item ->
+      arr.put(
+        org.json.JSONObject().apply {
+          put("productId", item.product.id)
+          put("weightLabel", item.selectedWeight.label)
+          put("qty", item.quantity)
+        }
+      )
+    }
+    prefs.edit()
+      .putString("cart_items", arr.toString())
+      .putString("active_shop_id", _activeShopId.value.orEmpty())
+      .apply()
+  }
+
+  private fun restoreCartFromPrefs() {
+    val raw = prefs.getString("cart_items", null)
+    if (raw.isNullOrBlank()) return
+    val catalog = _products.value
+    if (catalog.isEmpty()) return
+
+    val restored = mutableListOf<CartItem>()
+    runCatching {
+      val arr = org.json.JSONArray(raw)
+      for (i in 0 until arr.length()) {
+        val o = arr.optJSONObject(i) ?: continue
+        val productId = o.optString("productId")
+        val weightLabel = o.optString("weightLabel")
+        val qty = o.optInt("qty", 0)
+        if (qty <= 0) continue
+
+        // Product may have been delisted since the user last shopped — skip it
+        // rather than restoring a dangling row.
+        val product = catalog.firstOrNull { it.id == productId } ?: continue
+        val weight = product.weightOptions.firstOrNull { it.label == weightLabel }
+          ?: product.weightOptions.firstOrNull()
+          ?: WeightOption(product.unit, product.currentPrice)
+        restored.add(CartItem(product, weight, qty))
+      }
+    }.onFailure { android.util.Log.w("BreakQ", "Cart restore failed: ${it.message}") }
+
+    if (restored.isNotEmpty()) {
+      _cartItems.value = restored
+      prefs.getString("active_shop_id", "")
+        ?.takeIf { it.isNotBlank() }
+        ?.let { _activeShopId.value = it }
+    }
   }
 
   fun placeOrder(): Order? {
@@ -711,6 +841,9 @@ class GroceryViewModel(
     _orders.update { listOf(newOrder) + it }
     _latestPlacedOrderId.value = orderId
     _cartItems.value = emptyList()
+    // Clear the persisted copy too, otherwise reopening the app would resurrect
+    // the cart the user just checked out with and risk a duplicate order.
+    persistCart()
     val appliedCode = promo?.code
     _appliedPromo.value = null
     _promoStatusMessage.value = null
@@ -808,6 +941,13 @@ class GroceryViewModel(
     val cleanEmail = email.trim().lowercase()
     _pendingSignupName.value = name.trim()
     _pendingSignupMobile.value = mobile.trim()
+    // These StateFlows die with the process. A user who signs up, closes the app,
+    // then taps the emailed verification link would otherwise lose their mobile
+    // number entirely — so mirror them to disk.
+    prefs.edit()
+      .putString("pending_signup_name", name.trim())
+      .putString("pending_signup_mobile", mobile.trim())
+      .apply()
     _isAuthLoading.value = true
     _authStatusMessage.value = "Creating account..."
 
@@ -963,15 +1103,23 @@ class GroceryViewModel(
           _isAuthLoading.value = false
           _authStatusMessage.value = "Successfully authenticated!"
           persistRefreshToken(session.refreshToken)
-          val pendingName = _pendingSignupName.value.orEmpty()
-          val pendingMobile = _pendingSignupMobile.value.orEmpty()
+          // Fall back to the on-disk copy when the in-memory flow was lost to a
+          // process restart between signup and verification.
+          val pendingName = _pendingSignupName.value
+            ?: prefs.getString("pending_signup_name", null).orEmpty()
+          val pendingMobile = _pendingSignupMobile.value
+            ?: prefs.getString("pending_signup_mobile", null).orEmpty()
           login(cleanEmail, pendingName, pendingMobile, authPath = AuthPath.EMAIL)
-          if (pendingName.isNotBlank()) {
+          if (pendingName.isNotBlank() || pendingMobile.isNotBlank()) {
             // Persist name + mobile now so the CompleteProfile screen can be skipped.
             updateProfile(pendingName, cleanEmail, pendingMobile, "")
           }
           _pendingSignupName.value = null
           _pendingSignupMobile.value = null
+          prefs.edit()
+            .remove("pending_signup_name")
+            .remove("pending_signup_mobile")
+            .apply()
           loadSupabaseData()
           onResult(true, "Authentication successful")
         }
@@ -1194,10 +1342,20 @@ class GroceryViewModel(
     phone: String,
     category: String = "Grocery",
     lat: Double = 0.0,
-    lng: Double = 0.0
+    lng: Double = 0.0,
+    yearsInBusiness: Int = 0,
+    shopPhotoUri: Uri? = null,
+    businessProofUri: Uri? = null
   ) {
     val shopId = "s_${System.currentTimeMillis()}"
-    val userId = supabaseAuthService.currentUserId ?: return
+    // Was a silent `?: return` — the Submit button looked completely dead when the
+    // Supabase session had lapsed. Surface it instead.
+    val userId = supabaseAuthService.currentUserId ?: run {
+      _vendorUploadState.value = VendorUploadState.IDLE
+      _isLoading.value = false
+      _authStatusMessage.value = "Your session expired. Please log out and sign in again to register your shop."
+      return
+    }
     val token = supabaseAuthService.currentAccessToken
 
     val newShop = Shop(
@@ -1209,19 +1367,65 @@ class GroceryViewModel(
       lat = lat,
       lng = lng,
       primaryCategory = category,
+      yearsInBusiness = yearsInBusiness,
       isPartner = false,
       status = VendorStatus.PENDING
     )
 
     _isLoading.value = true
+    _vendorUploadError.value = null
+    _vendorUploadPercent.value = 0
+    _vendorUploadState.value = VendorUploadState.UPLOADING_PHOTO
     viewModelScope.launch {
-      supabaseGroceryRepo.registerShop(newShop, userId, token)
+      // 1. Upload the shop photo (required) and business proof (optional) to the
+      // `shop-documents` Storage bucket before creating the shop row, so the row
+      // is written once with its final URLs.
+      var shopImageUrl: String? = null
+      var proofUrl: String? = null
+
+      shopPhotoUri?.let { uri ->
+        val bytes = getBytesFromUri(uri)
+        if (bytes == null) {
+          _vendorUploadError.value = "Couldn't read the shop photo from your gallery. Pick it again."
+        } else {
+          supabaseGroceryRepo.uploadImage(
+            "shop-documents", "${shopId}_shop.jpg", bytes, token
+          ) { pct -> _vendorUploadPercent.value = pct }
+            .onSuccess { shopImageUrl = it }
+            .onFailure {
+              _vendorUploadError.value = "Shop photo didn't upload: ${it.message}"
+              android.util.Log.w("BreakQ", "Shop photo upload failed: ${it.message}")
+            }
+        }
+      }
+
+      if (businessProofUri != null) {
+        _vendorUploadPercent.value = 0
+        _vendorUploadState.value = VendorUploadState.UPLOADING_PROOF
+        val bytes = getBytesFromUri(businessProofUri)
+        if (bytes != null) {
+          supabaseGroceryRepo.uploadImage(
+            "shop-documents", "${shopId}_proof.jpg", bytes, token
+          ) { pct -> _vendorUploadPercent.value = pct }
+            .onSuccess { proofUrl = it }
+            .onFailure {
+              _vendorUploadError.value = "Business proof didn't upload: ${it.message}"
+              android.util.Log.w("BreakQ", "Business proof upload failed: ${it.message}")
+            }
+        }
+      }
+
+      _vendorUploadPercent.value = 100
+      _vendorUploadState.value = VendorUploadState.SAVING_SHOP
+      supabaseGroceryRepo.registerShop(newShop, userId, token, shopImageUrl, proofUrl)
         .onSuccess {
           _isLoading.value = false
+          _vendorUploadState.value = VendorUploadState.IDLE
           // Update local profile
           _userProfile.update { it.copy(shopId = shopId) }
-          // Add to local shops list
-          _shops.update { listOf(newShop) + it }
+          // Add to local shops list — keep the uploaded photo so the dashboard
+          // shows it immediately without waiting for a refetch.
+          _shops.update { listOf(newShop.copy(imageUrl = shopImageUrl.orEmpty())) + it }
           
           // Simulation: Shoot verification email to Super Admin
           triggerAdminVerificationEmail(newShop)
@@ -1229,9 +1433,14 @@ class GroceryViewModel(
           // Redirect to Vendor Dashboard
           _currentScreen.value = AppScreen.VendorDashboard
         }
-        .onFailure {
+        .onFailure { err ->
           _isLoading.value = false
-          _authStatusMessage.value = "Registration failed. Please try again."
+          _vendorUploadState.value = VendorUploadState.IDLE
+          _vendorUploadPercent.value = 0
+          // Bubble the real reason up — "Registration failed. Please try again."
+          // gave the vendor nothing to act on.
+          _vendorUploadError.value = "Registration failed: ${err.message ?: "unknown error"}"
+          android.util.Log.e("BreakQ", "registerShop failed", err)
         }
     }
   }
@@ -1410,37 +1619,127 @@ class GroceryViewModel(
     return _subscriptionTiers.value.firstOrNull { it.id == tierId }
   }
 
-  // Returns true if the vendor can add one more product. Used by AddProductScreen
-  // to gate submission and by VendorDashboard to show a badge.
+  // Round 8: feature gates. The paywall is analytics/placement/branding —
+  // catalog size is only a spam backstop (Free = 500 items).
+  fun hasBasicAnalytics(): Boolean = currentTier()?.hasBasicAnalytics == true
+  fun hasFullAnalytics(): Boolean = currentTier()?.hasFullAnalytics == true
+  fun hasPriorityPlacement(): Boolean = currentTier()?.hasPriorityPlacement == true
+  fun shouldShowBreakqBranding(): Boolean = currentTier()?.hideBreakqBranding != true
+
   fun canAddMoreProducts(): Boolean {
-    val cap = currentTier()?.itemCap ?: 10
+    val cap = currentTier()?.itemCap ?: 500
     if (cap == -1) return true
     val shopId = _userProfile.value.shopId ?: return true
     val current = _products.value.count { it.shopId == shopId }
     return current < cap
   }
 
-  // Opens WhatsApp with a pre-filled upgrade request. We handle the payment flow
-  // manually (Razorpay comes in a later round), then admin flips the tier via SQL.
-  fun requestPlanUpgrade(targetTierId: String) {
-    val digits = _supportWhatsappNumber.value.replace(Regex("[^0-9]"), "")
-    if (digits.isBlank()) return
-    val shop = _shops.value.firstOrNull { it.id == _userProfile.value.shopId }
-    val currentTierName = currentTier()?.displayName ?: "Free"
-    val targetTierName = _subscriptionTiers.value.firstOrNull { it.id == targetTierId }?.displayName ?: targetTierId
-    val msg = Uri.encode(
-      "Hi, I want to upgrade my BreakQ plan.\n" +
-        "Shop: ${shop?.name.orEmpty()}\n" +
-        "Owner: ${_userProfile.value.fullName}\n" +
-        "Current plan: $currentTierName\n" +
-        "Upgrade to: $targetTierName\n" +
-        "Please share payment details."
-    )
-    val uri = Uri.parse("https://wa.me/$digits?text=$msg")
-    val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, uri).apply {
-      addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+  // ---- Razorpay checkout ----------------------------------------------------
+
+  sealed class CheckoutState {
+    data object Idle : CheckoutState()
+    data object CreatingOrder : CheckoutState()
+    data class ReadyToPay(
+      val orderId: String,
+      val amountPaise: Int,
+      val currency: String,
+      val keyId: String,
+      val tierId: String,
+      val tierName: String
+    ) : CheckoutState()
+    data object Verifying : CheckoutState()
+    data class Success(val tierName: String) : CheckoutState()
+    data class Failed(val reason: String) : CheckoutState()
+  }
+
+  private val _checkoutState = MutableStateFlow<CheckoutState>(CheckoutState.Idle)
+  val checkoutState: StateFlow<CheckoutState> = _checkoutState.asStateFlow()
+  fun clearCheckoutState() { _checkoutState.value = CheckoutState.Idle }
+
+  // Step 1 — ask our Edge Function to create a Razorpay order. The Activity then
+  // observes CheckoutState.ReadyToPay and opens the Checkout sheet.
+  fun startPlanCheckout(targetTierId: String) {
+    val shopId = _userProfile.value.shopId ?: run {
+      _checkoutState.value = CheckoutState.Failed("Register your shop before subscribing.")
+      return
     }
-    try { getApplication<Application>().startActivity(intent) } catch (_: Exception) { }
+    val tier = _subscriptionTiers.value.firstOrNull { it.id == targetTierId } ?: return
+    if (tier.priceRupees <= 0) {
+      _checkoutState.value = CheckoutState.Failed("This plan is free — no payment needed.")
+      return
+    }
+    _checkoutState.value = CheckoutState.CreatingOrder
+    viewModelScope.launch {
+      supabaseGroceryRepo.createRazorpayOrder(shopId, targetTierId, supabaseAuthService.currentAccessToken)
+        .onSuccess { order ->
+          _checkoutState.value = CheckoutState.ReadyToPay(
+            orderId = order.orderId,
+            amountPaise = order.amountPaise,
+            currency = order.currency,
+            keyId = order.keyId,
+            tierId = targetTierId,
+            tierName = tier.displayName
+          )
+        }
+        .onFailure { err ->
+          _checkoutState.value = CheckoutState.Failed(err.message ?: "Could not start payment.")
+        }
+    }
+  }
+
+  // Step 2 — Checkout succeeded on-device. Hand the signature to the Edge
+  // Function, which re-verifies it server-side before upgrading the tier.
+  fun onRazorpaySuccess(orderId: String, paymentId: String, signature: String, tierName: String) {
+    _checkoutState.value = CheckoutState.Verifying
+    viewModelScope.launch {
+      supabaseGroceryRepo.verifyRazorpayPayment(orderId, paymentId, signature, supabaseAuthService.currentAccessToken)
+        .onSuccess {
+          loadVendorSubscription()
+          _checkoutState.value = CheckoutState.Success(tierName)
+        }
+        .onFailure { err ->
+          _checkoutState.value = CheckoutState.Failed(
+            "Payment received but activation failed: ${err.message}. Contact support with your payment ID $paymentId."
+          )
+        }
+    }
+  }
+
+  fun onRazorpayFailure(reason: String) {
+    _checkoutState.value = CheckoutState.Failed(reason)
+  }
+
+  // ---- Vendor analytics (Advance / Pro) -------------------------------------
+
+  private val _vendorAnalytics = MutableStateFlow(VendorAnalytics())
+  val vendorAnalytics: StateFlow<VendorAnalytics> = _vendorAnalytics.asStateFlow()
+
+  fun loadVendorAnalytics() {
+    if (!hasBasicAnalytics()) return
+    val shopId = _userProfile.value.shopId ?: return
+    viewModelScope.launch {
+      supabaseGroceryRepo.fetchVendorAnalytics(shopId, supabaseAuthService.currentAccessToken)
+        .onSuccess { stats ->
+          val todayOrders = _orders.value.count { it.shopId == shopId && it.orderDate.startsWith("Today") }
+          _vendorAnalytics.value = stats.copy(ordersToday = todayOrders)
+        }
+    }
+  }
+
+  // Fire-and-forget: customer opened a shop or a product. Powers the vendor's
+  // paid analytics. Silently no-ops if not signed in.
+  fun logShopView(shopId: String, productId: String? = null, searchTerm: String? = null) {
+    if (shopId.isBlank()) return
+    val type = when {
+      !searchTerm.isNullOrBlank() -> "search_hit"
+      !productId.isNullOrBlank() -> "product_view"
+      else -> "shop_view"
+    }
+    viewModelScope.launch {
+      supabaseGroceryRepo.logShopViewEvent(
+        shopId, type, productId, searchTerm, supabaseAuthService.currentAccessToken
+      )
+    }
   }
 
   fun showTierCapMessage(msg: String) { _tierCapMessage.value = msg }
@@ -1556,6 +1855,16 @@ class GroceryViewModel(
     }
   }
 
+  // null clears the count back to "untracked" (Call to Confirm); 0 means sold out.
+  fun updateProductQty(productId: String, newQty: Int?) {
+    _products.update { list ->
+      list.map { if (it.id == productId) it.copy(stockQty = newQty) else it }
+    }
+    viewModelScope.launch {
+      supabaseGroceryRepo.updateProductStockQty(productId, newQty, supabaseAuthService.currentAccessToken)
+    }
+  }
+
   fun selectShop(shopId: String?) {
     _activeShopId.value = shopId
     val shop = _shops.value.find { it.id == shopId }
@@ -1566,9 +1875,8 @@ class GroceryViewModel(
 
   fun addProduct(product: Product) {
     if (!canAddMoreProducts()) {
-      val cap = currentTier()?.itemCap ?: 10
-      val tierName = currentTier()?.displayName ?: "Free"
-      _tierCapMessage.value = "You've reached your $tierName plan limit of $cap products. Upgrade to add more."
+      val cap = currentTier()?.itemCap ?: 500
+      _tierCapMessage.value = "You've listed $cap products \u2014 the maximum on the Free plan. Subscribe for an unlimited catalog."
       return
     }
     _products.update { listOf(product) + it }
@@ -1585,13 +1893,14 @@ class GroceryViewModel(
     mrp: Int,
     desc: String,
     stock: Boolean,
+    stockQty: Int? = null,
     imageUris: List<Uri>,
-    barcode: String = ""
+    barcode: String = "",
+    fallbackImageUrl: String = ""
   ) {
     if (!canAddMoreProducts()) {
-      val cap = currentTier()?.itemCap ?: 10
-      val tierName = currentTier()?.displayName ?: "Free"
-      _tierCapMessage.value = "You've reached your $tierName plan limit of $cap products. Upgrade to add more."
+      val cap = currentTier()?.itemCap ?: 500
+      _tierCapMessage.value = "You've listed $cap products — the maximum on the Free plan. Subscribe for an unlimited catalog."
       return
     }
     val productId = "p_${System.currentTimeMillis()}"
@@ -1637,8 +1946,12 @@ class GroceryViewModel(
         unit = unit,
         description = desc,
         inStock = stock,
-        imageUrl = finalImageUrls.firstOrNull() ?: "",
-        imageUrls = finalImageUrls,
+        stockQty = stockQty,
+        // Fall back to the barcode-lookup image when the vendor didn't shoot their own.
+        imageUrl = finalImageUrls.firstOrNull() ?: fallbackImageUrl,
+        imageUrls = finalImageUrls.ifEmpty {
+          if (fallbackImageUrl.isNotBlank()) listOf(fallbackImageUrl) else emptyList()
+        },
         weightOptions = listOf(WeightOption(unit, price, mrp)),
         barcode = barcode
       )

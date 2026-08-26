@@ -40,6 +40,8 @@ roborazzi = "1.59.0"
 firebaseBom = "34.15.0"
 secretsGradlePlugin = "2.0.1"
 mapplsAndroidSdk = "8.3.0"
+razorpayCheckout = "1.6.41"
+timber = "5.0.1"
 googleServices = "4.5.0"
 credentials = "1.5.0"
 googleid = "1.1.1"
@@ -103,6 +105,8 @@ androidx-credentials = { group = "androidx.credentials", name = "credentials", v
 androidx-credentials-play-services = { group = "androidx.credentials", name = "credentials-play-services-auth", version.ref = "credentials" }
 googleid = { group = "com.google.android.libraries.identity.googleid", name = "googleid", version.ref = "googleid" }
 mappls-android-sdk = { group = "com.mappls.sdk", name = "mappls-android-sdk", version.ref = "mapplsAndroidSdk" }
+razorpay-checkout = { group = "com.razorpay", name = "checkout", version.ref = "razorpayCheckout" }
+timber = { group = "com.jakewharton.timber", name = "timber", version.ref = "timber" }
 
 
 [plugins]

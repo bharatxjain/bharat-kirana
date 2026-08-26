@@ -13,14 +13,24 @@ import androidx.activity.viewModels
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.ui.Modifier
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.lifecycleScope
 import com.kks.bharatkirana.data.maps.MapplsConfig
 import com.kks.bharatkirana.service.MyFirebaseMessagingService
 import com.kks.bharatkirana.ui.screens.MainScreen
 import com.kks.bharatkirana.ui.theme.BharatKiranaTheme
 import com.kks.bharatkirana.ui.viewmodel.GroceryViewModel
+import com.razorpay.Checkout
+import com.razorpay.PaymentData
+import com.razorpay.PaymentResultWithDataListener
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.launch
+import org.json.JSONObject
 
-class MainActivity : ComponentActivity() {
+class MainActivity : ComponentActivity(), PaymentResultWithDataListener {
   private val viewModel: GroceryViewModel by viewModels()
+
+  // Remembered so onPaymentSuccess can tell the ViewModel which plan was bought.
+  private var pendingCheckoutTierName: String = ""
 
   private val notificationPermissionLauncher =
     registerForActivityResult(ActivityResultContracts.RequestPermission()) { /* no-op either way */ }
@@ -52,6 +62,17 @@ class MainActivity : ComponentActivity() {
 
     // Round 4b: user tapped an FCM push — route them to the right screen.
     handlePushIntent(intent)
+
+    // Round 8: Razorpay Checkout must be opened from an Activity, so the
+    // ViewModel signals readiness and we present the sheet here.
+    lifecycleScope.launch {
+      viewModel.checkoutState.collectLatest { state ->
+        if (state is GroceryViewModel.CheckoutState.ReadyToPay) {
+          pendingCheckoutTierName = state.tierName
+          openRazorpayCheckout(state)
+        }
+      }
+    }
 
     setContent {
       BharatKiranaTheme {
@@ -97,6 +118,44 @@ class MainActivity : ComponentActivity() {
     // Consume the extra so orientation changes don't re-trigger it.
     intent.removeExtra(MyFirebaseMessagingService.EXTRA_FROM_PUSH)
     intent.removeExtra(MyFirebaseMessagingService.EXTRA_ORDER_ID)
+  }
+
+  private fun openRazorpayCheckout(state: GroceryViewModel.CheckoutState.ReadyToPay) {
+    try {
+      val checkout = Checkout()
+      checkout.setKeyID(state.keyId)
+      val profile = viewModel.userProfile.value
+      val options = JSONObject().apply {
+        put("name", "BreakQ")
+        put("description", "${state.tierName} plan — monthly subscription")
+        put("currency", state.currency)
+        put("amount", state.amountPaise)
+        put("order_id", state.orderId)
+        put("prefill", JSONObject().apply {
+          put("email", profile.email)
+          put("contact", profile.mobileNumber)
+        })
+        put("theme", JSONObject().apply { put("color", "#6C00FF") })
+        put("retry", JSONObject().apply { put("enabled", true); put("max_count", 3) })
+      }
+      checkout.open(this, options)
+    } catch (e: Exception) {
+      viewModel.onRazorpayFailure(e.message ?: "Could not open payment screen.")
+    }
+  }
+
+  override fun onPaymentSuccess(razorpayPaymentId: String?, paymentData: PaymentData?) {
+    val orderId = paymentData?.orderId
+    val signature = paymentData?.signature
+    if (razorpayPaymentId.isNullOrBlank() || orderId.isNullOrBlank() || signature.isNullOrBlank()) {
+      viewModel.onRazorpayFailure("Payment completed but details were missing. Please contact support.")
+      return
+    }
+    viewModel.onRazorpaySuccess(orderId, razorpayPaymentId, signature, pendingCheckoutTierName)
+  }
+
+  override fun onPaymentError(code: Int, description: String?, paymentData: PaymentData?) {
+    viewModel.onRazorpayFailure(description ?: "Payment was cancelled or failed.")
   }
 }
 

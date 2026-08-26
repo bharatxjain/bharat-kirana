@@ -27,3 +27,15 @@
 # Coil
 -keep class coil.** { *; }
 -dontwarn coil.**
+
+# Razorpay Checkout — the SDK reflects into the host Activity's payment callbacks,
+# so they must survive shrinking or release builds crash on payment result.
+-keepclassmembers class * {
+    public void onPaymentSuccess(java.lang.String);
+    public void onPaymentSuccess(java.lang.String, com.razorpay.PaymentData);
+    public void onPaymentError(int, java.lang.String);
+    public void onPaymentError(int, java.lang.String, com.razorpay.PaymentData);
+}
+-keep class com.razorpay.** { *; }
+-dontwarn com.razorpay.**
+-optimizations !method/inlining/*

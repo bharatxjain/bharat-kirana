@@ -43,6 +43,7 @@ fun VendorDashboardScreen(
   onCancelOrder: (String) -> Unit = {},
   onUpdateProductStock: (String, Boolean) -> Unit = { _, _ -> },
   onUpdateProductPrice: (String, Int) -> Unit = { _, _ -> },
+  onUpdateProductQty: (String, Int?) -> Unit = { _, _ -> },
   onSupportClick: () -> Unit = {},
   onRefreshStatus: () -> Unit = {},
   onManagePlan: () -> Unit = {},
@@ -54,12 +55,13 @@ fun VendorDashboardScreen(
   var showEditShopDialog by remember { mutableStateOf(false) }
   var editingProductId by remember { mutableStateOf<String?>(null) }
   var editingProductPrice by remember { mutableStateOf("") }
+  var editingProductQty by remember { mutableStateOf("") }
 
   // Real Analytics Calculations
   val totalOrders = orders.size
   val totalRevenue = orders.sumOf { it.totalAmount }
   val activeProducts = products.size
-  val lowStockCount = products.count { it.stockQty <= 5 }
+  val lowStockCount = products.count { it.stockQty != null && it.stockQty <= 5 }
 
   Scaffold(
     topBar = {
@@ -132,15 +134,197 @@ fun VendorDashboardScreen(
             ) {
               item {
                 Column {
-                  Text(text = "Store Hub", style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.Bold), color = BharatTextPrimary)
-                  Text(text = "Real-time performance for ${shop.name}", style = MaterialTheme.typography.bodyMedium, color = BharatTextSecondary)
+                  Text(text = "Overview", style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.Bold), color = BharatTextPrimary)
+                  Text(text = "Today's shop performance", style = MaterialTheme.typography.bodyMedium, color = BharatTextSecondary)
                 }
               }
 
-              // Round 5: current subscription tier + Manage Plan CTA.
+              // Round 7.1: prominent "+ Add New Product" as the FIRST action in
+              // Overview — matches vendor mental model that adding stock is the
+              // most common task. Also mirrored in the Inventory tab.
+              item {
+                Button(
+                  onClick = onManageProducts,
+                  modifier = Modifier.fillMaxWidth().height(52.dp).testTag("overview_add_product_button"),
+                  colors = ButtonDefaults.buttonColors(containerColor = BharatPurplePrimary),
+                  shape = RoundedCornerShape(14.dp)
+                ) {
+                  Icon(Icons.Default.Add, contentDescription = null, tint = Color.White)
+                  Spacer(Modifier.width(8.dp))
+                  Text("Add New Product", fontWeight = FontWeight.Bold, color = Color.White, fontSize = 15.sp)
+                }
+              }
+
+              // TOTAL ORDERS (moved up — was 4th).
+              item {
+                StatsCardPremium(
+                  title = "TOTAL ORDERS",
+                  value = "$totalOrders",
+                  trend = "Lifetime orders",
+                  icon = Icons.AutoMirrored.Filled.ReceiptLong,
+                  iconBgColor = Color(0xFFF3E8FF),
+                  iconTint = BharatPurplePrimary
+                )
+              }
+
+              // REVENUE big purple card (unchanged shape, just moved up).
+              item {
+                Card(
+                  shape = RoundedCornerShape(24.dp),
+                  modifier = Modifier.fillMaxWidth(),
+                  colors = CardDefaults.cardColors(containerColor = Color.Transparent)
+                ) {
+                  Box(modifier = Modifier.fillMaxWidth().background(Brush.horizontalGradient(listOf(Color(0xFF6D28D9), Color(0xFF4C1D95)))).padding(20.dp)) {
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                      Column {
+                        Text(text = "TOTAL REVENUE", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = Color.White.copy(alpha = 0.8f))
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(text = "₹$totalRevenue", style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.Bold), color = Color.White)
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(text = "Verified settlements", fontSize = 12.sp, color = Color.White.copy(alpha = 0.9f))
+                      }
+                      Box(modifier = Modifier.size(48.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.15f)), contentAlignment = Alignment.Center) {
+                        Icon(Icons.Default.AccountBalanceWallet, contentDescription = null, tint = Color.White, modifier = Modifier.size(24.dp))
+                      }
+                    }
+                  }
+                }
+              }
+
+              // ACTIVE PRODUCTS stat — new on Overview so vendor sees inventory
+              // size without switching tabs.
+              item {
+                StatsCardPremium(
+                  title = "ACTIVE PRODUCTS",
+                  value = "$activeProducts",
+                  trend = if (lowStockCount > 0) "$lowStockCount low stock" else "All stocked",
+                  icon = Icons.Default.Inventory,
+                  iconBgColor = Color(0xFFF3E8FF),
+                  iconTint = BharatPurplePrimary
+                )
+              }
+
+              // RECENT ORDERS — last 3, tap-through to the Orders tab for the rest.
+              val recentOrders = orders.sortedByDescending { it.orderDate }.take(3)
+              if (recentOrders.isNotEmpty()) {
+                item {
+                  Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                  ) {
+                    Text(
+                      text = "Recent Orders",
+                      style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                      color = BharatTextPrimary,
+                      modifier = Modifier.weight(1f)
+                    )
+                    TextButton(onClick = { selectedTab = 2 }) {
+                      Text("View All", color = BharatPurplePrimary, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                    }
+                  }
+                }
+                items(recentOrders, key = { it.id }) { order ->
+                  Card(
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color.White),
+                    border = BorderStroke(1.dp, Color(0xFFF1F5F9))
+                  ) {
+                    Row(
+                      modifier = Modifier.fillMaxWidth().padding(14.dp),
+                      verticalAlignment = Alignment.CenterVertically
+                    ) {
+                      Box(
+                        modifier = Modifier.size(40.dp).clip(RoundedCornerShape(10.dp)).background(BharatPurpleContainer),
+                        contentAlignment = Alignment.Center
+                      ) {
+                        Text(
+                          text = "#${order.id.takeLast(3)}",
+                          fontSize = 10.sp,
+                          fontWeight = FontWeight.Bold,
+                          color = BharatPurpleDark
+                        )
+                      }
+                      Spacer(Modifier.width(12.dp))
+                      Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                          text = order.items.firstOrNull()?.product?.name?.let { name ->
+                            if (order.items.size > 1) "$name +${order.items.size - 1} more" else name
+                          } ?: "Order",
+                          fontWeight = FontWeight.SemiBold,
+                          color = BharatTextPrimary,
+                          fontSize = 13.sp
+                        )
+                        Text(
+                          text = "${order.items.size} items • ${order.orderDate}",
+                          fontSize = 11.sp,
+                          color = BharatTextSecondary
+                        )
+                        Text(
+                          text = "₹${order.totalAmount}",
+                          fontWeight = FontWeight.Bold,
+                          color = BharatTextPrimary,
+                          fontSize = 14.sp
+                        )
+                      }
+                      Surface(
+                        shape = RoundedCornerShape(50.dp),
+                        color = when (order.status) {
+                          OrderStatus.PLACED -> Color(0xFFFEF3C7)
+                          OrderStatus.CONFIRMED -> Color(0xFFDCFCE7)
+                          OrderStatus.PREPARING -> Color(0xFFE0F2FE)
+                          OrderStatus.READY_FOR_PICKUP -> Color(0xFFF0FDF4)
+                          OrderStatus.COMPLETED -> Color(0xFFF1F5F9)
+                          OrderStatus.CANCELLED -> Color(0xFFFFE4E6)
+                        }
+                      ) {
+                        Text(
+                          text = order.status.label,
+                          fontSize = 10.sp,
+                          fontWeight = FontWeight.Bold,
+                          color = when (order.status) {
+                            OrderStatus.PLACED -> Color(0xFFD97706)
+                            OrderStatus.CONFIRMED -> Color(0xFF10B981)
+                            OrderStatus.PREPARING -> Color(0xFF0284C7)
+                            OrderStatus.READY_FOR_PICKUP -> Color(0xFF166534)
+                            OrderStatus.COMPLETED -> BharatTextSecondary
+                            OrderStatus.CANCELLED -> Color(0xFFDC2626)
+                          },
+                          modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                        )
+                      }
+                    }
+                  }
+                }
+              }
+
+              // Low Stock Alert (conditional)
+              if (lowStockCount > 0) {
+                item {
+                  Card(
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFFFFE4E6)),
+                    modifier = Modifier.fillMaxWidth()
+                  ) {
+                    Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                      Icon(Icons.Default.Warning, contentDescription = null, tint = Color(0xFFDC2626))
+                      Spacer(modifier = Modifier.width(12.dp))
+                      Column {
+                        Text(text = "Low Stock Alert", fontWeight = FontWeight.Bold, color = Color(0xFFDC2626))
+                        Text(text = "$lowStockCount items are running low.", fontSize = 12.sp, color = Color(0xFFDC2626).copy(alpha = 0.8f))
+                      }
+                    }
+                  }
+                }
+              }
+
+              // Current subscription tier + Manage Plan CTA (moved down).
               item {
                 val tierLabel = currentTierName ?: "Free"
-                val capLabel = if (currentTierItemCap == -1) "Unlimited items" else "${products.size} / $currentTierItemCap items"
+                val capLabel = if (currentTierItemCap == -1) {
+                  "Unlimited products"
+                } else {
+                  "${products.size} of $currentTierItemCap products"
+                }
                 Card(
                   onClick = onManagePlan,
                   shape = RoundedCornerShape(16.dp),
@@ -179,9 +363,7 @@ fun VendorDashboardScreen(
                 }
               }
 
-              // Round 7: prominent "Edit Shop Details" card so the vendor doesn't
-              // have to hunt for the tiny gear icon in the toolbar. Also surfaces
-              // current average rating + review count from customer ratings.
+              // Edit Shop Details card + rating surface (moved down).
               item {
                 Card(
                   onClick = { showEditShopDialog = true },
@@ -232,62 +414,7 @@ fun VendorDashboardScreen(
                 }
               }
 
-              // Stats Cards
-              item {
-                StatsCardPremium(
-                  title = "TOTAL ORDERS",
-                  value = "$totalOrders",
-                  trend = "Lifetime orders",
-                  icon = Icons.AutoMirrored.Filled.ReceiptLong,
-                  iconBgColor = Color(0xFFF3E8FF),
-                  iconTint = BharatPurplePrimary
-                )
-              }
-              
-              item {
-                Card(
-                  shape = RoundedCornerShape(24.dp),
-                  modifier = Modifier.fillMaxWidth(),
-                  colors = CardDefaults.cardColors(containerColor = Color.Transparent)
-                ) {
-                  Box(modifier = Modifier.fillMaxWidth().background(Brush.horizontalGradient(listOf(Color(0xFF6D28D9), Color(0xFF4C1D95)))).padding(20.dp)) {
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                      Column {
-                        Text(text = "TOTAL REVENUE", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = Color.White.copy(alpha = 0.8f))
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(text = "₹$totalRevenue", style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.Bold), color = Color.White)
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(text = "Verified settlements", fontSize = 12.sp, color = Color.White.copy(alpha = 0.9f))
-                      }
-                      Box(modifier = Modifier.size(48.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.15f)), contentAlignment = Alignment.Center) {
-                        Icon(Icons.Default.AccountBalanceWallet, contentDescription = null, tint = Color.White, modifier = Modifier.size(24.dp))
-                      }
-                    }
-                  }
-                }
-              }
-
-              // Low Stock Alert
-              if (lowStockCount > 0) {
-                item {
-                  Card(
-                    shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.cardColors(containerColor = Color(0xFFFFE4E6)),
-                    modifier = Modifier.fillMaxWidth()
-                  ) {
-                    Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                      Icon(Icons.Default.Warning, contentDescription = null, tint = Color(0xFFDC2626))
-                      Spacer(modifier = Modifier.width(12.dp))
-                      Column {
-                        Text(text = "Low Stock Alert", fontWeight = FontWeight.Bold, color = Color(0xFFDC2626))
-                        Text(text = "$lowStockCount items are running low.", fontSize = 12.sp, color = Color(0xFFDC2626).copy(alpha = 0.8f))
-                      }
-                    }
-                  }
-                }
-              }
-
-              // Ops Card
+              // Store Operations card (unchanged, at bottom).
               item {
                 Card(
                   shape = RoundedCornerShape(24.dp),
@@ -323,6 +450,7 @@ fun VendorDashboardScreen(
                     onClick = {
                       editingProductId = product.id
                       editingProductPrice = product.currentPrice.toString()
+                      editingProductQty = product.stockQty?.toString().orEmpty()
                     },
                     shape = RoundedCornerShape(16.dp),
                     colors = CardDefaults.cardColors(containerColor = Color.White),
@@ -353,7 +481,14 @@ fun VendorDashboardScreen(
                           Spacer(Modifier.width(6.dp))
                           Icon(Icons.Default.Edit, contentDescription = "Edit", tint = BharatPurplePrimary, modifier = Modifier.size(14.dp))
                         }
-                        Text("${product.stockQty} in stock • ₹${product.currentPrice} • Tap to edit", fontSize = 11.sp, color = BharatTextSecondary)
+                        Text(
+                          text = buildString {
+                            append(product.stockQty?.let { "$it in stock" } ?: "Qty not set")
+                            append(" • ₹${product.currentPrice} • Tap to edit")
+                          },
+                          fontSize = 11.sp,
+                          color = BharatTextSecondary
+                        )
                       }
                       Switch(checked = product.inStock, onCheckedChange = { onUpdateProductStock(product.id, it) }, colors = SwitchDefaults.colors(checkedTrackColor = BharatGreen))
                     }
@@ -508,7 +643,7 @@ fun VendorDashboardScreen(
         onDismissRequest = { editingProductId = null },
         title = {
           Column {
-            Text("Update Price", fontWeight = FontWeight.Bold, color = BharatTextPrimary)
+            Text("Update Product", fontWeight = FontWeight.Bold, color = BharatTextPrimary)
             Text(prod.name, fontSize = 13.sp, color = BharatTextSecondary)
           }
         },
@@ -526,23 +661,50 @@ fun VendorDashboardScreen(
                 focusedBorderColor = BharatPurplePrimary
               )
             )
+            OutlinedTextField(
+              value = editingProductQty,
+              onValueChange = { input -> editingProductQty = input.filter { it.isDigit() }.take(5) },
+              label = { Text("Stock Quantity") },
+              placeholder = { Text("Leave blank if unsure") },
+              singleLine = true,
+              modifier = Modifier.fillMaxWidth(),
+              supportingText = {
+                Text(
+                  text = when (val q = editingProductQty.toIntOrNull()) {
+                    null -> "⚠️ Customers see \"Call to Confirm\""
+                    0 -> "Customers see \"Out of Stock\""
+                    in 1..5 -> "Customers see \"Low Stock\""
+                    else -> "🟢 Customers see \"In Stock\""
+                  },
+                  fontSize = 11.sp,
+                  color = BharatTextSecondary
+                )
+              },
+              colors = OutlinedTextFieldDefaults.colors(
+                focusedTextColor = BharatTextPrimary,
+                unfocusedTextColor = BharatTextPrimary,
+                focusedBorderColor = BharatPurplePrimary
+              )
+            )
             Text(
-              text = "Currently listed at ₹${prod.currentPrice} • ${if (prod.inStock) "In stock" else "Out of stock"}",
+              text = "Currently ₹${prod.currentPrice} • ${prod.stockStatus}",
               fontSize = 11.sp,
               color = BharatTextMuted
             )
           }
         },
         confirmButton = {
+          val newPrice = editingProductPrice.toIntOrNull()
+          val newQty = editingProductQty.toIntOrNull()
+          val priceChanged = newPrice != null && newPrice > 0 && newPrice != prod.currentPrice
+          val qtyChanged = newQty != prod.stockQty
           Button(
             onClick = {
-              val newPrice = editingProductPrice.toIntOrNull()
-              if (newPrice != null && newPrice > 0 && newPrice != prod.currentPrice) {
-                onUpdateProductPrice(prod.id, newPrice)
-              }
+              if (priceChanged) onUpdateProductPrice(prod.id, newPrice!!)
+              if (qtyChanged) onUpdateProductQty(prod.id, newQty)
               editingProductId = null
             },
-            enabled = editingProductPrice.toIntOrNull().let { it != null && it > 0 && it != prod.currentPrice },
+            enabled = priceChanged || qtyChanged,
             colors = ButtonDefaults.buttonColors(containerColor = BharatPurplePrimary)
           ) { Text("Save", color = Color.White, fontWeight = FontWeight.Bold) }
         },

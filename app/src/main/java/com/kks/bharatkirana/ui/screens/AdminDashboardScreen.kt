@@ -1726,7 +1726,8 @@ fun AdminInventoryView(
                 )
               }
               Text(
-                text = if (product.inStock) "${product.stockQty} In" else "Out",
+                text = if (!product.inStock) "Out"
+                  else product.stockQty?.let { "$it In" } ?: "Confirm",
                 fontSize = 10.sp,
                 fontWeight = FontWeight.Bold,
                 color = if (product.inStock) BharatGreen else Color(0xFFE11D48)
