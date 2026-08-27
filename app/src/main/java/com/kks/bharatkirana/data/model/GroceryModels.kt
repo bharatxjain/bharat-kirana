@@ -169,20 +169,16 @@ data class UserProfile(
   // are strictly UI hints — real authorization is enforced by Supabase RLS.
   val serverRole: UserRole? = null
 ) {
+  // Server role is now the sole source of truth. The .env whitelist fallback
+  // was a bootstrap for the pre-RLS era and started firing false positives once
+  // the DB row loaded slowly — promoting anyone whose email matched to admin
+  // even after the DB said they were a customer. Promote via Supabase Table
+  // Editor now: set profiles.role = 'admin' for that user.
   val isSuperAdmin: Boolean
-    get() = serverRole == UserRole.SUPER_ADMIN ||
-      (serverRole == null && email.isNotBlank() &&
-        com.kks.bharatkirana.BuildConfig.SUPER_ADMIN_EMAIL.isNotBlank() &&
-        email.trim().equals(com.kks.bharatkirana.BuildConfig.SUPER_ADMIN_EMAIL, ignoreCase = true))
+    get() = serverRole == UserRole.SUPER_ADMIN
 
   val isAdmin: Boolean
-    get() = isSuperAdmin ||
-      serverRole == UserRole.ADMIN ||
-      (serverRole == null && email.isNotBlank() &&
-        com.kks.bharatkirana.BuildConfig.ADMIN_EMAILS
-          .split(",")
-          .map { it.trim().lowercase() }
-          .any { it.isNotBlank() && it == email.trim().lowercase() })
+    get() = isSuperAdmin || serverRole == UserRole.ADMIN
 
   val isVendor: Boolean
     get() = shopId != null || serverRole == UserRole.VENDOR

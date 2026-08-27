@@ -592,7 +592,10 @@ class SupabaseGroceryRepo(
 
         val shopResponse = client.newCall(shopRequest).execute()
         if (!shopResponse.isSuccessful) {
-          throw Exception("Shop registration failed: HTTP ${shopResponse.code}")
+          // Include the server's response body so the specific reason (missing
+          // column, RLS block, enum mismatch, etc.) is visible in the UI banner.
+          val body = shopResponse.body?.string().orEmpty().take(400)
+          throw Exception("Shop registration failed: HTTP ${shopResponse.code} — $body")
         }
 
         // profiles.shop_id is written by the on_shop_insert_link_profile trigger

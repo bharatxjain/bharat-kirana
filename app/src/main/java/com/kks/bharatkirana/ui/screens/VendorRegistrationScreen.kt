@@ -2,6 +2,7 @@ package com.kks.bharatkirana.ui.screens
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.location.Geocoder
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
@@ -550,7 +551,10 @@ fun VendorRegistrationScreen(
             enabled = !isUploading && when(step) {
               1 -> shopName.isNotBlank()
               2 -> ownerName.isNotBlank() && phoneNumber.isNotBlank() && shopAddress.isNotBlank()
-              else -> shopPhotoUri != null
+              // Shop photo is encouraged but not required — vendors can add it
+              // later from the dashboard, and it is not always convenient to
+              // supply during first-time setup (e.g. testing on an emulator).
+              else -> true
             },
             modifier = Modifier
               .align(Alignment.End)
@@ -736,7 +740,22 @@ fun VendorRegistrationScreen(
       },
       confirmButton = {
         Button(
-          onClick = { showMapPicker = false },
+          onClick = {
+            // Reverse-geocode the picked coordinates so the vendor does not have
+            // to type the same address twice. Best-effort: if Geocoder is not
+            // available or the network reverse lookup fails, we silently keep
+            // whatever they typed.
+            if (lat != 0.0 || lng != 0.0) {
+              try {
+                @Suppress("DEPRECATION")
+                val results = Geocoder(context, java.util.Locale.getDefault())
+                  .getFromLocation(lat, lng, 1)
+                val line = results?.firstOrNull()?.getAddressLine(0)
+                if (!line.isNullOrBlank()) shopAddress = line
+              } catch (_: Exception) { /* keep manual entry */ }
+            }
+            showMapPicker = false
+          },
           enabled = lat != 0.0 || lng != 0.0,
           colors = ButtonDefaults.buttonColors(containerColor = BharatPurplePrimary)
         ) {

@@ -186,12 +186,23 @@ fun AuthScreen(
           // Status message display
           // Hidden while a request is in flight — the button already shows a spinner,
           // so surfacing "Creating account..." as a red banner is confusing.
-          AnimatedVisibility(visible = effectiveStatus != null && !effectiveLoading) {
+          // Also hidden for any message ending with "..." in case the loading
+          // flag races the message assignment on state clear.
+          AnimatedVisibility(visible = effectiveStatus != null && !effectiveLoading && effectiveStatus?.endsWith("…") != true && effectiveStatus?.endsWith("...") != true) {
             effectiveStatus?.let { msg ->
+              // A message is treated as positive if it announces an outcome the
+              // user wants to see. Hard-coded phrase list rather than string
+              // matching on "success" alone because messages like "Welcome back!"
+              // and "Profile saved." were rendering red.
+              val isPositive = listOf(
+                "success", "check your", "welcome", "account created",
+                "profile saved", "reset link sent", "otp sent",
+                "password updated", "logged out", "deleted successfully"
+              ).any { msg.contains(it, ignoreCase = true) }
               Surface(
                 shape = RoundedCornerShape(10.dp),
-                color = if (msg.contains("success", ignoreCase = true) || msg.contains("check", ignoreCase = true)) Color(0xFFECFDF5) else Color(0xFFFEF2F2),
-                border = BorderStroke(1.dp, if (msg.contains("success", ignoreCase = true) || msg.contains("check", ignoreCase = true)) BharatGreen else Color(0xFFFCA5A5)),
+                color = if (isPositive) Color(0xFFECFDF5) else Color(0xFFFEF2F2),
+                border = BorderStroke(1.dp, if (isPositive) BharatGreen else Color(0xFFFCA5A5)),
                 modifier = Modifier
                   .fillMaxWidth()
                   .padding(bottom = 16.dp)
@@ -201,9 +212,9 @@ fun AuthScreen(
                   verticalAlignment = Alignment.CenterVertically
                 ) {
                   Icon(
-                    imageVector = if (msg.contains("success", ignoreCase = true) || msg.contains("check", ignoreCase = true)) Icons.Default.CheckCircle else Icons.Default.Warning,
+                    imageVector = if (isPositive) Icons.Default.CheckCircle else Icons.Default.Warning,
                     contentDescription = null,
-                    tint = if (msg.contains("success", ignoreCase = true) || msg.contains("check", ignoreCase = true)) BharatGreen else Color(0xFFDC2626),
+                    tint = if (isPositive) BharatGreen else Color(0xFFDC2626),
                     modifier = Modifier.size(16.dp)
                   )
                   Spacer(modifier = Modifier.width(8.dp))
@@ -211,7 +222,7 @@ fun AuthScreen(
                     text = msg,
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Medium,
-                    color = if (msg.contains("success", ignoreCase = true) || msg.contains("check", ignoreCase = true)) Color(0xFF065F46) else Color(0xFF991B1B)
+                    color = if (isPositive) Color(0xFF065F46) else Color(0xFF991B1B)
                   )
                 }
               }

@@ -197,6 +197,12 @@ fun MainScreen(
                   viewModel.setPendingSignupRole(role)
                   viewModel.navigateTo(AppScreen.CompleteProfile)
                 }
+                // The old branch here sent isVendor users to VendorDashboard, but
+                // for anyone who has a stale shopId (deleted shop, re-signup, etc.)
+                // that lands them on an empty dashboard. Prefer registration for
+                // anyone whose shopId doesn't currently match a shop \u2014 the
+                // VendorDashboard branch itself now forwards to registration when
+                // the shop is missing, so this is only a small optimization.
                 user.isVendor -> viewModel.navigateTo(AppScreen.VendorDashboard)
                 role == UserRole.VENDOR -> {
                   viewModel.setPendingSignupRole(role)
@@ -462,23 +468,18 @@ fun MainScreen(
         // both cases.
         val vendorShop = shops.find { it.id == userProfile.shopId } ?: shops.firstOrNull()
         if (vendorShop == null) {
+          // Auto-forward to registration \u2014 a "vendor" with no shop is really a
+          // vendor-to-be, and showing an intermediate "No shop found" prompt is
+          // just an extra tap. LaunchedEffect ensures the navigation happens
+          // exactly once, off the composition path.
+          LaunchedEffect(Unit) {
+            viewModel.navigateTo(AppScreen.VendorRegistration)
+          }
           Box(
             modifier = Modifier.fillMaxSize().background(Color.White),
             contentAlignment = Alignment.Center
           ) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-              CircularProgressIndicator(color = BharatPurplePrimary, strokeWidth = 3.dp)
-              Spacer(modifier = Modifier.height(20.dp))
-              Text(
-                text = "Loading your store…",
-                style = MaterialTheme.typography.bodyMedium,
-                color = BharatTextSecondary
-              )
-              Spacer(modifier = Modifier.height(24.dp))
-              OutlinedButton(onClick = { viewModel.navigateTo(AppScreen.Main) }) {
-                Text("Back to shopping")
-              }
-            }
+            CircularProgressIndicator(color = BharatPurplePrimary, strokeWidth = 3.dp)
           }
         } else {
         val vendorSub by viewModel.vendorSubscription.collectAsState()
