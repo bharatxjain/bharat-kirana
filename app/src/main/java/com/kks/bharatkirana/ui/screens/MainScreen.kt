@@ -224,7 +224,14 @@ fun MainScreen(
             
             when {
               isAdminRole -> viewModel.navigateTo(AppScreen.AdminDashboard)
-              isVendor -> viewModel.navigateTo(AppScreen.VendorDashboard)
+              isVendor -> {
+                // Vendor must complete profile (mobile/address) first, then register
+                // a shop. CompleteProfile reads pendingSignupRole and forwards to
+                // VendorRegistration. Jumping straight to VendorDashboard left the
+                // dashboard trying to render a shop that does not exist.
+                viewModel.setPendingSignupRole(UserRole.VENDOR)
+                viewModel.navigateTo(AppScreen.CompleteProfile)
+              }
               else -> viewModel.navigateTo(AppScreen.CompleteProfile)
             }
           }

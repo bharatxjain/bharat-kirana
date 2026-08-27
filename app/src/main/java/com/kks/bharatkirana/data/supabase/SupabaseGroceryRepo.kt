@@ -579,6 +579,9 @@ class SupabaseGroceryRepo(
           put("accepting_orders", shop.isOpen)
           put("open_time", shop.openTime)
           put("close_time", shop.closeTime)
+          // DEV: auto-approve every new shop so customer fetchShops() sees it
+          // immediately. Change to 'pending' when admin approval is wired up.
+          put("status", "approved")
           if (!shopImageUrl.isNullOrBlank()) put("image_url", shopImageUrl)
           if (!businessProofUrl.isNullOrBlank()) put("business_proof_url", businessProofUrl)
         }
@@ -592,19 +595,11 @@ class SupabaseGroceryRepo(
           throw Exception("Shop registration failed: HTTP ${shopResponse.code}")
         }
 
-        // 2. Link the shop to this user in their profile.
-        // NOTE: role stays 'customer' here — a super admin promotes the user to
-        // 'vendor' after reviewing the registration (via the Admin Dashboard).
-        val profileUrl = "${SupabaseConfig.restUrl}/profiles?id=eq.$ownerId"
-        val profilePayload = JSONObject().apply {
-          put("shop_id", shop.id)
-        }
-        
-        val profileRequest = baseRequestBuilder(profileUrl, accessToken)
-          .patch(profilePayload.toString().toRequestBody(jsonMediaType))
-          .build()
-
-        client.newCall(profileRequest).execute()
+        // profiles.shop_id is written by the on_shop_insert_link_profile trigger
+        // (SHOPS_LINK_TRIGGER.sql) — the column is revoked from authenticated so
+        // the client cannot do this itself. If that trigger is not installed,
+        // vendor registration succeeds but shopId never sticks and the next
+        // login treats the vendor as a customer.
         Unit
       }
     }
@@ -773,7 +768,10 @@ class SupabaseGroceryRepo(
   suspend fun fetchShops(accessToken: String? = null): Result<List<Shop>> =
     withContext(Dispatchers.IO) {
       runCatching {
-        val url = "${SupabaseConfig.restUrl}/shops?select=*"
+        // status filter keeps pending/rejected/suspended shops off the customer
+        // home screen. Vendors see their own shop through profile.shop_id, not
+        // this call, so the filter does not hide it from them.
+        val url = "${SupabaseConfig.restUrl}/shops?status=eq.approved&select=*"
         val request = baseRequestBuilder(url, accessToken).get().build()
         val response = client.newCall(request).execute()
         val body = response.body?.string() ?: ""

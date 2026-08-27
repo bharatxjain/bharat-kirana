@@ -510,4 +510,4 @@ fun OrderDetailsScreen(
         }
       }
     }
-};
+}

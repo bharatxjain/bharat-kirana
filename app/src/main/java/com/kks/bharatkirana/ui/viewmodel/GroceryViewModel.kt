@@ -60,22 +60,24 @@ class GroceryViewModel(
   private val _userProfile = MutableStateFlow(UserProfile())
   val userProfile: StateFlow<UserProfile> = _userProfile.asStateFlow()
 
-  private val _shops = MutableStateFlow(repository.getShops())
+  private val _shops = MutableStateFlow<List<Shop>>(emptyList())
   val shops: StateFlow<List<Shop>> = _shops.asStateFlow()
 
   private val _activeShopId = MutableStateFlow<String?>(null)
   val activeShopId: StateFlow<String?> = _activeShopId.asStateFlow()
 
-  private val _products = MutableStateFlow(repository.getProducts())
+  private val _products = MutableStateFlow<List<Product>>(emptyList())
   val products: StateFlow<List<Product>> = _products.asStateFlow()
 
+  // Categories stay hardcoded — they are UI reference data (labels, colours,
+  // icons), not user content. The DB `categories` table is a separate concern.
   private val _categories = MutableStateFlow(repository.getCategories())
   val categories: StateFlow<List<Category>> = _categories.asStateFlow()
 
-  private val _cartItems = MutableStateFlow(repository.getInitialCart())
+  private val _cartItems = MutableStateFlow<List<CartItem>>(emptyList())
   val cartItems: StateFlow<List<CartItem>> = _cartItems.asStateFlow()
 
-  private val _orders = MutableStateFlow(repository.getSampleOrders())
+  private val _orders = MutableStateFlow<List<Order>>(emptyList())
   val orders: StateFlow<List<Order>> = _orders.asStateFlow()
 
   private val _notifications = MutableStateFlow<List<AppNotification>>(emptyList())
@@ -84,7 +86,7 @@ class GroceryViewModel(
     .map { list -> list.count { !it.isRead } }
     .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
 
-  private val _selectedProduct = MutableStateFlow<Product?>(repository.getProducts().firstOrNull())
+  private val _selectedProduct = MutableStateFlow<Product?>(null)
   val selectedProduct: StateFlow<Product?> = _selectedProduct.asStateFlow()
 
   private val _selectedCategory = MutableStateFlow<Category?>(null)
@@ -579,11 +581,11 @@ class GroceryViewModel(
 
   fun loadSupabaseData() {
     viewModelScope.launch {
-      // Sync live products
+      // Sync live products. Overwrite unconditionally — an isNotEmpty guard
+      // would leave demo products in place forever whenever the server truly is
+      // empty, which is exactly the state a fresh install lives in.
       supabaseGroceryRepo.fetchProducts().onSuccess { liveProducts ->
-        if (liveProducts.isNotEmpty()) {
-          _products.value = liveProducts
-        }
+        _products.value = liveProducts
       }
       // Catalog is in memory now, so a cart saved before the process died can be
       // rebuilt against current prices/stock.
@@ -601,9 +603,7 @@ class GroceryViewModel(
       val email = _userProfile.value.email
       val isAdmin = _userProfile.value.isAdmin
       supabaseGroceryRepo.fetchOrders(customerEmail = email, isAdmin = isAdmin).onSuccess { liveOrders ->
-        if (liveOrders.isNotEmpty()) {
-          _orders.value = liveOrders
-        }
+        _orders.value = liveOrders
       }
     }
   }
