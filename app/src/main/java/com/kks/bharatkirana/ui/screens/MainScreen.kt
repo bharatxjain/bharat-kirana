@@ -269,7 +269,17 @@ fun MainScreen(
       }
 
       is AppScreen.ProductDetail -> {
-        val product = products.find { it.id == screen.productId } ?: selectedProduct ?: products.first()
+        // Same empty-list hazard as VendorDashboard: a deep link or push can open
+        // this before products have loaded.
+        val product = products.find { it.id == screen.productId } ?: selectedProduct ?: products.firstOrNull()
+        if (product == null) {
+          Box(
+            modifier = Modifier.fillMaxSize().background(Color.White),
+            contentAlignment = Alignment.Center
+          ) {
+            CircularProgressIndicator(color = BharatPurplePrimary, strokeWidth = 3.dp)
+          }
+        } else {
         val recommendations = products.filter { it.id != product.id }.take(4)
         val vendor = shops.find { it.id == product.shopId }
         
@@ -293,6 +303,7 @@ fun MainScreen(
             viewModel.navigateTo(AppScreen.StoreInfo)
           }
         )
+        }
       }
 
       is AppScreen.Cart -> {
@@ -439,7 +450,30 @@ fun MainScreen(
       }
 
       is AppScreen.VendorDashboard -> {
-        val vendorShop = shops.find { it.id == userProfile.shopId } ?: shops.first()
+        // shops is empty until loadSupabaseData() returns, and a vendor whose shop
+        // row was deleted never matches. first() threw NoSuchElementException in
+        // both cases.
+        val vendorShop = shops.find { it.id == userProfile.shopId } ?: shops.firstOrNull()
+        if (vendorShop == null) {
+          Box(
+            modifier = Modifier.fillMaxSize().background(Color.White),
+            contentAlignment = Alignment.Center
+          ) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+              CircularProgressIndicator(color = BharatPurplePrimary, strokeWidth = 3.dp)
+              Spacer(modifier = Modifier.height(20.dp))
+              Text(
+                text = "Loading your store…",
+                style = MaterialTheme.typography.bodyMedium,
+                color = BharatTextSecondary
+              )
+              Spacer(modifier = Modifier.height(24.dp))
+              OutlinedButton(onClick = { viewModel.navigateTo(AppScreen.Main) }) {
+                Text("Back to shopping")
+              }
+            }
+          }
+        } else {
         val vendorSub by viewModel.vendorSubscription.collectAsState()
         val tiers by viewModel.subscriptionTiers.collectAsState()
         val currentTier = tiers.firstOrNull { it.id == vendorSub?.tierId }
@@ -467,6 +501,7 @@ fun MainScreen(
           onRefreshStatus = { viewModel.loadSupabaseData() },
           onManagePlan = { viewModel.navigateTo(AppScreen.Subscription) }
         )
+        }
       }
 
       is AppScreen.Subscription -> {

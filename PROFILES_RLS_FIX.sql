@@ -219,5 +219,30 @@ begin;
    where id = auth.uid()
   returning id, full_name, mobile_number;   -- MUST return 1 row
 rollback;
+
+
+-- 6. CONFIRM SECTION 4 LANDED CORRECTLY ---------------------------------------
+-- If the revoke ran but the grant did not, `authenticated` ends up with NO
+-- update permission at all and every profile edit fails. Read-only.
+--
+-- 6a. Expect ~12 rows for authenticated, and NO rows naming
+--     wallet_balance, loyalty_points, role, shop_id, created_at or updated_at.
+select grantee, column_name
+from information_schema.column_privileges
+where table_schema = 'public'
+  and table_name   = 'profiles'
+  and privilege_type = 'UPDATE'
+  and grantee in ('anon', 'authenticated')
+order by grantee, column_name;
+
+-- 6b. Table-level privileges. UPDATE should NOT appear here for authenticated
+--     any more; SELECT, INSERT and DELETE are unaffected by section 4.
+select grantee, privilege_type
+from information_schema.table_privileges
+where table_schema = 'public'
+  and table_name   = 'profiles'
+  and grantee in ('anon', 'authenticated')
+order by grantee, privilege_type;
 -- ============================================================================
+
 
