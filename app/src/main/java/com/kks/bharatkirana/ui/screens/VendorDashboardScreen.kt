@@ -48,11 +48,22 @@ fun VendorDashboardScreen(
   onSupportClick: () -> Unit = {},
   onRefreshStatus: () -> Unit = {},
   onManagePlan: () -> Unit = {},
+  onOpenProfile: () -> Unit = {},
   currentTierName: String? = null,
   currentTierItemCap: Int = 10,
+  initialTab: Int = 0,
+  onInitialTabConsumed: () -> Unit = {},
   modifier: Modifier = Modifier
 ) {
-  var selectedTab by remember { mutableIntStateOf(0) } // 0: Overview, 1: Inventory, 2: Orders, 3: Reviews
+  var selectedTab by remember { mutableIntStateOf(initialTab) } // 0: Overview, 1: Inventory, 2: Orders, 3: Reviews
+  // If a caller (e.g. Add Product success) asked for a specific starting tab
+  // AFTER the screen already exists, honour it and reset the flag.
+  LaunchedEffect(initialTab) {
+    if (initialTab != 0) {
+      selectedTab = initialTab
+      onInitialTabConsumed()
+    }
+  }
   var showEditShopDialog by remember { mutableStateOf(false) }
   var editingProductId by remember { mutableStateOf<String?>(null) }
   var editingProductPrice by remember { mutableStateOf("") }
@@ -76,19 +87,13 @@ fun VendorDashboardScreen(
               style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
               color = BharatTextPrimary
             )
-            Spacer(modifier = Modifier.width(8.dp))
-            IconButton(onClick = { showEditShopDialog = true }, modifier = Modifier.size(24.dp)) {
-              Icon(Icons.Default.Settings, contentDescription = "Edit Store", tint = BharatPurplePrimary, modifier = Modifier.size(16.dp))
-            }
-          }
-        },
-        navigationIcon = {
-          IconButton(onClick = onBackClick) {
-            Icon(Icons.Default.ShoppingBag, contentDescription = "Marketplace", tint = BharatPurplePrimary)
           }
         },
         actions = {
-          IconButton(onClick = { /* Personal Profile */ }) {
+          // Single Profile button. All account-related actions (edit store, edit
+          // personal info, subscription, support, logout) live inside the
+          // VendorProfileScreen this opens.
+          IconButton(onClick = onOpenProfile) {
             Box(
               modifier = Modifier
                 .size(36.dp)
@@ -96,11 +101,8 @@ fun VendorDashboardScreen(
                 .background(Color(0xFFF3E8FF)),
               contentAlignment = Alignment.Center
             ) {
-              Icon(Icons.Default.Person, contentDescription = "Personal Profile", tint = BharatPurplePrimary, modifier = Modifier.size(20.dp))
+              Icon(Icons.Default.Person, contentDescription = "Profile", tint = BharatPurplePrimary, modifier = Modifier.size(20.dp))
             }
-          }
-          IconButton(onClick = onLogout) {
-            Icon(Icons.AutoMirrored.Filled.Logout, contentDescription = "Logout", tint = BharatTextSecondary)
           }
         },
         colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.White)
@@ -318,103 +320,6 @@ fun VendorDashboardScreen(
                 }
               }
 
-              // Current subscription tier + Manage Plan CTA (moved down).
-              item {
-                val tierLabel = currentTierName ?: "Free"
-                val capLabel = if (currentTierItemCap == -1) {
-                  "Unlimited products"
-                } else {
-                  "${products.size} of $currentTierItemCap products"
-                }
-                Card(
-                  onClick = onManagePlan,
-                  shape = RoundedCornerShape(16.dp),
-                  colors = CardDefaults.cardColors(containerColor = Color.White),
-                  border = BorderStroke(1.dp, Color(0xFFE5E7EB))
-                ) {
-                  Row(
-                    modifier = Modifier.fillMaxWidth().padding(16.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                  ) {
-                    Box(
-                      modifier = Modifier.size(40.dp).clip(CircleShape).background(BharatPurpleContainer),
-                      contentAlignment = Alignment.Center
-                    ) {
-                      Icon(Icons.Default.Star, contentDescription = null, tint = BharatPurplePrimary, modifier = Modifier.size(20.dp))
-                    }
-                    Spacer(Modifier.width(12.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                      Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("Current Plan", fontSize = 11.sp, color = BharatTextSecondary, fontWeight = FontWeight.SemiBold)
-                        Spacer(Modifier.width(6.dp))
-                        Surface(color = BharatPurpleContainer, shape = RoundedCornerShape(4.dp)) {
-                          Text(
-                            tierLabel.uppercase(),
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.ExtraBold,
-                            color = BharatPurpleDark,
-                            modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
-                          )
-                        }
-                      }
-                      Text(capLabel, fontSize = 13.sp, color = BharatTextPrimary, fontWeight = FontWeight.Bold)
-                    }
-                    Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = "Manage Plan", tint = BharatPurplePrimary)
-                  }
-                }
-              }
-
-              // Edit Shop Details card + rating surface (moved down).
-              item {
-                Card(
-                  onClick = { showEditShopDialog = true },
-                  shape = RoundedCornerShape(16.dp),
-                  colors = CardDefaults.cardColors(containerColor = Color.White),
-                  border = BorderStroke(1.dp, Color(0xFFE5E7EB))
-                ) {
-                  Row(
-                    modifier = Modifier.fillMaxWidth().padding(16.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                  ) {
-                    Box(
-                      modifier = Modifier.size(40.dp).clip(CircleShape).background(BharatPurpleContainer),
-                      contentAlignment = Alignment.Center
-                    ) {
-                      Icon(Icons.Default.Storefront, contentDescription = null, tint = BharatPurplePrimary, modifier = Modifier.size(20.dp))
-                    }
-                    Spacer(Modifier.width(12.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                      Text("Edit Shop Details", fontSize = 13.sp, color = BharatTextPrimary, fontWeight = FontWeight.Bold)
-                      Text(
-                        "Name, address, phone, hours",
-                        fontSize = 11.sp,
-                        color = BharatTextSecondary
-                      )
-                      if (shop.ratingCount > 0) {
-                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 4.dp)) {
-                          Icon(Icons.Default.Star, contentDescription = null, tint = Color(0xFFD97706), modifier = Modifier.size(12.dp))
-                          Spacer(Modifier.width(3.dp))
-                          Text(
-                            text = "${"%.1f".format(shop.rating)} · ${shop.ratingCount} customer review${if (shop.ratingCount == 1) "" else "s"}",
-                            fontSize = 11.sp,
-                            color = BharatTextPrimary,
-                            fontWeight = FontWeight.SemiBold
-                          )
-                        }
-                      } else {
-                        Text(
-                          "No customer ratings yet",
-                          fontSize = 11.sp,
-                          color = BharatTextMuted,
-                          modifier = Modifier.padding(top = 2.dp)
-                        )
-                      }
-                    }
-                    Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = "Edit", tint = BharatPurplePrimary)
-                  }
-                }
-              }
-
               // Store Operations card (unchanged, at bottom).
               item {
                 Card(
@@ -580,22 +485,35 @@ fun VendorDashboardScreen(
                 item {
                   Text(text = "Customer Feedback", style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold), color = BharatTextPrimary)
                 }
-                items(listOf(
-                  "Great service, everything was packed neatly!" to 5,
-                  "Fresh produce but took a bit longer to ready." to 4
-                )) { (review, stars) ->
-                  Card(shape = RoundedCornerShape(16.dp), colors = CardDefaults.cardColors(containerColor = Color.White), border = BorderStroke(1.dp, Color(0xFFF1F5F9))) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                      Row(verticalAlignment = Alignment.CenterVertically) {
-                        repeat(5) { i ->
-                          Icon(Icons.Default.Star, null, tint = if (i < stars) Color(0xFFFFB800) else BharatTextMuted, modifier = Modifier.size(14.dp))
-                        }
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("2 days ago", fontSize = 11.sp, color = BharatTextMuted)
-                      }
-                      Spacer(modifier = Modifier.height(8.dp))
-                      Text(text = review, style = MaterialTheme.typography.bodyMedium, color = BharatTextPrimary)
-                    }
+                // Real customer reviews will render here once shop_ratings are
+                // fetched. Empty state shown until then.
+                item {
+                  Column(
+                    modifier = Modifier
+                      .fillMaxWidth()
+                      .padding(vertical = 40.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                  ) {
+                    Icon(
+                      imageVector = Icons.Default.Star,
+                      contentDescription = null,
+                      tint = BharatTextMuted,
+                      modifier = Modifier.size(48.dp)
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text(
+                      text = "No reviews yet",
+                      style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                      color = BharatTextPrimary
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                      text = "Customer reviews will appear here after they receive their orders.",
+                      style = MaterialTheme.typography.bodySmall,
+                      color = BharatTextSecondary,
+                      textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                      modifier = Modifier.padding(horizontal = 32.dp)
+                    )
                   }
                 }
              }
@@ -613,23 +531,32 @@ fun VendorDashboardScreen(
 
     AlertDialog(
       onDismissRequest = { showEditShopDialog = false },
-      title = { Text("Edit Store Details", fontWeight = FontWeight.Bold) },
+      // Force light dialog surface \u2014 the app is designed light-first and letting
+      // the Material dark scheme paint this dark on dark makes the fields
+      // (which use BharatTextPrimary = near-black) unreadable.
+      containerColor = Color.White,
+      titleContentColor = BharatTextPrimary,
+      textContentColor = BharatTextPrimary,
+      title = { Text("Edit Store Details", fontWeight = FontWeight.Bold, color = BharatTextPrimary) },
       text = {
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-          OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Shop Name") }, modifier = Modifier.fillMaxWidth(), colors = OutlinedTextFieldDefaults.colors(focusedTextColor = BharatTextPrimary, unfocusedTextColor = BharatTextPrimary))
-          OutlinedTextField(value = owner, onValueChange = { owner = it }, label = { Text("Owner Name") }, modifier = Modifier.fillMaxWidth(), colors = OutlinedTextFieldDefaults.colors(focusedTextColor = BharatTextPrimary, unfocusedTextColor = BharatTextPrimary))
-          OutlinedTextField(value = phone, onValueChange = { phone = it }, label = { Text("Phone") }, modifier = Modifier.fillMaxWidth(), colors = OutlinedTextFieldDefaults.colors(focusedTextColor = BharatTextPrimary, unfocusedTextColor = BharatTextPrimary))
-          OutlinedTextField(value = addr, onValueChange = { addr = it }, label = { Text("Address") }, minLines = 2, modifier = Modifier.fillMaxWidth(), colors = OutlinedTextFieldDefaults.colors(focusedTextColor = BharatTextPrimary, unfocusedTextColor = BharatTextPrimary))
+          OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Shop Name") }, modifier = Modifier.fillMaxWidth(), colors = OutlinedTextFieldDefaults.colors(focusedTextColor = BharatTextPrimary, unfocusedTextColor = BharatTextPrimary, focusedLabelColor = BharatPurplePrimary, unfocusedLabelColor = BharatTextSecondary, focusedContainerColor = Color.White, unfocusedContainerColor = Color.White))
+          OutlinedTextField(value = owner, onValueChange = { owner = it }, label = { Text("Owner Name") }, modifier = Modifier.fillMaxWidth(), colors = OutlinedTextFieldDefaults.colors(focusedTextColor = BharatTextPrimary, unfocusedTextColor = BharatTextPrimary, focusedLabelColor = BharatPurplePrimary, unfocusedLabelColor = BharatTextSecondary, focusedContainerColor = Color.White, unfocusedContainerColor = Color.White))
+          OutlinedTextField(value = phone, onValueChange = { phone = it }, label = { Text("Phone") }, modifier = Modifier.fillMaxWidth(), colors = OutlinedTextFieldDefaults.colors(focusedTextColor = BharatTextPrimary, unfocusedTextColor = BharatTextPrimary, focusedLabelColor = BharatPurplePrimary, unfocusedLabelColor = BharatTextSecondary, focusedContainerColor = Color.White, unfocusedContainerColor = Color.White))
+          OutlinedTextField(value = addr, onValueChange = { addr = it }, label = { Text("Address") }, minLines = 2, modifier = Modifier.fillMaxWidth(), colors = OutlinedTextFieldDefaults.colors(focusedTextColor = BharatTextPrimary, unfocusedTextColor = BharatTextPrimary, focusedLabelColor = BharatPurplePrimary, unfocusedLabelColor = BharatTextSecondary, focusedContainerColor = Color.White, unfocusedContainerColor = Color.White))
         }
       },
       confirmButton = {
-        Button(onClick = {
-          onUpdateShop(shop.id, shop.copy(name = name, ownerName = owner, address = addr, phone = phone))
-          showEditShopDialog = false
-        }) { Text("Save") }
+        Button(
+          onClick = {
+            onUpdateShop(shop.id, shop.copy(name = name, ownerName = owner, address = addr, phone = phone))
+            showEditShopDialog = false
+          },
+          colors = ButtonDefaults.buttonColors(containerColor = BharatPurplePrimary)
+        ) { Text("Save", color = Color.White) }
       },
       dismissButton = {
-        TextButton(onClick = { showEditShopDialog = false }) { Text("Cancel") }
+        TextButton(onClick = { showEditShopDialog = false }) { Text("Cancel", color = BharatPurplePrimary) }
       }
     )
   }
@@ -642,6 +569,9 @@ fun VendorDashboardScreen(
     } else {
       AlertDialog(
         onDismissRequest = { editingProductId = null },
+        containerColor = Color.White,
+        titleContentColor = BharatTextPrimary,
+        textContentColor = BharatTextPrimary,
         title = {
           Column {
             Text("Update Product", fontWeight = FontWeight.Bold, color = BharatTextPrimary)
@@ -656,9 +586,14 @@ fun VendorDashboardScreen(
               label = { Text("Selling Price (₹)") },
               singleLine = true,
               modifier = Modifier.fillMaxWidth(),
+              keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number),
               colors = OutlinedTextFieldDefaults.colors(
                 focusedTextColor = BharatTextPrimary,
                 unfocusedTextColor = BharatTextPrimary,
+                focusedLabelColor = BharatPurplePrimary,
+                unfocusedLabelColor = BharatTextSecondary,
+                focusedContainerColor = Color.White,
+                unfocusedContainerColor = Color.White,
                 focusedBorderColor = BharatPurplePrimary
               )
             )
@@ -684,6 +619,10 @@ fun VendorDashboardScreen(
               colors = OutlinedTextFieldDefaults.colors(
                 focusedTextColor = BharatTextPrimary,
                 unfocusedTextColor = BharatTextPrimary,
+                focusedLabelColor = BharatPurplePrimary,
+                unfocusedLabelColor = BharatTextSecondary,
+                focusedContainerColor = Color.White,
+                unfocusedContainerColor = Color.White,
                 focusedBorderColor = BharatPurplePrimary
               )
             )

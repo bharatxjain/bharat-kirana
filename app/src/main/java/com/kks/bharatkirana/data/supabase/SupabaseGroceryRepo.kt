@@ -307,6 +307,7 @@ class SupabaseGroceryRepo(
 
         val payload = JSONObject().apply {
           put("id", product.id)
+          put("shop_id", product.shopId)
           put("name", product.name)
           put("brand", product.brand)
           put("category_id", product.categoryId)
@@ -330,7 +331,8 @@ class SupabaseGroceryRepo(
 
         val response = client.newCall(request).execute()
         if (!response.isSuccessful) {
-          throw Exception("Failed to add product: HTTP ${response.code}")
+          val err = response.body?.string()?.take(200) ?: ""
+          throw Exception("Failed to add product: HTTP ${response.code}${if (err.isNotBlank()) " — $err" else ""}")
         }
       }
     }
@@ -579,9 +581,10 @@ class SupabaseGroceryRepo(
           put("accepting_orders", shop.isOpen)
           put("open_time", shop.openTime)
           put("close_time", shop.closeTime)
-          // DEV: auto-approve every new shop so customer fetchShops() sees it
-          // immediately. Change to 'pending' when admin approval is wired up.
-          put("status", "approved")
+          // New shops start pending. An admin (web panel) flips this to
+          // 'approved' or 'rejected' after reviewing the submitted details.
+          // The vendor sees the Under Review screen until then.
+          put("status", "pending")
           if (!shopImageUrl.isNullOrBlank()) put("image_url", shopImageUrl)
           if (!businessProofUrl.isNullOrBlank()) put("business_proof_url", businessProofUrl)
         }
@@ -894,6 +897,59 @@ class SupabaseGroceryRepo(
           minOrderAmount = obj.optInt("min_order_amount", 0),
           maxDiscountRupees = if (obj.isNull("max_discount_rupees")) null else obj.optInt("max_discount_rupees")
         )
+      }
+    }
+
+  /**
+   * Community catalog search - looks up any product any vendor has already
+   * added, so the next shopkeeper searching for "aashirvaad" can tap a result
+   * instead of retyping the name, image URL, category, etc. DISTINCT-on-name
+   * happens in the app layer because PostgREST doesn't support DISTINCT.
+   */
+  suspend fun searchProductsByName(query: String, accessToken: String? = null): Result<List<Product>> =
+    withContext(Dispatchers.IO) {
+      runCatching {
+        val q = query.trim()
+        if (q.isBlank()) return@runCatching emptyList<Product>()
+        val encoded = java.net.URLEncoder.encode("%$q%", "UTF-8")
+        val url = "${SupabaseConfig.restUrl}/products?name=ilike.$encoded&select=id,name,brand,category_id,unit,description,image_url,image_urls,original_price,barcode&limit=25&order=name.asc"
+        val request = baseRequestBuilder(url, accessToken).get().build()
+        val response = client.newCall(request).execute()
+        val body = response.body?.string() ?: ""
+        if (!response.isSuccessful) throw Exception("Catalog search failed: HTTP ${response.code}")
+
+        val array = JSONArray(body)
+        val seen = HashSet<String>()
+        val out = mutableListOf<Product>()
+        for (i in 0 until array.length()) {
+          val obj = array.getJSONObject(i)
+          val name = obj.optString("name", "")
+          if (name.isBlank()) continue
+          val key = name.lowercase()
+          if (key in seen) continue
+          seen.add(key)
+          val urls = mutableListOf<String>()
+          obj.optJSONArray("image_urls")?.let { arr ->
+            for (k in 0 until arr.length()) urls.add(arr.optString(k))
+          }
+          out.add(
+            Product(
+              id = "",
+              name = name,
+              brand = obj.optString("brand", ""),
+              categoryId = obj.optString("category_id", ""),
+              currentPrice = 0,
+              originalPrice = obj.optInt("original_price", 0),
+              unit = obj.optString("unit", "1 unit"),
+              description = obj.optString("description", ""),
+              imageUrl = urls.firstOrNull() ?: obj.optString("image_url", ""),
+              imageUrls = urls,
+              weightOptions = emptyList(),
+              barcode = obj.optString("barcode", "")
+            )
+          )
+        }
+        out
       }
     }
 

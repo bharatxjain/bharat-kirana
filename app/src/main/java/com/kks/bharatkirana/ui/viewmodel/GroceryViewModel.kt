@@ -281,12 +281,12 @@ class GroceryViewModel(
             }
           } else {
             _scannedProductTemplate.value = null
-            _barcodeStatusMessage.value = "New product — please fill details"
+            _barcodeStatusMessage.value = "Product not found in our database. Please enter the details manually below."
           }
         }
         .onFailure {
           _scannedProductTemplate.value = null
-          _barcodeStatusMessage.value = "Lookup failed. Please fill manually."
+          _barcodeStatusMessage.value = "Couldn't reach the product database. Please enter the details manually below."
         }
       // Return to Add Product screen either way
       navigateBack()
@@ -298,6 +298,51 @@ class GroceryViewModel(
     _scannedBarcode.value = null
     _barcodeStatusMessage.value = null
   }
+
+  // Community catalog search: any product any vendor already added is
+  // searchable so the next shopkeeper doesn't have to retype it. Reuses the
+  // scannedProductTemplate slot so AddProductScreen's existing autofill path
+  // handles the selected result too.
+  private val _catalogSearchResults = MutableStateFlow<List<Product>>(emptyList())
+  val catalogSearchResults: StateFlow<List<Product>> = _catalogSearchResults.asStateFlow()
+
+  private val _catalogSearchLoading = MutableStateFlow(false)
+  val catalogSearchLoading: StateFlow<Boolean> = _catalogSearchLoading.asStateFlow()
+
+  fun searchCatalog(query: String) {
+    val q = query.trim()
+    if (q.length < 2) {
+      _catalogSearchResults.value = emptyList()
+      return
+    }
+    _catalogSearchLoading.value = true
+    viewModelScope.launch {
+      supabaseGroceryRepo.searchProductsByName(q, supabaseAuthService.currentAccessToken)
+        .onSuccess { _catalogSearchResults.value = it }
+        .onFailure { _catalogSearchResults.value = emptyList() }
+      _catalogSearchLoading.value = false
+    }
+  }
+
+  fun applyCatalogChoice(product: Product) {
+    _scannedProductTemplate.value = product
+    _scannedBarcode.value = product.barcode.ifBlank { "" }
+    _barcodeStatusMessage.value = "Selected from catalog: ${product.name}"
+    _catalogSearchResults.value = emptyList()
+  }
+
+  // Success signal for the Add Product flow so AddProductScreen can close and
+  // the dashboard can jump to Inventory once the row is actually saved.
+  private val _productAddedSuccess = MutableStateFlow(false)
+  val productAddedSuccess: StateFlow<Boolean> = _productAddedSuccess.asStateFlow()
+  fun clearProductAddedSuccess() { _productAddedSuccess.value = false }
+
+  // Which tab VendorDashboardScreen should open on. 0=Overview 1=Inventory
+  // 2=Orders 3=Reviews. Set by other flows (e.g. Add Product success) and read
+  // once by the dashboard.
+  private val _vendorInitialTab = MutableStateFlow(0)
+  val vendorInitialTab: StateFlow<Int> = _vendorInitialTab.asStateFlow()
+  fun setVendorInitialTab(tab: Int) { _vendorInitialTab.value = tab }
 
   init {
     loadSavedSession()
@@ -1949,11 +1994,18 @@ class GroceryViewModel(
       }
 
       // 2. Create Product Object
+      // Map the picker's display name ("Dairy, Bread & Eggs") back to the
+      // canonical categories.id ("dairy") so the FK to categories doesn't blow
+      // up. Falls through to the raw string only if the picker showed a
+      // category we don't recognise.
+      val resolvedCategoryId = _categories.value.firstOrNull { it.name == cat }?.id
+        ?: cat.lowercase().replace(Regex("[^a-z0-9]+"), "_").trim('_')
+
       val newProd = Product(
         id = productId,
         name = name,
         brand = "Store Item",
-        categoryId = cat.lowercase().replace(" ", "_"),
+        categoryId = resolvedCategoryId,
         shopId = shopId,
         currentPrice = price,
         originalPrice = if (mrp > 0) mrp else price,
@@ -1973,17 +2025,32 @@ class GroceryViewModel(
 
       // 3. Sync to Supabase & Local
       _products.update { listOf(newProd) + it }
-      supabaseGroceryRepo.addProduct(newProd, supabaseAuthService.currentAccessToken)
+      val insertResult = supabaseGroceryRepo.addProduct(newProd, supabaseAuthService.currentAccessToken)
       _isLoading.value = false
 
       // 4. Surface upload outcome so AddProductScreen can toast the vendor.
       val totalAttempted = imageUris.size
       _productUploadMessage.value = when {
+        insertResult.isFailure -> {
+          val err = insertResult.exceptionOrNull()?.message ?: "unknown error"
+          "Couldn't save the product: $err"
+        }
         totalAttempted == 0 -> "Product added (no images)."
         uploadFailCount == 0 && readFailCount == 0 ->
           "Product added. $uploadSuccessCount of $totalAttempted images uploaded."
         else ->
           "Product added, but ${uploadFailCount + readFailCount} of $totalAttempted images failed. You can edit the product to retry."
+      }
+
+      // 5. Fire the success signal only on a real DB save so the caller can
+      // close the Add Product screen and route to Inventory. On failure, stay
+      // put and let the vendor retry.
+      if (insertResult.isSuccess) {
+        _productAddedSuccess.value = true
+      } else {
+        // Roll back the optimistic local insert so the vendor doesn't see a
+        // phantom product they think was saved.
+        _products.update { list -> list.filterNot { it.id == productId } }
       }
     }
   }

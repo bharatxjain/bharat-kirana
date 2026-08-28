@@ -30,19 +30,19 @@ class GroceryRepository {
     )
   )
 
+  // Categories are the source of truth for the FK in products.category_id.
+  // Names + ids here MUST match the Supabase `categories` table rows exactly,
+  // otherwise INSERTs from AddProductScreen fail with a 409 FK error.
   fun getCategories(): List<Category> = listOf(
     Category("dairy", "Dairy, Bread & Eggs", "egg", 0xFFEFF6FF),
-    Category("drinks", "Cold Drinks & Juices", "local_drink", 0xFFFFF1F2),
-    Category("tea_coffee", "Tea, Coffee & More", "coffee", 0xFFFFFBEB),
-    Category("masala", "Masala, Dry Fruits & More", "grain", 0xFFFEF3C7),
-    Category("munchies", "Munchies", "fastfood", 0xFFECFDF5),
-    Category("sweets", "Sweet Cravings", "icecream", 0xFFFDF2F8),
-    Category("biscuits", "Biscuits", "cookie", 0xFFF5F3FF),
-    Category("meat", "Meat, Fish & Eggs", "restaurant", 0xFFFEF2F2),
-    Category("packaged", "Packaged Food", "inventory_2", 0xFFF0FDF4),
-    Category("breakfast", "Breakfast & Sauces", "breakfast_dining", 0xFFFFF7ED),
-    Category("pan", "Paan Corner", "spa", 0xFFF0FDF4),
-    Category("baby_care", "Health & Baby Care", "medical_services", 0xFFF5F3FF)
+    Category("beverages", "Tea, Coffee & Cold Drinks", "coffee", 0xFFFFFBEB),
+    Category("snacks", "Snacks & Biscuits", "cookie", 0xFFF5F3FF),
+    Category("masala", "Atta, Rice, Dal & Masalas", "grain", 0xFFFEF3C7),
+    Category("spices", "Masalas & Spices", "grain", 0xFFFEF3C7),
+    Category("staples", "Atta, Rice & Dal", "inventory_2", 0xFFF0FDF4),
+    Category("oils", "Oils & Ghee", "local_drink", 0xFFFFF1F2),
+    Category("personal_care", "Personal & Hygiene", "medical_services", 0xFFF5F3FF),
+    Category("cleaning", "Cleaning & Household", "spa", 0xFFF0FDF4)
   )
 
   fun getProducts(): List<Product> = listOf(

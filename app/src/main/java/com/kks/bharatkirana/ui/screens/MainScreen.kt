@@ -463,18 +463,23 @@ fun MainScreen(
       }
 
       is AppScreen.VendorDashboard -> {
-        // shops is empty until loadSupabaseData() returns, and a vendor whose shop
-        // row was deleted never matches. first() threw NoSuchElementException in
-        // both cases.
-        val vendorShop = shops.find { it.id == userProfile.shopId } ?: shops.firstOrNull()
-        if (vendorShop == null) {
-          // Auto-forward to registration \u2014 a "vendor" with no shop is really a
-          // vendor-to-be, and showing an intermediate "No shop found" prompt is
-          // just an extra tap. LaunchedEffect ensures the navigation happens
-          // exactly once, off the composition path.
+        // Only forward to registration when the vendor genuinely has no shop
+        // yet. If they have a shopId but the shops list is still loading (right
+        // after app reopen), sit on a spinner - previously we would wrongly
+        // dump them onto Partner-With-Us because shops was momentarily empty.
+        val hasShopId = userProfile.shopId != null
+        val vendorShop = shops.find { it.id == userProfile.shopId }
+        if (vendorShop == null && !hasShopId) {
           LaunchedEffect(Unit) {
             viewModel.navigateTo(AppScreen.VendorRegistration)
           }
+          Box(
+            modifier = Modifier.fillMaxSize().background(Color.White),
+            contentAlignment = Alignment.Center
+          ) {
+            CircularProgressIndicator(color = BharatPurplePrimary, strokeWidth = 3.dp)
+          }
+        } else if (vendorShop == null) {
           Box(
             modifier = Modifier.fillMaxSize().background(Color.White),
             contentAlignment = Alignment.Center
@@ -485,6 +490,7 @@ fun MainScreen(
         val vendorSub by viewModel.vendorSubscription.collectAsState()
         val tiers by viewModel.subscriptionTiers.collectAsState()
         val currentTier = tiers.firstOrNull { it.id == vendorSub?.tierId }
+        val initialTab by viewModel.vendorInitialTab.collectAsState()
         VendorDashboardScreen(
           shop = vendorShop,
           orders = orders.filter { it.shopId == vendorShop.id },
@@ -495,10 +501,10 @@ fun MainScreen(
           onManageProducts = { 
             viewModel.navigateTo(AppScreen.AddProduct)
           },
-          onBackClick = { 
-            viewModel.selectShop(null)
-            viewModel.navigateTo(AppScreen.Main) 
-          },
+          // Vendors do not switch to the customer app. The back button here is
+          // a no-op — the VendorDashboard is their root screen. Log out is the
+          // only way off it (top-right icon on the dashboard header).
+          onBackClick = { },
           onUpdateShop = { id, shop -> viewModel.updateShopDetails(id, shop) },
           onUpdateOrderStatus = { orderId, newStatus -> viewModel.updateOrderStatus(orderId, newStatus) },
           onCancelOrder = { orderId -> viewModel.cancelOrder(orderId) },
@@ -507,8 +513,37 @@ fun MainScreen(
           onUpdateProductQty = { prodId, qty -> viewModel.updateProductQty(prodId, qty) },
           onSupportClick = { viewModel.openSupportWhatsApp() },
           onRefreshStatus = { viewModel.loadSupabaseData() },
-          onManagePlan = { viewModel.navigateTo(AppScreen.Subscription) }
+          onManagePlan = { viewModel.navigateTo(AppScreen.Subscription) },
+          onOpenProfile = { viewModel.navigateTo(AppScreen.VendorProfile) },
+          initialTab = initialTab,
+          onInitialTabConsumed = { viewModel.setVendorInitialTab(0) }
         )
+        }
+      }
+
+      is AppScreen.VendorProfile -> {
+        val vendorShop = shops.find { it.id == userProfile.shopId } ?: shops.firstOrNull()
+        if (vendorShop == null) {
+          LaunchedEffect(Unit) {
+            viewModel.navigateTo(AppScreen.VendorRegistration)
+          }
+        } else {
+          val vendorSub by viewModel.vendorSubscription.collectAsState()
+          val tiers by viewModel.subscriptionTiers.collectAsState()
+          val currentTier = tiers.firstOrNull { it.id == vendorSub?.tierId }
+          VendorProfileScreen(
+            userProfile = userProfile,
+            shop = vendorShop,
+            currentTierName = currentTier?.displayName,
+            onBackClick = { viewModel.navigateBack() },
+            onSavePersonalInfo = { name, email, mobile, address ->
+              viewModel.updateProfile(name, email, mobile, address)
+            },
+            onUpdateShop = { id, shop -> viewModel.updateShopDetails(id, shop) },
+            onManagePlan = { viewModel.navigateTo(AppScreen.Subscription) },
+            onSupportClick = { viewModel.openSupportWhatsApp() },
+            onLogout = { viewModel.logout() }
+          )
         }
       }
 
@@ -546,13 +581,30 @@ fun MainScreen(
         val barcodeStatus by viewModel.barcodeStatusMessage.collectAsState()
         val addProductUploading by viewModel.isLoading.collectAsState()
         val addProductResult by viewModel.productUploadMessage.collectAsState()
+        val catalogResults by viewModel.catalogSearchResults.collectAsState()
+        val catalogLoading by viewModel.catalogSearchLoading.collectAsState()
+        val productAddedSuccess by viewModel.productAddedSuccess.collectAsState()
+
+        // Auto-close AddProduct + jump to Inventory tab on the dashboard once
+        // the row actually saved to Supabase. Waiting for the real success
+        // signal (not just "the button was tapped") avoids landing on Inventory
+        // with a phantom row that then disappears.
+        LaunchedEffect(productAddedSuccess) {
+          if (productAddedSuccess) {
+            viewModel.setVendorInitialTab(1)
+            viewModel.clearScannedTemplate()
+            viewModel.clearProductAddedSuccess()
+            viewModel.navigateBack()
+          }
+        }
 
         AddProductScreen(
           onBackClick = { viewModel.navigateBack() },
           onListProduct = { name, cat, unit, price, mrp, desc, stock, stockQty, imageUris, barcode, scannedImage ->
              viewModel.addNewProduct(name, cat, unit, price, mrp, desc, stock, stockQty, imageUris, barcode, scannedImage)
-             // Round 7: stay on the screen so the vendor sees the upload result
-             // banner; the dismiss button in the banner + back nav go home when ready.
+             // Screen stays put; the LaunchedEffect above closes it when the
+             // Supabase insert actually succeeds. On failure, the vendor sees
+             // the amber banner and can retry.
           },
           onScanBarcode = { viewModel.navigateTo(AppScreen.BarcodeScanner) },
           scannedTemplate = scannedTemplate,
@@ -564,7 +616,12 @@ fun MainScreen(
           onUploadResultConsumed = {
             viewModel.clearProductUploadMessage()
             viewModel.navigateBack()
-          }
+          },
+          catalogSearchResults = catalogResults,
+          catalogSearchLoading = catalogLoading,
+          onSearchCatalog = { viewModel.searchCatalog(it) },
+          onSelectCatalogProduct = { viewModel.applyCatalogChoice(it) },
+          categories = categories
         )
       }
 
@@ -637,28 +694,23 @@ fun MainScreen(
       }
 
       is AppScreen.Main -> {
+        // Strict role separation: a vendor account must never see the customer
+        // Main screen. If routing ever lands them here, forward to their dashboard.
+        if (userProfile.isVendor) {
+          LaunchedEffect(Unit) {
+            viewModel.navigateTo(AppScreen.VendorDashboard)
+          }
+          Box(modifier = Modifier.fillMaxSize().background(Color.White)) {
+            CircularProgressIndicator(
+              color = BharatPurplePrimary,
+              modifier = Modifier.align(Alignment.Center)
+            )
+          }
+        } else {
         Scaffold(
           bottomBar = {
-            // Show Dashboard switch for professional users in Marketplace
             if (activeShopId != null || currentTab == MainTab.PROFILE || currentTab == MainTab.ORDERS) {
               Column {
-                // Dashboard Switcher for Vendors/Admins
-                if (currentTab == MainTab.PROFILE && (userProfile.isVendor || userProfile.isAdmin)) {
-                  Button(
-                    onClick = {
-                      if (userProfile.isSuperAdmin) viewModel.navigateTo(AppScreen.AdminDashboard)
-                      else if (userProfile.isVendor) viewModel.navigateTo(AppScreen.VendorDashboard)
-                    },
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = BharatPurplePrimary),
-                    shape = RoundedCornerShape(12.dp)
-                  ) {
-                    Icon(Icons.Default.Dashboard, contentDescription = null)
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text("Go to Management Hub", fontWeight = FontWeight.Bold)
-                  }
-                }
-
                 BharatBottomNavigationBar(
                   currentTab = currentTab,
                   onTabSelected = { tab -> viewModel.setTab(tab) },
@@ -897,6 +949,7 @@ fun MainScreen(
               }
             }
           }
+        }
         }
       }
     }

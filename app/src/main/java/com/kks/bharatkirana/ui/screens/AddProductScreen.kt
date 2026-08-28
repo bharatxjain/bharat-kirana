@@ -30,6 +30,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
+import com.kks.bharatkirana.data.model.Category
 import com.kks.bharatkirana.data.model.Product
 import com.kks.bharatkirana.ui.theme.*
 
@@ -46,12 +47,25 @@ fun AddProductScreen(
   isUploading: Boolean = false,
   uploadResultMessage: String? = null,
   onUploadResultConsumed: () -> Unit = {},
+  catalogSearchResults: List<Product> = emptyList(),
+  catalogSearchLoading: Boolean = false,
+  onSearchCatalog: (String) -> Unit = {},
+  onSelectCatalogProduct: (Product) -> Unit = {},
+  categories: List<Category> = emptyList(),
   modifier: Modifier = Modifier
 ) {
+  // Category names come from the ViewModel (which mirrors the Supabase
+  // `categories` table). Unit list stays hardcoded — grocery weight units
+  // don't change per user or per shop.
+  val categoryOptions = categories.map { it.name }
+  val unitOptions = listOf("kg", "g", "L", "ml", "pcs", "dozen", "pack")
+
   var productName by remember { mutableStateOf("") }
   var category by remember { mutableStateOf("Select Category") }
+  var categoryMenuOpen by remember { mutableStateOf(false) }
   var weightValue by remember { mutableStateOf("") }
   var weightUnit by remember { mutableStateOf("kg") }
+  var unitMenuOpen by remember { mutableStateOf(false) }
   var sellingPrice by remember { mutableStateOf("") }
   var mrp by remember { mutableStateOf("") }
   var description by remember { mutableStateOf("") }
@@ -62,6 +76,9 @@ fun AddProductScreen(
   // OpenFoodFacts hands back a remote image URL, not a gallery Uri, so it can't
   // live in selectedImageUris. Kept separately and passed through on save.
   var scannedImageUrl by remember { mutableStateOf("") }
+  // Community catalog search UI state.
+  var showSearchDialog by remember { mutableStateOf(false) }
+  var searchQuery by remember { mutableStateOf("") }
 
   // Pre-fill fields from a scanned catalog match; keep localBarcode set even after the
   // ViewModel state is cleared so it survives on Save.
@@ -121,7 +138,87 @@ fun AddProductScreen(
         colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.White)
       )
     },
-    modifier = modifier.fillMaxSize()
+    bottomBar = {
+      // Sticky List Product button. Vendors were losing the button below the
+      // fold and thinking the form was broken; pinning it here removes the
+      // "where is Save?" moment.
+      val missingFields = buildList {
+        if (productName.isBlank()) add("product name")
+        if (category == "Select Category") add("category")
+        if (weightValue.isBlank()) add("weight/quantity")
+        if (sellingPrice.isBlank()) add("selling price")
+      }
+      Surface(
+        color = Color.White,
+        shadowElevation = 8.dp,
+        modifier = Modifier.fillMaxWidth()
+      ) {
+        Column(
+          modifier = Modifier
+            .navigationBarsPadding()
+            .padding(horizontal = 20.dp, vertical = 12.dp)
+        ) {
+          if (missingFields.isNotEmpty() && !isUploading) {
+            Text(
+              text = "Fill required: ${missingFields.joinToString(", ")}",
+              fontSize = 12.sp,
+              color = BharatTextSecondary,
+              modifier = Modifier.padding(bottom = 8.dp)
+            )
+          }
+          Button(
+            onClick = {
+              onListProduct(
+                productName,
+                category,
+                weightValue + weightUnit,
+                sellingPrice.toIntOrNull() ?: 0,
+                mrp.toIntOrNull() ?: 0,
+                description,
+                inStock,
+                stockQty.toIntOrNull(),
+                selectedImageUris,
+                localBarcode ?: "",
+                scannedImageUrl
+              )
+            },
+            enabled = !isUploading &&
+              productName.isNotBlank() &&
+              category != "Select Category" &&
+              weightValue.isNotBlank() &&
+              sellingPrice.isNotBlank(),
+            modifier = Modifier
+              .fillMaxWidth()
+              .height(56.dp),
+            // Explicit disabled colors — Material3's default disabledContainerColor
+            // is a near-transparent grey that renders invisible against the white
+            // sticky bar. Muted purple + white text keeps the button legible.
+            colors = ButtonDefaults.buttonColors(
+              containerColor = BharatPurplePrimary,
+              contentColor = Color.White,
+              disabledContainerColor = BharatPurplePrimary.copy(alpha = 0.35f),
+              disabledContentColor = Color.White.copy(alpha = 0.7f)
+            ),
+            shape = RoundedCornerShape(12.dp)
+          ) {
+            if (isUploading) {
+              CircularProgressIndicator(
+                modifier = Modifier.size(20.dp),
+                color = Color.White,
+                strokeWidth = 2.dp
+              )
+              Spacer(modifier = Modifier.width(12.dp))
+              Text(text = "Uploading…", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+            } else {
+              Icon(Icons.Default.CheckCircle, contentDescription = null)
+              Spacer(modifier = Modifier.width(10.dp))
+              Text(text = "List Product", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+            }
+          }
+        }
+      }
+    },
+    modifier = modifier.fillMaxSize().imePadding()
   ) { paddingValues ->
     Column(
       modifier = Modifier
@@ -132,29 +229,40 @@ fun AddProductScreen(
         .padding(20.dp),
       verticalArrangement = Arrangement.spacedBy(20.dp)
     ) {
-      // Scan Barcode entry point (Round 4)
-      OutlinedCard(
-        onClick = onScanBarcode,
-        shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.outlinedCardColors(containerColor = Color(0xFFF5F3FF)),
-        border = BorderStroke(1.dp, BharatPurplePrimary),
-        modifier = Modifier.fillMaxWidth()
+      // Three-option starting point. Vendors overwhelmingly want to
+      // fast-path via barcode or catalog search; keeping "Fill Manually" as a
+      // visible option makes it clear those are shortcuts, not requirements.
+      Text(
+        text = "How would you like to add this product?",
+        fontSize = 13.sp,
+        color = BharatTextSecondary,
+        fontWeight = FontWeight.Medium
+      )
+      Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(10.dp)
       ) {
-        Row(
-          modifier = Modifier.padding(14.dp),
-          verticalAlignment = Alignment.CenterVertically,
-          horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-          Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Default.QrCodeScanner, contentDescription = null, tint = BharatPurplePrimary, modifier = Modifier.size(22.dp))
-            Spacer(modifier = Modifier.width(10.dp))
-            Column {
-              Text("Scan Barcode", fontWeight = FontWeight.Bold, color = BharatTextPrimary, fontSize = 14.sp)
-              Text("Auto-fill from existing catalog", fontSize = 11.sp, color = BharatTextSecondary)
-            }
-          }
-          Icon(Icons.Default.ChevronRight, contentDescription = null, tint = BharatPurplePrimary)
-        }
+        AddModeOption(
+          icon = Icons.Default.QrCodeScanner,
+          title = "Scan\nBarcode",
+          subtitle = "Auto-fill",
+          modifier = Modifier.weight(1f),
+          onClick = onScanBarcode
+        )
+        AddModeOption(
+          icon = Icons.Default.Search,
+          title = "Search\nCatalog",
+          subtitle = "From vendors",
+          modifier = Modifier.weight(1f),
+          onClick = { showSearchDialog = true; searchQuery = "" }
+        )
+        AddModeOption(
+          icon = Icons.Default.Edit,
+          title = "Fill\nManually",
+          subtitle = "Type it in",
+          modifier = Modifier.weight(1f),
+          onClick = { /* form is already visible below */ }
+        )
       }
 
       localBarcode?.let { code ->
@@ -179,11 +287,43 @@ fun AddProductScreen(
       }
 
       barcodeStatusMessage?.takeIf { it.isNotBlank() }?.let { msg ->
-        Text(
-          text = msg,
-          fontSize = 12.sp,
-          color = if (msg.startsWith("Found")) BharatGreen else BharatTextSecondary
-        )
+        val isPositive = msg.startsWith("Found", ignoreCase = true)
+        val isLoading = msg.endsWith("\u2026") || msg.contains("Looking up", ignoreCase = true)
+        val bg = when {
+          isPositive -> Color(0xFFECFDF5)   // green tint
+          isLoading  -> Color(0xFFF5F3FF)   // purple tint
+          else       -> Color(0xFFFFF7ED)   // amber tint - "not found"
+        }
+        val fg = when {
+          isPositive -> BharatGreen
+          isLoading  -> BharatPurplePrimary
+          else       -> Color(0xFF9A3412)
+        }
+        Row(
+          modifier = Modifier
+            .fillMaxWidth()
+            .background(color = bg, shape = RoundedCornerShape(10.dp))
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+          verticalAlignment = Alignment.CenterVertically
+        ) {
+          Icon(
+            imageVector = when {
+              isPositive -> Icons.Default.CheckCircle
+              isLoading  -> Icons.Default.Search
+              else       -> Icons.Default.Info
+            },
+            contentDescription = null,
+            tint = fg,
+            modifier = Modifier.size(16.dp)
+          )
+          Spacer(modifier = Modifier.width(8.dp))
+          Text(
+            text = msg,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Medium,
+            color = fg
+          )
+        }
       }
 
       // Product Images Upload
@@ -312,7 +452,7 @@ fun AddProductScreen(
       Column {
         Text(text = "Category *", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = BharatTextPrimary, modifier = Modifier.padding(bottom = 6.dp))
         OutlinedCard(
-          onClick = { /* Open category picker */ },
+          onClick = { categoryMenuOpen = true },
           shape = RoundedCornerShape(12.dp),
           colors = CardDefaults.outlinedCardColors(containerColor = Color.White),
           border = BorderStroke(1.dp, Color(0xFFD1D5DB)),
@@ -333,14 +473,15 @@ fun AddProductScreen(
         Box(modifier = Modifier.weight(1f)) {
           AuthTextFieldSimple(
             value = weightValue,
-            onValueChange = { weightValue = it },
+            onValueChange = { input -> weightValue = input.filter { it.isDigit() || it == '.' }.take(7) },
             label = "Weight / Quantity *",
-            placeholder = "e.g., 5"
+            placeholder = "e.g., 5",
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal)
           )
         }
         Box(modifier = Modifier.weight(0.4f).padding(top = 22.dp)) {
-           OutlinedCard(
-            onClick = { /* Open unit picker */ },
+          OutlinedCard(
+            onClick = { unitMenuOpen = true },
             shape = RoundedCornerShape(12.dp),
             colors = CardDefaults.outlinedCardColors(containerColor = Color.White),
             border = BorderStroke(1.dp, Color(0xFFD1D5DB)),
@@ -371,17 +512,19 @@ fun AddProductScreen(
             Box(modifier = Modifier.weight(1f)) {
               AuthTextFieldSimple(
                 value = sellingPrice,
-                onValueChange = { sellingPrice = it },
+                onValueChange = { input -> sellingPrice = input.filter { it.isDigit() }.take(6) },
                 label = "Selling Price (₹) *",
-                placeholder = "₹ 0.00"
+                placeholder = "₹ 0.00",
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
               )
             }
             Box(modifier = Modifier.weight(1f)) {
               AuthTextFieldSimple(
                 value = mrp,
-                onValueChange = { mrp = it },
+                onValueChange = { input -> mrp = input.filter { it.isDigit() }.take(6) },
                 label = "MRP (₹) (Optional)",
-                placeholder = "₹ 0.00"
+                placeholder = "₹ 0.00",
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
               )
             }
           }
@@ -455,44 +598,6 @@ fun AddProductScreen(
 
       Spacer(modifier = Modifier.height(24.dp))
 
-      Button(
-        onClick = { 
-          onListProduct(
-            productName,
-            category,
-            weightValue + weightUnit,
-            sellingPrice.toIntOrNull() ?: 0,
-            mrp.toIntOrNull() ?: 0,
-            description,
-            inStock,
-            stockQty.toIntOrNull(),
-            selectedImageUris,
-            localBarcode ?: "",
-            scannedImageUrl
-          )
-        },
-        enabled = !isUploading && productName.isNotBlank() && sellingPrice.isNotBlank(),
-        modifier = Modifier
-          .fillMaxWidth()
-          .height(56.dp),
-        colors = ButtonDefaults.buttonColors(containerColor = BharatPurplePrimary),
-        shape = RoundedCornerShape(12.dp)
-      ) {
-        if (isUploading) {
-          CircularProgressIndicator(
-            modifier = Modifier.size(20.dp),
-            color = Color.White,
-            strokeWidth = 2.dp
-          )
-          Spacer(modifier = Modifier.width(12.dp))
-          Text(text = "Uploading…", fontWeight = FontWeight.Bold, fontSize = 16.sp)
-        } else {
-          Icon(Icons.Default.CheckCircle, contentDescription = null)
-          Spacer(modifier = Modifier.width(10.dp))
-          Text(text = "List Product", fontWeight = FontWeight.Bold, fontSize = 16.sp)
-        }
-      }
-
       // Round 7: surfaces per-image upload result from the ViewModel.
       if (!uploadResultMessage.isNullOrBlank()) {
         Spacer(modifier = Modifier.height(12.dp))
@@ -525,9 +630,404 @@ fun AddProductScreen(
           }
         }
       }
-      
-      Spacer(modifier = Modifier.height(40.dp))
+
+      Spacer(modifier = Modifier.height(16.dp))
     }
+  }
+
+  // Category picker sheet - replaces the dark Material dropdown that vendors
+  // said was "a black rectangle with white rows". A grid of tiles is way
+  // easier to eyeball on a small screen.
+  if (categoryMenuOpen) {
+    ModalBottomSheet(
+      onDismissRequest = { categoryMenuOpen = false },
+      containerColor = Color.White,
+      dragHandle = { BottomSheetDefaults.DragHandle(color = Color(0xFFD1D5DB)) }
+    ) {
+      Column(modifier = Modifier.padding(horizontal = 20.dp).padding(bottom = 20.dp)) {
+        Text(
+          text = "Choose a category",
+          fontSize = 16.sp,
+          fontWeight = FontWeight.Bold,
+          color = BharatTextPrimary,
+          modifier = Modifier.padding(bottom = 14.dp)
+        )
+        val rows = categoryOptions.chunked(2)
+        rows.forEach { pair ->
+          Row(
+            modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+          ) {
+            pair.forEach { option ->
+              val selected = option == category
+              val tint = categoryColorFor(option)
+              OutlinedCard(
+                onClick = { category = option; categoryMenuOpen = false },
+                shape = RoundedCornerShape(12.dp),
+                colors = CardDefaults.outlinedCardColors(
+                  containerColor = if (selected) Color(0xFFF5F3FF) else Color.White
+                ),
+                border = BorderStroke(
+                  width = if (selected) 2.dp else 1.dp,
+                  color = if (selected) BharatPurplePrimary else Color(0xFFE5E7EB)
+                ),
+                modifier = Modifier.weight(1f)
+              ) {
+                Row(
+                  modifier = Modifier.padding(12.dp).heightIn(min = 48.dp),
+                  verticalAlignment = Alignment.CenterVertically
+                ) {
+                  Box(
+                    modifier = Modifier
+                      .size(32.dp)
+                      .clip(CircleShape)
+                      .background(tint.copy(alpha = 0.15f)),
+                    contentAlignment = Alignment.Center
+                  ) {
+                    Icon(
+                      imageVector = categoryIconFor(option),
+                      contentDescription = null,
+                      tint = tint,
+                      modifier = Modifier.size(18.dp)
+                    )
+                  }
+                  Spacer(modifier = Modifier.width(10.dp))
+                  Text(
+                    text = option,
+                    fontSize = 12.sp,
+                    fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                    color = if (selected) BharatPurplePrimary else BharatTextPrimary
+                  )
+                }
+              }
+            }
+            if (pair.size == 1) Spacer(modifier = Modifier.weight(1f))
+          }
+        }
+      }
+    }
+  }
+
+  // Unit picker sheet - same visual language as the category picker so the
+  // form doesn't jump from friendly tiles to a dark Material dropdown.
+  if (unitMenuOpen) {
+    ModalBottomSheet(
+      onDismissRequest = { unitMenuOpen = false },
+      containerColor = Color.White,
+      dragHandle = { BottomSheetDefaults.DragHandle(color = Color(0xFFD1D5DB)) }
+    ) {
+      Column(modifier = Modifier.padding(horizontal = 20.dp).padding(bottom = 20.dp)) {
+        Text(
+          text = "Choose a unit",
+          fontSize = 16.sp,
+          fontWeight = FontWeight.Bold,
+          color = BharatTextPrimary,
+          modifier = Modifier.padding(bottom = 14.dp)
+        )
+        val rows = unitOptions.chunked(3)
+        rows.forEach { triple ->
+          Row(
+            modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+          ) {
+            triple.forEach { option ->
+              val selected = option == weightUnit
+              val tint = unitColorFor(option)
+              OutlinedCard(
+                onClick = { weightUnit = option; unitMenuOpen = false },
+                shape = RoundedCornerShape(12.dp),
+                colors = CardDefaults.outlinedCardColors(
+                  containerColor = if (selected) Color(0xFFF5F3FF) else Color.White
+                ),
+                border = BorderStroke(
+                  width = if (selected) 2.dp else 1.dp,
+                  color = if (selected) BharatPurplePrimary else Color(0xFFE5E7EB)
+                ),
+                modifier = Modifier.weight(1f)
+              ) {
+                Column(
+                  modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 14.dp),
+                  horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                  Box(
+                    modifier = Modifier
+                      .size(36.dp)
+                      .clip(CircleShape)
+                      .background(tint.copy(alpha = 0.15f)),
+                    contentAlignment = Alignment.Center
+                  ) {
+                    Icon(
+                      imageVector = unitIconFor(option),
+                      contentDescription = null,
+                      tint = tint,
+                      modifier = Modifier.size(20.dp)
+                    )
+                  }
+                  Spacer(modifier = Modifier.height(6.dp))
+                  Text(
+                    text = option,
+                    fontSize = 13.sp,
+                    fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                    color = if (selected) BharatPurplePrimary else BharatTextPrimary
+                  )
+                }
+              }
+            }
+            repeat(3 - triple.size) { Spacer(modifier = Modifier.weight(1f)) }
+          }
+        }
+      }
+    }
+  }
+
+  // Community catalog search dialog. Query hits Supabase; user taps a result
+  // to autofill the form (reuses the same scannedProductTemplate slot).
+  if (showSearchDialog) {
+    AlertDialog(
+      onDismissRequest = { showSearchDialog = false },
+      containerColor = Color.White,
+      shape = RoundedCornerShape(16.dp),
+      title = {
+        Text("Search Catalog", fontWeight = FontWeight.Bold, color = BharatTextPrimary)
+      },
+      text = {
+        Column {
+          Text(
+            "Find products other vendors already added. Tap a result to prefill the form.",
+            fontSize = 12.sp,
+            color = BharatTextSecondary,
+            modifier = Modifier.padding(bottom = 10.dp)
+          )
+          OutlinedTextField(
+            value = searchQuery,
+            onValueChange = {
+              searchQuery = it
+              onSearchCatalog(it)
+            },
+            placeholder = { Text("e.g. Aashirvaad, Maggi, Amul", color = BharatTextMuted) },
+            singleLine = true,
+            leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = BharatTextSecondary) },
+            trailingIcon = {
+              if (catalogSearchLoading) {
+                CircularProgressIndicator(modifier = Modifier.size(18.dp), color = BharatPurplePrimary, strokeWidth = 2.dp)
+              }
+            },
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(12.dp),
+            colors = OutlinedTextFieldDefaults.colors(
+              focusedTextColor = BharatTextPrimary,
+              unfocusedTextColor = BharatTextPrimary,
+              focusedBorderColor = BharatPurplePrimary
+            )
+          )
+          Spacer(modifier = Modifier.height(12.dp))
+          when {
+            searchQuery.length < 2 -> {
+              Text("Type at least 2 characters to search…", fontSize = 12.sp, color = BharatTextMuted)
+            }
+            catalogSearchResults.isEmpty() && !catalogSearchLoading -> {
+              Text("No matches yet. Try a shorter name or add manually.", fontSize = 12.sp, color = BharatTextMuted)
+            }
+            else -> {
+              Column(
+                modifier = Modifier
+                  .fillMaxWidth()
+                  .heightIn(max = 320.dp)
+                  .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+              ) {
+                catalogSearchResults.forEach { p ->
+                  OutlinedCard(
+                    onClick = {
+                      onSelectCatalogProduct(p)
+                      showSearchDialog = false
+                    },
+                    shape = RoundedCornerShape(12.dp),
+                    colors = CardDefaults.outlinedCardColors(containerColor = Color.White),
+                    border = BorderStroke(1.dp, Color(0xFFE5E7EB)),
+                    modifier = Modifier.fillMaxWidth()
+                  ) {
+                    Row(
+                      modifier = Modifier.padding(10.dp),
+                      verticalAlignment = Alignment.CenterVertically
+                    ) {
+                      if (p.imageUrl.isNotBlank()) {
+                        AsyncImage(
+                          model = p.imageUrl,
+                          contentDescription = null,
+                          modifier = Modifier
+                            .size(44.dp)
+                            .clip(RoundedCornerShape(8.dp)),
+                          contentScale = ContentScale.Crop
+                        )
+                      } else {
+                        Box(
+                          modifier = Modifier
+                            .size(44.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(Color(0xFFF3F4F6)),
+                          contentAlignment = Alignment.Center
+                        ) {
+                          Icon(Icons.Default.Inventory2, contentDescription = null, tint = BharatTextMuted, modifier = Modifier.size(20.dp))
+                        }
+                      }
+                      Spacer(modifier = Modifier.width(10.dp))
+                      Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                          text = p.name,
+                          fontSize = 13.sp,
+                          fontWeight = FontWeight.Bold,
+                          color = BharatTextPrimary,
+                          maxLines = 1
+                        )
+                        val meta = listOfNotNull(
+                          p.brand.takeIf { it.isNotBlank() },
+                          p.unit.takeIf { it.isNotBlank() }
+                        ).joinToString(" · ")
+                        if (meta.isNotBlank()) {
+                          Text(meta, fontSize = 11.sp, color = BharatTextSecondary, maxLines = 1)
+                        }
+                      }
+                      Icon(Icons.Default.ChevronRight, contentDescription = null, tint = BharatTextMuted)
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      confirmButton = {
+        TextButton(onClick = { showSearchDialog = false }) {
+          Text("Close", color = BharatPurplePrimary, fontWeight = FontWeight.Bold)
+        }
+      }
+    )
+  }
+}
+
+// Big top-of-screen mode cards. Kept as a private helper so the Row above
+// stays a one-line-per-option summary.
+@Composable
+private fun AddModeOption(
+  icon: androidx.compose.ui.graphics.vector.ImageVector,
+  title: String,
+  subtitle: String,
+  onClick: () -> Unit,
+  modifier: Modifier = Modifier
+) {
+  OutlinedCard(
+    onClick = onClick,
+    shape = RoundedCornerShape(14.dp),
+    colors = CardDefaults.outlinedCardColors(containerColor = Color(0xFFF5F3FF)),
+    border = BorderStroke(1.dp, BharatPurplePrimary),
+    modifier = modifier
+  ) {
+    Column(
+      modifier = Modifier
+        .fillMaxWidth()
+        .padding(vertical = 14.dp, horizontal = 8.dp),
+      horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+      Icon(
+        imageVector = icon,
+        contentDescription = null,
+        tint = BharatPurplePrimary,
+        modifier = Modifier.size(28.dp)
+      )
+      Spacer(modifier = Modifier.height(8.dp))
+      Text(
+        text = title,
+        fontSize = 12.sp,
+        fontWeight = FontWeight.Bold,
+        color = BharatTextPrimary,
+        textAlign = TextAlign.Center,
+        lineHeight = 14.sp
+      )
+      Spacer(modifier = Modifier.height(4.dp))
+      Text(
+        text = subtitle,
+        fontSize = 10.sp,
+        color = BharatTextSecondary,
+        textAlign = TextAlign.Center
+      )
+    }
+  }
+}
+
+// Icon per category - keeps the picker readable at a glance. Using generic
+// Material icons instead of pixel-perfect art so we don't need to ship assets.
+private fun categoryIconFor(name: String): androidx.compose.ui.graphics.vector.ImageVector {
+  val n = name.lowercase()
+  return when {
+    "dairy" in n || "bread" in n || "egg" in n -> Icons.Default.BreakfastDining
+    "cold" in n || "juice" in n || "tea" in n || "coffee" in n || "beverage" in n -> Icons.Default.EmojiFoodBeverage
+    "snack" in n || "biscuit" in n || "munch" in n -> Icons.Default.Cookie
+    "atta" in n || "rice" in n || "dal" in n || "masala" in n -> Icons.Default.Grain
+    "spice" in n -> Icons.Default.Grass
+    "staple" in n -> Icons.Default.Inventory2
+    "oil" in n || "ghee" in n -> Icons.Default.LocalDrink
+    "personal" in n || "hygiene" in n || "baby" in n || "health" in n -> Icons.Default.HealthAndSafety
+    "clean" in n || "household" in n -> Icons.Default.CleaningServices
+    "sweet" in n -> Icons.Default.Cake
+    "meat" in n || "fish" in n -> Icons.Default.SetMeal
+    "packaged" in n -> Icons.Default.Inventory2
+    "breakfast" in n || "sauce" in n -> Icons.Default.RestaurantMenu
+    "paan" in n -> Icons.Default.LocalFlorist
+    else -> Icons.Default.Category
+  }
+}
+
+// Distinct accent color per category so the picker doesn't read as a wall of
+// black-and-white icons. Colors are muted enough not to fight the purple brand.
+private fun categoryColorFor(name: String): Color {
+  val n = name.lowercase()
+  return when {
+    "dairy" in n || "bread" in n || "egg" in n -> Color(0xFFF59E0B) // amber
+    "cold" in n || "juice" in n || "tea" in n || "coffee" in n || "beverage" in n -> Color(0xFF3B82F6) // blue
+    "snack" in n || "biscuit" in n || "munch" in n -> Color(0xFFB45309) // tan
+    "atta" in n || "rice" in n || "dal" in n || "masala" in n -> Color(0xFFEA580C) // burnt orange
+    "spice" in n -> Color(0xFFDC2626) // red
+    "staple" in n -> Color(0xFF16A34A) // green
+    "oil" in n || "ghee" in n -> Color(0xFFD97706) // dark amber
+    "personal" in n || "hygiene" in n || "baby" in n || "health" in n -> Color(0xFF0891B2) // cyan
+    "clean" in n || "household" in n -> Color(0xFF0D9488) // teal
+    "sweet" in n -> Color(0xFFEC4899) // pink
+    "meat" in n || "fish" in n -> Color(0xFFBE123C) // crimson
+    "packaged" in n -> Color(0xFF0D9488) // teal
+    "breakfast" in n || "sauce" in n -> Color(0xFF16A34A) // green
+    "paan" in n -> Color(0xFF9333EA) // magenta-purple
+    else -> BharatPurplePrimary
+  }
+}
+
+// Icon per unit for the unit picker sheet - mirrors the visual treatment of
+// categories so the whole form feels consistent.
+private fun unitIconFor(unit: String): androidx.compose.ui.graphics.vector.ImageVector {
+  return when (unit.lowercase()) {
+    "kg" -> Icons.Default.Scale
+    "g" -> Icons.Default.Balance
+    "l" -> Icons.Default.WaterDrop
+    "ml" -> Icons.Default.Opacity
+    "pcs" -> Icons.Default.Numbers
+    "dozen" -> Icons.Default.Egg
+    "pack" -> Icons.Default.Inventory2
+    else -> Icons.Default.Straighten
+  }
+}
+
+private fun unitColorFor(unit: String): Color {
+  return when (unit.lowercase()) {
+    "kg" -> Color(0xFFEA580C)
+    "g" -> Color(0xFFF59E0B)
+    "l" -> Color(0xFF3B82F6)
+    "ml" -> Color(0xFF0891B2)
+    "pcs" -> Color(0xFF9333EA)
+    "dozen" -> Color(0xFFDC2626)
+    "pack" -> Color(0xFF0D9488)
+    else -> BharatPurplePrimary
   }
 }
 
@@ -536,7 +1036,8 @@ fun AuthTextFieldSimple(
   value: String,
   onValueChange: (String) -> Unit,
   label: String,
-  placeholder: String
+  placeholder: String,
+  keyboardOptions: KeyboardOptions = KeyboardOptions.Default
 ) {
   Column(modifier = Modifier.fillMaxWidth()) {
     Text(
@@ -551,6 +1052,7 @@ fun AuthTextFieldSimple(
       onValueChange = onValueChange,
       placeholder = { Text(placeholder, color = BharatTextMuted, fontSize = 14.sp) },
       singleLine = true,
+      keyboardOptions = keyboardOptions,
       modifier = Modifier.fillMaxWidth(),
       shape = RoundedCornerShape(12.dp),
       colors = OutlinedTextFieldDefaults.colors(

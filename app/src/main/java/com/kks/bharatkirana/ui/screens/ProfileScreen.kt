@@ -279,24 +279,34 @@ fun ProfileScreen(
                   Spacer(modifier = Modifier.width(6.dp))
 
                   // Role Badge
+                  val roleLabel = when {
+                    userProfile.isAdmin -> "Admin"
+                    userProfile.isVendor -> "Shop Owner"
+                    else -> "Customer"
+                  }
+                  val roleIsHighlighted = userProfile.isAdmin || userProfile.isVendor
                   Surface(
                     shape = RoundedCornerShape(6.dp),
-                    color = if (userProfile.isAdmin) BharatPurpleContainer else Color(0xFFF1F5F9)
+                    color = if (roleIsHighlighted) BharatPurpleContainer else Color(0xFFF1F5F9)
                   ) {
                     Row(
                       verticalAlignment = Alignment.CenterVertically,
                       modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                     ) {
                       Icon(
-                        imageVector = if (userProfile.isAdmin) Icons.Default.AdminPanelSettings else Icons.Default.Person,
+                        imageVector = when {
+                          userProfile.isAdmin -> Icons.Default.AdminPanelSettings
+                          userProfile.isVendor -> Icons.Default.Storefront
+                          else -> Icons.Default.Person
+                        },
                         contentDescription = "Role",
-                        tint = if (userProfile.isAdmin) BharatPurplePrimary else BharatTextSecondary,
+                        tint = if (roleIsHighlighted) BharatPurplePrimary else BharatTextSecondary,
                         modifier = Modifier.size(11.dp)
                       )
                       Spacer(modifier = Modifier.width(3.dp))
                       Text(
-                        text = if (userProfile.isAdmin) "Admin" else "Customer",
-                        color = if (userProfile.isAdmin) BharatPurplePrimary else BharatTextSecondary,
+                        text = roleLabel,
+                        color = if (roleIsHighlighted) BharatPurplePrimary else BharatTextSecondary,
                         fontWeight = FontWeight.ExtraBold,
                         fontSize = 10.sp
                       )
@@ -310,7 +320,7 @@ fun ProfileScreen(
                 Text(
                   text = userProfile.email,
                   style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium),
-                  color = if (userProfile.isAdmin) BharatPurplePrimary else BharatTextSecondary
+                  color = if (userProfile.isAdmin || userProfile.isVendor) BharatPurplePrimary else BharatTextSecondary
                 )
 
                 Text(

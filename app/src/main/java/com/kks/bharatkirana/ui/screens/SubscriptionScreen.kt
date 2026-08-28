@@ -176,7 +176,7 @@ private fun TierCard(
   val accent = when (tier.id) {
     "pro" -> Color(0xFF7C3AED)
     "advance" -> BharatPurplePrimary
-    "founding" -> BharatGreen
+    "founding" -> BharatPurplePrimary
     else -> BharatTextSecondary
   }
 
@@ -188,7 +188,7 @@ private fun TierCard(
     Column(modifier = Modifier.padding(18.dp)) {
       // Limited-time ribbon for the Founding Vendor intro offer.
       if (tier.isLimitedTime) {
-        Surface(color = BharatGreen, shape = RoundedCornerShape(6.dp)) {
+        Surface(color = BharatPurplePrimary, shape = RoundedCornerShape(6.dp)) {
           Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
