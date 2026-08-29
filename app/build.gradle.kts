@@ -17,8 +17,8 @@ android {
     applicationId = "com.kks.bharatkirana"
     minSdk = 24
     targetSdk = 35
-    versionCode = 8
-    versionName = "1.08"
+    versionCode = 9
+    versionName = "1.09"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
