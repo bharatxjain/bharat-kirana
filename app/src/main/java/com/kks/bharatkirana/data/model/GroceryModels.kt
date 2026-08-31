@@ -291,6 +291,7 @@ sealed class AppScreen {
   data object VendorRegistration : AppScreen()
   data object VendorDashboard : AppScreen()
   data object VendorProfile : AppScreen()
+  data object VendorReviews : AppScreen()
   data object AddProduct : AppScreen()
   data object BarcodeScanner : AppScreen()
   data object Subscription : AppScreen()

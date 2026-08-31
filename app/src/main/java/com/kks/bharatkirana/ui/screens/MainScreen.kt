@@ -113,8 +113,8 @@ fun MainScreen(
     }
   }
 
-  BackHandler(enabled = (currentScreen != AppScreen.Main && currentScreen != AppScreen.AdminDashboard) || (currentScreen == AppScreen.Main && currentTab != MainTab.HOME)) {
-    if (currentScreen != AppScreen.Main && currentScreen != AppScreen.AdminDashboard) {
+  BackHandler(enabled = (currentScreen != AppScreen.Main && currentScreen != AppScreen.AdminDashboard && currentScreen != AppScreen.VendorDashboard) || (currentScreen == AppScreen.Main && currentTab != MainTab.HOME)) {
+    if (currentScreen != AppScreen.Main && currentScreen != AppScreen.AdminDashboard && currentScreen != AppScreen.VendorDashboard) {
       viewModel.navigateBack()
     } else if (currentScreen == AppScreen.Main && currentTab != MainTab.HOME) {
       viewModel.setTab(MainTab.HOME)
@@ -169,8 +169,8 @@ fun MainScreen(
           onLogin = { email, pass, callback ->
             viewModel.loginWithPassword(email, pass, callback)
           },
-          onSignup = { name, email, mobile, _, pass, callback ->
-            viewModel.signUp(name, email, mobile, "", pass, callback)
+          onSignup = { name, email, mobile, _, pass, role, callback ->
+            viewModel.signUp(name, email, mobile, "", pass, role, callback)
           },
           onSendOtp = { identifier, callback ->
             viewModel.sendEmailOtp(identifier, callback)
@@ -191,25 +191,37 @@ fun MainScreen(
           onAuthSuccess = { email: String, role: UserRole, path: AuthPath ->
             viewModel.login(email, authPath = path) { user ->
               val isAdmin = user.isAdmin
+              // isVendor is `shopId != null || serverRole == VENDOR`, so an
+              // account with a stale shop_id from a prior aborted vendor
+              // registration flips this to true even for a real customer.
+              // Require the shop to actually exist in the fetched shops list
+              // before routing to the vendor dashboard, otherwise fall through
+              // to the customer view. Main/VendorDashboard re-check this on
+              // recomposition, so a real vendor whose shops list hasn't
+              // loaded yet is still forwarded once it arrives.
+              val hasRealShop = user.shopId?.let { id -> shops.any { it.id == id } } == true
+              val isConfirmedVendor = hasRealShop || user.serverRole == UserRole.VENDOR
               when {
                 isAdmin -> viewModel.navigateTo(AppScreen.AdminDashboard)
                 !user.profileCompleted -> {
                   viewModel.setPendingSignupRole(role)
                   viewModel.navigateTo(AppScreen.CompleteProfile)
                 }
-                // The old branch here sent isVendor users to VendorDashboard, but
-                // for anyone who has a stale shopId (deleted shop, re-signup, etc.)
-                // that lands them on an empty dashboard. Prefer registration for
-                // anyone whose shopId doesn't currently match a shop \u2014 the
-                // VendorDashboard branch itself now forwards to registration when
-                // the shop is missing, so this is only a small optimization.
-                user.isVendor -> viewModel.navigateTo(AppScreen.VendorDashboard)
+                isConfirmedVendor -> viewModel.navigateTo(AppScreen.VendorDashboard)
                 role == UserRole.VENDOR -> {
                   viewModel.setPendingSignupRole(role)
                   viewModel.navigateTo(AppScreen.VendorRegistration)
                 }
                 else -> {
-                  viewModel.navigateTo(AppScreen.CustomerOnboarding)
+                  // Customers were previously routed to CustomerOnboarding
+                  // ("Setting Up Your Profile" screen). That screen has no
+                  // real work to do — just a photo circle and a Start
+                  // Shopping button — but its title made users think the
+                  // app was still loading, so they waited on it forever.
+                  // Route them straight to Main (the shopping dashboard).
+                  viewModel.selectShop(null)
+                  viewModel.setTab(MainTab.HOME)
+                  viewModel.navigateTo(AppScreen.Main)
                 }
               }
             }
@@ -254,7 +266,11 @@ fun MainScreen(
             if (role == UserRole.VENDOR) {
               viewModel.navigateTo(AppScreen.VendorRegistration)
             } else {
-              viewModel.navigateTo(AppScreen.CustomerOnboarding)
+              // Skip CustomerOnboarding — land the customer on the
+              // shopping dashboard directly (see comment in AppScreen.Auth).
+              viewModel.selectShop(null)
+              viewModel.setTab(MainTab.HOME)
+              viewModel.navigateTo(AppScreen.Main)
             }
           }
         )
@@ -266,7 +282,9 @@ fun MainScreen(
             if (role == UserRole.VENDOR) {
               viewModel.navigateTo(AppScreen.VendorRegistration)
             } else {
-              viewModel.navigateTo(AppScreen.CustomerOnboarding)
+              viewModel.selectShop(null)
+              viewModel.setTab(MainTab.HOME)
+              viewModel.navigateTo(AppScreen.Main)
             }
           }
         )
@@ -480,6 +498,16 @@ fun MainScreen(
             CircularProgressIndicator(color = BharatPurplePrimary, strokeWidth = 3.dp)
           }
         } else if (vendorShop == null) {
+          // shopId is set but no matching shop exists in the fetched list.
+          // Wait a short beat for shops to load; if it still isn't there,
+          // treat it as orphaned data and drop back to Main so the user
+          // isn't trapped on an infinite spinner.
+          LaunchedEffect(shops.size) {
+            kotlinx.coroutines.delay(3000)
+            if (shops.find { it.id == userProfile.shopId } == null) {
+              viewModel.navigateTo(AppScreen.Main)
+            }
+          }
           Box(
             modifier = Modifier.fillMaxSize().background(Color.White),
             contentAlignment = Alignment.Center
@@ -541,10 +569,15 @@ fun MainScreen(
             },
             onUpdateShop = { id, shop -> viewModel.updateShopDetails(id, shop) },
             onManagePlan = { viewModel.navigateTo(AppScreen.Subscription) },
+            onOpenReviews = { viewModel.navigateTo(AppScreen.VendorReviews) },
             onSupportClick = { viewModel.openSupportWhatsApp() },
             onLogout = { viewModel.logout() }
           )
         }
+      }
+
+      is AppScreen.VendorReviews -> {
+        VendorReviewsScreen(onBackClick = { viewModel.navigateBack() })
       }
 
       is AppScreen.Subscription -> {
@@ -694,9 +727,15 @@ fun MainScreen(
       }
 
       is AppScreen.Main -> {
-        // Strict role separation: a vendor account must never see the customer
-        // Main screen. If routing ever lands them here, forward to their dashboard.
-        if (userProfile.isVendor) {
+        // Only forward to VendorDashboard when this account genuinely has a
+        // shop that exists. Historical bug: if a customer's Supabase row has a
+        // stale shop_id (e.g., from an aborted vendor registration), isVendor
+        // returns true, but VendorDashboard can't find the shop and spins
+        // forever — which is what customers see as "white loading screen
+        // after login". Requiring the shop row to actually exist means a
+        // customer with orphaned shop_id falls through to the customer view.
+        val realVendorShop = userProfile.shopId?.let { id -> shops.find { it.id == id } }
+        if (realVendorShop != null) {
           LaunchedEffect(Unit) {
             viewModel.navigateTo(AppScreen.VendorDashboard)
           }
@@ -869,8 +908,8 @@ fun MainScreen(
                     onLogin = { email, pass, callback ->
                       viewModel.loginWithPassword(email, pass, callback)
                     },
-                    onSignup = { name, email, mobile, _, pass, callback ->
-                      viewModel.signUp(name, email, mobile, "", pass, callback)
+                    onSignup = { name, email, mobile, _, pass, role, callback ->
+                      viewModel.signUp(name, email, mobile, "", pass, role, callback)
                     },
                     onSendOtp = { email, callback ->
                       viewModel.sendEmailOtp(email, callback)
@@ -890,19 +929,24 @@ fun MainScreen(
                     onAuthSuccess = { email: String, role: UserRole, path: AuthPath ->
                       viewModel.login(email, authPath = path) { user ->
                         val isAdmin = user.isAdmin
+                        // Same stale-shopId guard as the top-level Auth block.
+                        val hasRealShop = user.shopId?.let { id -> shops.any { it.id == id } } == true
+                        val isConfirmedVendor = hasRealShop || user.serverRole == UserRole.VENDOR
                         when {
                           isAdmin -> viewModel.navigateTo(AppScreen.AdminDashboard)
                           !user.profileCompleted -> {
                             viewModel.setPendingSignupRole(role)
                             viewModel.navigateTo(AppScreen.CompleteProfile)
                           }
-                          user.isVendor -> viewModel.navigateTo(AppScreen.VendorDashboard)
+                          isConfirmedVendor -> viewModel.navigateTo(AppScreen.VendorDashboard)
                           role == UserRole.VENDOR -> {
                             viewModel.setPendingSignupRole(role)
                             viewModel.navigateTo(AppScreen.VendorRegistration)
                           }
                           else -> {
-                             viewModel.navigateTo(AppScreen.CustomerOnboarding)
+                             viewModel.selectShop(null)
+                             viewModel.setTab(MainTab.PROFILE)
+                             viewModel.navigateTo(AppScreen.Main)
                           }
                         }
                       }

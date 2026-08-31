@@ -38,7 +38,7 @@ fun AuthScreen(
   onAuthSuccess: (String, UserRole, AuthPath) -> Unit,
   initialEmail: String = "",
   onLogin: (String, String, (Boolean, String) -> Unit) -> Unit,
-  onSignup: (String, String, String, String, String, (Boolean, String) -> Unit) -> Unit,
+  onSignup: (String, String, String, String, String, UserRole, (Boolean, String, Boolean) -> Unit) -> Unit,
   onSendOtp: (String, (Boolean, String) -> Unit) -> Unit,
   onVerifyOtp: (String, String, (Boolean, String) -> Unit) -> Unit,
   onForgotPassword: (String, (Boolean, String) -> Unit) -> Unit = { _, _ -> },
@@ -376,11 +376,18 @@ fun AuthScreen(
                     return@Button
                   }
                   isLocalLoading = true
-                  onSignup(nameInput, emailInput.trim(), mobileInput, "", passwordInput) { success, msg ->
+                  onSignup(nameInput, emailInput.trim(), mobileInput, "", passwordInput, authRole) { success, msg, needsVerification ->
                     isLocalLoading = false
                     localStatusMessage = msg
                     if (success) {
-                      selectedTab = 2 
+                      // Only go to OTP tab if Supabase requires email verification.
+                      // If auto-confirm returned an access token, skip OTP and land
+                      // the user on their home / dashboard via onAuthSuccess.
+                      if (needsVerification) {
+                        selectedTab = 2
+                      } else {
+                        onAuthSuccess(emailInput.trim(), authRole, AuthPath.EMAIL)
+                      }
                     }
                   }
                 },

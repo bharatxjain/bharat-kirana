@@ -89,7 +89,7 @@ fun HomeScreen(
   Box(
     modifier = modifier
       .fillMaxSize()
-      .background(BharatBackground)
+      .background(MaterialTheme.colorScheme.background)
   ) {
     LazyColumn(
       modifier = Modifier
@@ -127,7 +127,7 @@ fun HomeScreen(
         item {
           Surface(
             shape = RoundedCornerShape(12.dp),
-            color = Color(0xFFF3E8FF),
+            color = MaterialTheme.colorScheme.primaryContainer,
             modifier = Modifier
               .fillMaxWidth()
               .padding(horizontal = 12.dp, vertical = 4.dp)
@@ -139,12 +139,12 @@ fun HomeScreen(
               Icon(
                 imageVector = Icons.Default.Campaign,
                 contentDescription = null,
-                tint = Color(0xFF7C3AED),
+                tint = MaterialTheme.colorScheme.primary,
                 modifier = Modifier.padding(end = 8.dp)
               )
               Text(
                 text = promoBanner,
-                color = Color(0xFF4C1D95),
+                color = MaterialTheme.colorScheme.onPrimaryContainer,
                 fontSize = 13.sp,
                 fontWeight = FontWeight.Medium
               )

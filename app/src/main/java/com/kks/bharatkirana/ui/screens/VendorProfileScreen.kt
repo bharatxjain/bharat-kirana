@@ -25,6 +25,7 @@ import androidx.compose.material.icons.filled.ChatBubble
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Payment
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Storefront
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -74,6 +75,7 @@ fun VendorProfileScreen(
   onSavePersonalInfo: (String, String, String, String) -> Unit,
   onUpdateShop: (String, Shop) -> Unit,
   onManagePlan: () -> Unit,
+  onOpenReviews: () -> Unit,
   onSupportClick: () -> Unit,
   onLogout: () -> Unit,
   modifier: Modifier = Modifier
@@ -186,10 +188,11 @@ fun VendorProfileScreen(
       }
       item {
         ProfileActionCard(
-          icon = Icons.Default.Payment,
-          title = "Manage Subscription",
-          subtitle = currentTierName?.let { "Current plan: $it" } ?: "View and change plans",
-          onClick = onManagePlan
+          icon = Icons.Default.Star,
+          title = "Ratings & Reviews",
+          subtitle = "See what customers are saying",
+          onClick = onOpenReviews,
+          accentColor = Color(0xFFF59E0B)
         )
       }
       item {

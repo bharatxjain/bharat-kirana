@@ -518,10 +518,16 @@ class GroceryViewModel(
           login(session.email) { user ->
             // Decided only after the server profile has loaded, so a returning user
             // whose profile is actually complete doesn't get bounced back here.
+            // user.isVendor also flips true on a stale shop_id from an aborted
+            // vendor registration \u2014 landing customers on VendorDashboard,
+            // where the shop lookup fails and they get an infinite spinner.
+            // Trust serverRole here; VendorDashboard's own guard handles the
+            // "vendor whose shops list hasn't loaded yet" case.
+            val isConfirmedVendor = user.serverRole == UserRole.VENDOR
             _currentScreen.value = when {
               !user.profileCompleted -> AppScreen.CompleteProfile
               user.isAdmin -> AppScreen.AdminDashboard
-              user.isVendor -> AppScreen.VendorDashboard
+              isConfirmedVendor -> AppScreen.VendorDashboard
               else -> {
                 _activeShopId.value = null
                 AppScreen.Main
@@ -985,17 +991,22 @@ class GroceryViewModel(
     mobile: String,
     address: String,
     password: String,
-    onResult: (Boolean, String) -> Unit
+    role: UserRole = UserRole.CUSTOMER,
+    onResult: (Boolean, String, Boolean) -> Unit
   ) {
     val cleanEmail = email.trim().lowercase()
     _pendingSignupName.value = name.trim()
     _pendingSignupMobile.value = mobile.trim()
+    // Persist the picked role for post-verification routing (the OTP flow reads
+    // this after a process restart).
+    _pendingSignupRole.value = role
     // These StateFlows die with the process. A user who signs up, closes the app,
     // then taps the emailed verification link would otherwise lose their mobile
     // number entirely — so mirror them to disk.
     prefs.edit()
       .putString("pending_signup_name", name.trim())
       .putString("pending_signup_mobile", mobile.trim())
+      .putString("pending_signup_role", role.name)
       .apply()
     _isAuthLoading.value = true
     _authStatusMessage.value = "Creating account..."
@@ -1005,6 +1016,9 @@ class GroceryViewModel(
         put("full_name", name.trim())
         put("mobile", mobile.trim())
         put("address", address.trim())
+        // Server-side handle_new_user() trigger only accepts 'vendor' or
+        // 'customer'; anything else safely falls back to 'customer'.
+        put("role", if (role == UserRole.VENDOR) "vendor" else "customer")
       }
 
       supabaseAuthService.signUp(cleanEmail, password, metadata)
@@ -1012,20 +1026,20 @@ class GroceryViewModel(
           _isAuthLoading.value = false
           if (session.accessToken.isBlank()) {
             _authStatusMessage.value = "Account created! Please verify your email."
-            onResult(true, "Please check your email for verification link/OTP.")
+            onResult(true, "Please check your email for verification link/OTP.", true)
           } else {
             _authStatusMessage.value = "Account created successfully!"
             persistRefreshToken(session.refreshToken)
             login(cleanEmail, name, mobile, AuthPath.EMAIL)
             updateProfile(name, cleanEmail, mobile, address)
-            onResult(true, "Signup successful")
+            onResult(true, "Signup successful", false)
           }
         }
         .onFailure { err ->
           _isAuthLoading.value = false
           val msg = err.localizedMessage ?: "Signup failed"
           _authStatusMessage.value = msg
-          onResult(false, msg)
+          onResult(false, msg, false)
         }
     }
   }

@@ -89,9 +89,10 @@ fun AddProductScreen(
         if (productName.isBlank()) productName = scannedTemplate.name
         val catId = scannedTemplate.categoryId
         if (category == "Select Category" && catId.isNotBlank()) {
-          category = catId.split("_").joinToString(" ") { part ->
-            part.replaceFirstChar { it.uppercase() }
-          }
+          // OpenFoodFacts hands back tags like "Biscuits" that don't line up
+          // with our picker's names. Map the raw value to an actual picker
+          // option; if nothing matches, leave it blank so the vendor picks.
+          matchCategoryFromRaw(catId, categories)?.let { category = it.name }
         }
         if (description.isBlank() && scannedTemplate.description.isNotBlank()) {
           description = scannedTemplate.description
@@ -223,7 +224,7 @@ fun AddProductScreen(
     Column(
       modifier = Modifier
         .fillMaxSize()
-        .background(Color(0xFFF9FAFB))
+        .background(MaterialTheme.colorScheme.background)
         .padding(paddingValues)
         .verticalScroll(rememberScrollState())
         .padding(20.dp),
@@ -439,7 +440,7 @@ fun AddProductScreen(
         }
       }
 
-      HorizontalDivider(color = Color(0xFFE5E7EB))
+      HorizontalDivider(color = MaterialTheme.colorScheme.outline)
 
       // Product Details
       AuthTextFieldSimple(
@@ -502,7 +503,7 @@ fun AddProductScreen(
       // Pricing Card
       Card(
         shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = Color(0xFFF5F3FF)),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
         modifier = Modifier.fillMaxWidth()
       ) {
         Column(modifier = Modifier.padding(16.dp)) {
@@ -641,8 +642,8 @@ fun AddProductScreen(
   if (categoryMenuOpen) {
     ModalBottomSheet(
       onDismissRequest = { categoryMenuOpen = false },
-      containerColor = Color.White,
-      dragHandle = { BottomSheetDefaults.DragHandle(color = Color(0xFFD1D5DB)) }
+      containerColor = MaterialTheme.colorScheme.surface,
+      dragHandle = { BottomSheetDefaults.DragHandle(color = MaterialTheme.colorScheme.outline) }
     ) {
       Column(modifier = Modifier.padding(horizontal = 20.dp).padding(bottom = 20.dp)) {
         Text(
@@ -665,11 +666,11 @@ fun AddProductScreen(
                 onClick = { category = option; categoryMenuOpen = false },
                 shape = RoundedCornerShape(12.dp),
                 colors = CardDefaults.outlinedCardColors(
-                  containerColor = if (selected) Color(0xFFF5F3FF) else Color.White
+                  containerColor = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface
                 ),
                 border = BorderStroke(
                   width = if (selected) 2.dp else 1.dp,
-                  color = if (selected) BharatPurplePrimary else Color(0xFFE5E7EB)
+                  color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
                 ),
                 modifier = Modifier.weight(1f)
               ) {
@@ -713,8 +714,8 @@ fun AddProductScreen(
   if (unitMenuOpen) {
     ModalBottomSheet(
       onDismissRequest = { unitMenuOpen = false },
-      containerColor = Color.White,
-      dragHandle = { BottomSheetDefaults.DragHandle(color = Color(0xFFD1D5DB)) }
+      containerColor = MaterialTheme.colorScheme.surface,
+      dragHandle = { BottomSheetDefaults.DragHandle(color = MaterialTheme.colorScheme.outline) }
     ) {
       Column(modifier = Modifier.padding(horizontal = 20.dp).padding(bottom = 20.dp)) {
         Text(
@@ -737,11 +738,11 @@ fun AddProductScreen(
                 onClick = { weightUnit = option; unitMenuOpen = false },
                 shape = RoundedCornerShape(12.dp),
                 colors = CardDefaults.outlinedCardColors(
-                  containerColor = if (selected) Color(0xFFF5F3FF) else Color.White
+                  containerColor = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface
                 ),
                 border = BorderStroke(
                   width = if (selected) 2.dp else 1.dp,
-                  color = if (selected) BharatPurplePrimary else Color(0xFFE5E7EB)
+                  color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
                 ),
                 modifier = Modifier.weight(1f)
               ) {
@@ -845,8 +846,8 @@ fun AddProductScreen(
                       showSearchDialog = false
                     },
                     shape = RoundedCornerShape(12.dp),
-                    colors = CardDefaults.outlinedCardColors(containerColor = Color.White),
-                    border = BorderStroke(1.dp, Color(0xFFE5E7EB)),
+                    colors = CardDefaults.outlinedCardColors(containerColor = MaterialTheme.colorScheme.surface),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
                     modifier = Modifier.fillMaxWidth()
                   ) {
                     Row(
@@ -921,8 +922,8 @@ private fun AddModeOption(
   OutlinedCard(
     onClick = onClick,
     shape = RoundedCornerShape(14.dp),
-    colors = CardDefaults.outlinedCardColors(containerColor = Color(0xFFF5F3FF)),
-    border = BorderStroke(1.dp, BharatPurplePrimary),
+    colors = CardDefaults.outlinedCardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
+    border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary),
     modifier = modifier
   ) {
     Column(
@@ -1029,6 +1030,57 @@ private fun unitColorFor(unit: String): Color {
     "pack" -> Color(0xFF0D9488)
     else -> BharatPurplePrimary
   }
+}
+
+// Common product keywords mapped to a canonical Supabase category id. Used to
+// coerce OpenFoodFacts tags ("en:biscuits") and generic strings ("Milk") into
+// a category that actually exists in the picker.
+private val categorySynonyms = mapOf(
+  "milk" to "dairy", "butter" to "dairy", "cheese" to "dairy", "bread" to "dairy",
+  "egg" to "dairy", "curd" to "dairy", "yogurt" to "dairy", "yoghurt" to "dairy",
+  "paneer" to "dairy", "cream" to "dairy",
+  "juice" to "beverages", "drink" to "beverages", "cola" to "beverages",
+  "tea" to "beverages", "coffee" to "beverages", "water" to "beverages",
+  "soda" to "beverages", "beverage" to "beverages",
+  "biscuit" to "snacks", "cookie" to "snacks", "chocolate" to "snacks",
+  "candy" to "snacks", "wafer" to "snacks", "chip" to "snacks",
+  "snack" to "snacks", "namkeen" to "snacks", "chip" to "snacks",
+  "oil" to "oils", "ghee" to "oils",
+  "rice" to "staples", "atta" to "staples", "flour" to "staples",
+  "dal" to "staples", "lentil" to "staples", "pulse" to "staples",
+  "sugar" to "staples", "noodle" to "staples",
+  "salt" to "spices", "spice" to "spices", "masala" to "masala",
+  "detergent" to "cleaning", "cleaner" to "cleaning", "phenyl" to "cleaning",
+  "soap" to "personal_care", "shampoo" to "personal_care",
+  "toothpaste" to "personal_care", "brush" to "personal_care"
+)
+
+// Fuzzy-map any raw category string to an actual Category the vendor can pick.
+// Falls back to null so the caller can leave the picker on "Select Category".
+private fun matchCategoryFromRaw(raw: String, categories: List<com.kks.bharatkirana.data.model.Category>): com.kks.bharatkirana.data.model.Category? {
+  val r = raw.lowercase().trim()
+  if (r.isBlank() || categories.isEmpty()) return null
+
+  // 1. exact id match (raw already IS a canonical id, e.g. from our own DB rows)
+  categories.firstOrNull { it.id.equals(r, ignoreCase = true) }?.let { return it }
+
+  // 2. word-by-word synonym match; handles plurals via substring compare both ways.
+  val rawWords = r.split(Regex("[^a-z0-9]+")).filter { it.length >= 3 }
+  for (word in rawWords) {
+    for ((syn, catId) in categorySynonyms) {
+      if (word.contains(syn) || syn.contains(word)) {
+        categories.firstOrNull { it.id == catId }?.let { return it }
+      }
+    }
+    // 3. any category id or name-word overlaps this word
+    categories.firstOrNull { cat ->
+      cat.id.contains(word) ||
+        cat.name.lowercase().split(Regex("[^a-z]+"))
+          .any { p -> p.length >= 3 && (p.contains(word) || word.contains(p)) }
+    }?.let { return it }
+  }
+
+  return null
 }
 
 @Composable

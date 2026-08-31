@@ -98,22 +98,22 @@ fun VendorDashboardScreen(
               modifier = Modifier
                 .size(36.dp)
                 .clip(CircleShape)
-                .background(Color(0xFFF3E8FF)),
+                .background(MaterialTheme.colorScheme.primaryContainer),
               contentAlignment = Alignment.Center
             ) {
-              Icon(Icons.Default.Person, contentDescription = "Profile", tint = BharatPurplePrimary, modifier = Modifier.size(20.dp))
+              Icon(Icons.Default.Person, contentDescription = "Profile", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
             }
           }
         },
-        colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.White)
+        colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface)
       )
     },
     bottomBar = {
-      NavigationBar(containerColor = Color.White, tonalElevation = 8.dp) {
+      NavigationBar(containerColor = MaterialTheme.colorScheme.surface, tonalElevation = 8.dp) {
         NavigationBarItem(selected = selectedTab == 0, onClick = { selectedTab = 0 }, icon = { Icon(Icons.Default.Dashboard, null) }, label = { Text("Overview") })
         NavigationBarItem(selected = selectedTab == 1, onClick = { selectedTab = 1 }, icon = { Icon(Icons.Default.Inventory, null) }, label = { Text("Inventory") })
         NavigationBarItem(selected = selectedTab == 2, onClick = { selectedTab = 2 }, icon = { Icon(Icons.AutoMirrored.Filled.ReceiptLong, null) }, label = { Text("Orders") })
-        NavigationBarItem(selected = selectedTab == 3, onClick = { selectedTab = 3 }, icon = { Icon(Icons.Default.Star, null) }, label = { Text("Reviews") })
+        NavigationBarItem(selected = selectedTab == 3, onClick = { selectedTab = 3 }, icon = { Icon(Icons.Default.CardMembership, null) }, label = { Text("Plan") })
       }
     },
     modifier = modifier.fillMaxSize()
@@ -131,7 +131,7 @@ fun VendorDashboardScreen(
         when (selectedTab) {
           0 -> {
             LazyColumn(
-              modifier = Modifier.fillMaxSize().background(Color(0xFFF9FAFB)),
+              modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background),
               contentPadding = PaddingValues(16.dp),
               verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
@@ -177,7 +177,7 @@ fun VendorDashboardScreen(
                   modifier = Modifier.fillMaxWidth(),
                   colors = CardDefaults.cardColors(containerColor = Color.Transparent)
                 ) {
-                  Box(modifier = Modifier.fillMaxWidth().background(Brush.horizontalGradient(listOf(Color(0xFF6D28D9), Color(0xFF4C1D95)))).padding(20.dp)) {
+                  Box(modifier = Modifier.fillMaxWidth().background(Brush.horizontalGradient(listOf(AppPrimary, AppPrimaryDarker))).padding(20.dp)) {
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                       Column {
                         Text(text = "TOTAL REVENUE", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = Color.White.copy(alpha = 0.8f))
@@ -230,7 +230,7 @@ fun VendorDashboardScreen(
                   Card(
                     shape = RoundedCornerShape(16.dp),
                     colors = CardDefaults.cardColors(containerColor = Color.White),
-                    border = BorderStroke(1.dp, Color(0xFFF1F5F9))
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
                   ) {
                     Row(
                       modifier = Modifier.fillMaxWidth().padding(14.dp),
@@ -326,7 +326,59 @@ fun VendorDashboardScreen(
                   shape = RoundedCornerShape(24.dp),
                   colors = CardDefaults.cardColors(containerColor = Color.White),
                   modifier = Modifier.fillMaxWidth(),
-                  border = BorderStroke(1.dp, Color(0xFFF1F5F9))
+                  border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
+                ) {
+                  Column(modifier = Modifier.padding(20.dp)) {
+                    Row(
+                      modifier = Modifier.fillMaxWidth(),
+                      verticalAlignment = Alignment.CenterVertically,
+                      horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                      Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                          modifier = Modifier
+                            .size(36.dp)
+                            .clip(CircleShape)
+                            .background(MaterialTheme.colorScheme.primaryContainer),
+                          contentAlignment = Alignment.Center
+                        ) {
+                          Icon(Icons.Default.LocationOn, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
+                        }
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Text(text = "SHOP LOCATION", fontWeight = FontWeight.ExtraBold, fontSize = 11.sp, color = BharatTextSecondary, letterSpacing = 0.5.sp)
+                      }
+                      TextButton(onClick = { showEditShopDialog = true }) {
+                        Icon(Icons.Default.Edit, contentDescription = null, tint = BharatPurplePrimary, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Edit", color = BharatPurplePrimary, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                      }
+                    }
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text(
+                      text = shop.address.ifBlank { "No address on file — tap Edit to add one" },
+                      fontSize = 14.sp,
+                      color = if (shop.address.isBlank()) BharatTextMuted else BharatTextPrimary,
+                      lineHeight = 20.sp
+                    )
+                    if (shop.phone.isNotBlank()) {
+                      Spacer(modifier = Modifier.height(6.dp))
+                      Text(
+                        text = "\u260E ${shop.phone}",
+                        fontSize = 12.sp,
+                        color = BharatTextSecondary
+                      )
+                    }
+                  }
+                }
+              }
+
+              // Store Operations card (unchanged, at bottom).
+              item {
+                Card(
+                  shape = RoundedCornerShape(24.dp),
+                  colors = CardDefaults.cardColors(containerColor = Color.White),
+                  modifier = Modifier.fillMaxWidth(),
+                  border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
                 ) {
                   Column(modifier = Modifier.padding(20.dp)) {
                     Text(text = "STORE OPERATIONS", fontWeight = FontWeight.ExtraBold, fontSize = 11.sp, color = BharatTextSecondary, letterSpacing = 0.5.sp)
@@ -336,14 +388,14 @@ fun VendorDashboardScreen(
                     HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp), color = Color(0xFFF1F5F9))
                     OperationToggleRow(title = "Auto-Accept Orders", subtitle = "Instantly confirm new orders", checked = shop.autoConfirm, onCheckedChange = { onUpdateShop(shop.id, shop.copy(autoConfirm = it)) }, color = BharatPurplePrimary)
                     HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp), color = Color(0xFFF1F5F9))
-                    OperationToggleRow(title = "Promoted Placement", subtitle = "Boost visibility in search results", checked = shop.isPartner, onCheckedChange = { onUpdateShop(shop.id, shop.copy(isPartner = it)) }, color = Color(0xFFD97706), isAd = true)
+                    OperationToggleRow(title = "Promoted Placement", subtitle = "Coming soon \u2014 pay to appear at the top of nearby shops", checked = false, onCheckedChange = {}, color = Color(0xFFD97706), isAd = true, enabled = false)
                   }
                 }
               }
             }
           }
           1 -> {
-            LazyColumn(modifier = Modifier.fillMaxSize().background(Color(0xFFF9FAFB)), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            LazyColumn(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                item {
                  Button(onClick = onManageProducts, modifier = Modifier.fillMaxWidth().height(50.dp), colors = ButtonDefaults.buttonColors(containerColor = BharatPurplePrimary), shape = RoundedCornerShape(12.dp)) {
                    Icon(Icons.Default.Add, null)
@@ -360,7 +412,7 @@ fun VendorDashboardScreen(
                     },
                     shape = RoundedCornerShape(16.dp),
                     colors = CardDefaults.cardColors(containerColor = Color.White),
-                    border = BorderStroke(1.dp, Color(0xFFF1F5F9))
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
                   ) {
                     Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
                       Box(
@@ -410,7 +462,7 @@ fun VendorDashboardScreen(
             val history = orders.filter { it.status == OrderStatus.COMPLETED || it.status == OrderStatus.CANCELLED }
 
             LazyColumn(
-              modifier = Modifier.fillMaxSize().background(Color(0xFFF9FAFB)),
+              modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background),
               contentPadding = PaddingValues(16.dp),
               verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
@@ -481,42 +533,135 @@ fun VendorDashboardScreen(
             }
           }
           3 -> {
-             LazyColumn(modifier = Modifier.fillMaxSize().background(Color(0xFFF9FAFB)), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                item {
-                  Text(text = "Customer Feedback", style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold), color = BharatTextPrimary)
-                }
-                // Real customer reviews will render here once shop_ratings are
-                // fetched. Empty state shown until then.
-                item {
-                  Column(
+            // Subscription / Plan tab. Replaces the Reviews tab so vendors see
+            // their plan status where it matters most; reviews moved to the
+            // profile screen.
+            val activeProducts = products.size
+            val capPct = if (currentTierItemCap > 0) (activeProducts.toFloat() / currentTierItemCap).coerceIn(0f, 1f) else 0f
+            LazyColumn(
+              modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background),
+              contentPadding = PaddingValues(16.dp),
+              verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+              item {
+                Text(
+                  text = "Your Plan",
+                  style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
+                  color = BharatTextPrimary
+                )
+              }
+
+              // Hero plan card with brand gradient.
+              item {
+                Card(
+                  shape = RoundedCornerShape(24.dp),
+                  modifier = Modifier.fillMaxWidth(),
+                  colors = CardDefaults.cardColors(containerColor = Color.Transparent)
+                ) {
+                  Box(
                     modifier = Modifier
                       .fillMaxWidth()
-                      .padding(vertical = 40.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
+                      .background(Brush.horizontalGradient(listOf(AppPrimary, AppPrimaryDarker)))
+                      .padding(20.dp)
                   ) {
-                    Icon(
-                      imageVector = Icons.Default.Star,
-                      contentDescription = null,
-                      tint = BharatTextMuted,
-                      modifier = Modifier.size(48.dp)
-                    )
-                    Spacer(modifier = Modifier.height(12.dp))
-                    Text(
-                      text = "No reviews yet",
-                      style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                      color = BharatTextPrimary
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                      text = "Customer reviews will appear here after they receive their orders.",
-                      style = MaterialTheme.typography.bodySmall,
-                      color = BharatTextSecondary,
-                      textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                      modifier = Modifier.padding(horizontal = 32.dp)
-                    )
+                    Column {
+                      Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.CardMembership, contentDescription = null, tint = Color.White, modifier = Modifier.size(20.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(text = "CURRENT PLAN", fontWeight = FontWeight.ExtraBold, fontSize = 11.sp, color = Color.White.copy(alpha = 0.85f), letterSpacing = 0.5.sp)
+                      }
+                      Spacer(modifier = Modifier.height(10.dp))
+                      Text(
+                        text = currentTierName ?: "Free",
+                        style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.Bold),
+                        color = Color.White
+                      )
+                      Spacer(modifier = Modifier.height(4.dp))
+                      Text(
+                        text = "$activeProducts / $currentTierItemCap products in use",
+                        fontSize = 13.sp,
+                        color = Color.White.copy(alpha = 0.9f)
+                      )
+                      Spacer(modifier = Modifier.height(12.dp))
+                      LinearProgressIndicator(
+                        progress = { capPct },
+                        color = Color.White,
+                        trackColor = Color.White.copy(alpha = 0.25f),
+                        modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(4.dp))
+                      )
+                      Spacer(modifier = Modifier.height(16.dp))
+                      Button(
+                        onClick = onManagePlan,
+                        modifier = Modifier.fillMaxWidth().height(46.dp),
+                        colors = ButtonDefaults.buttonColors(
+                          containerColor = Color.White,
+                          contentColor = AppPrimary
+                        ),
+                        shape = RoundedCornerShape(12.dp)
+                      ) {
+                        Icon(Icons.Default.Upgrade, contentDescription = null)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Upgrade / Change Plan", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                      }
+                    }
                   }
                 }
-             }
+              }
+
+              // Perks / usage summary card.
+              item {
+                Card(
+                  shape = RoundedCornerShape(24.dp),
+                  colors = CardDefaults.cardColors(containerColor = Color.White),
+                  border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+                  modifier = Modifier.fillMaxWidth()
+                ) {
+                  Column(modifier = Modifier.padding(20.dp)) {
+                    Text(text = "WHAT'S INCLUDED", fontWeight = FontWeight.ExtraBold, fontSize = 11.sp, color = BharatTextSecondary, letterSpacing = 0.5.sp)
+                    Spacer(modifier = Modifier.height(14.dp))
+                    PlanPerkRow(icon = Icons.Default.Inventory, label = "Product listings", value = "$activeProducts / $currentTierItemCap")
+                    Spacer(modifier = Modifier.height(10.dp))
+                    PlanPerkRow(icon = Icons.Default.QrCodeScanner, label = "Barcode + catalog search", value = "Included")
+                    Spacer(modifier = Modifier.height(10.dp))
+                    PlanPerkRow(icon = Icons.Default.Notifications, label = "Push notifications", value = "Included")
+                    Spacer(modifier = Modifier.height(10.dp))
+                    PlanPerkRow(icon = Icons.Default.Campaign, label = "Promoted placement", value = "Coming soon")
+                  }
+                }
+              }
+
+              // Support nudge — pushes vendors to reach out before churn.
+              item {
+                OutlinedCard(
+                  onClick = onSupportClick,
+                  shape = RoundedCornerShape(20.dp),
+                  colors = CardDefaults.outlinedCardColors(containerColor = MaterialTheme.colorScheme.surface),
+                  border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+                  modifier = Modifier.fillMaxWidth()
+                ) {
+                  Row(
+                    modifier = Modifier.padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                  ) {
+                    Box(
+                      modifier = Modifier
+                        .size(40.dp)
+                        .clip(CircleShape)
+                        .background(BharatGreen.copy(alpha = 0.12f)),
+                      contentAlignment = Alignment.Center
+                    ) {
+                      Icon(Icons.Default.ChatBubble, contentDescription = null, tint = BharatGreen, modifier = Modifier.size(18.dp))
+                    }
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                      Text("Questions about your plan?", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = BharatTextPrimary)
+                      Text("Chat with our team on WhatsApp", fontSize = 12.sp, color = BharatTextSecondary)
+                    }
+                    Icon(Icons.Default.ChevronRight, contentDescription = null, tint = BharatTextMuted)
+                  }
+                }
+              }
+            }
           }
         }
       }
@@ -607,10 +752,10 @@ fun VendorDashboardScreen(
               supportingText = {
                 Text(
                   text = when (val q = editingProductQty.toIntOrNull()) {
-                    null -> "⚠️ Customers see \"Call to Confirm\""
+                    null -> "⚠️ Customers see \"Call to Confirm\""
                     0 -> "Customers see \"Out of Stock\""
                     in 1..5 -> "Customers see \"Low Stock\""
-                    else -> "🟢 Customers see \"In Stock\""
+                    else -> "ðŸŸ¢ Customers see \"In Stock\""
                   },
                   fontSize = 11.sp,
                   color = BharatTextSecondary
@@ -695,7 +840,7 @@ private fun VendorStatusPendingContent(
   Box(
     modifier = Modifier
       .fillMaxSize()
-      .background(Color(0xFFF9FAFB))
+      .background(MaterialTheme.colorScheme.background)
       .padding(paddingValues)
   ) {
     Column(
@@ -856,26 +1001,57 @@ fun OperationToggleRow(
   checked: Boolean,
   onCheckedChange: (Boolean) -> Unit,
   color: Color,
-  isAd: Boolean = false
+  isAd: Boolean = false,
+  enabled: Boolean = true
 ) {
+  val alpha = if (enabled) 1f else 0.55f
   Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
     Column(modifier = Modifier.weight(1f)) {
       Row(verticalAlignment = Alignment.CenterVertically) {
-        Text(text = title, fontWeight = FontWeight.Bold, color = BharatTextPrimary)
+        Text(text = title, fontWeight = FontWeight.Bold, color = BharatTextPrimary.copy(alpha = alpha))
         if (isAd) {
           Spacer(modifier = Modifier.width(6.dp))
           Surface(color = Color(0xFFFEF3C7), shape = RoundedCornerShape(4.dp)) {
-            Text(text = "AD", fontSize = 9.sp, fontWeight = FontWeight.ExtraBold, color = Color(0xFFD97706), modifier = Modifier.padding(horizontal = 4.dp))
+            Text(text = if (enabled) "AD" else "SOON", fontSize = 9.sp, fontWeight = FontWeight.ExtraBold, color = Color(0xFFD97706), modifier = Modifier.padding(horizontal = 4.dp))
           }
         }
       }
-      Text(text = subtitle, fontSize = 12.sp, color = BharatTextSecondary)
+      Text(text = subtitle, fontSize = 12.sp, color = BharatTextSecondary.copy(alpha = alpha))
     }
     Switch(
       checked = checked,
       onCheckedChange = onCheckedChange,
+      enabled = enabled,
       colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = color)
     )
+  }
+}
+
+@Composable
+fun PlanPerkRow(
+  icon: ImageVector,
+  label: String,
+  value: String
+) {
+  Row(
+    modifier = Modifier.fillMaxWidth(),
+    verticalAlignment = Alignment.CenterVertically,
+    horizontalArrangement = Arrangement.SpaceBetween
+  ) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+      Box(
+        modifier = Modifier
+          .size(32.dp)
+          .clip(CircleShape)
+          .background(MaterialTheme.colorScheme.primaryContainer),
+        contentAlignment = Alignment.Center
+      ) {
+        Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
+      }
+      Spacer(modifier = Modifier.width(10.dp))
+      Text(label, fontSize = 13.sp, color = BharatTextPrimary, fontWeight = FontWeight.Medium)
+    }
+    Text(value, fontSize = 12.sp, color = BharatTextSecondary, fontWeight = FontWeight.SemiBold)
   }
 }
 
@@ -892,7 +1068,7 @@ fun StatsCardPremium(
     shape = RoundedCornerShape(24.dp),
     colors = CardDefaults.cardColors(containerColor = Color.White),
     modifier = Modifier.fillMaxWidth(),
-    border = BorderStroke(1.dp, Color(0xFFF1F5F9))
+    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
   ) {
     Row(
       modifier = Modifier.padding(20.dp),
@@ -922,7 +1098,7 @@ fun RecentOrderRow(order: Order) {
     shape = RoundedCornerShape(16.dp),
     colors = CardDefaults.cardColors(containerColor = Color.White),
     modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-    border = BorderStroke(1.dp, Color(0xFFF1F5F9))
+    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
   ) {
     Row(
       modifier = Modifier.padding(16.dp),
@@ -1009,7 +1185,7 @@ private fun VendorOrderActionCard(
   Card(
     shape = RoundedCornerShape(16.dp),
     colors = CardDefaults.cardColors(containerColor = Color.White),
-    border = BorderStroke(1.dp, Color(0xFFF1F5F9)),
+    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
     modifier = Modifier.fillMaxWidth()
   ) {
     Column(modifier = Modifier.padding(16.dp)) {

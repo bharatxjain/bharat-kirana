@@ -80,7 +80,7 @@ fun StoreLocationHeader(
         modifier = Modifier
           .size(40.dp)
           .clip(CircleShape)
-          .background(Color(0xFFF5F3FF)),
+          .background(MaterialTheme.colorScheme.primaryContainer),
         contentAlignment = Alignment.Center
       ) {
         Icon(
@@ -231,7 +231,7 @@ fun GrocerySearchBar(
       focusedTextColor = BharatTextPrimary,
       unfocusedTextColor = BharatTextPrimary,
       focusedBorderColor = BharatPurplePrimary,
-      unfocusedBorderColor = Color(0xFFE5E7EB)
+      unfocusedBorderColor = MaterialTheme.colorScheme.outline
     )
   )
 }
@@ -275,7 +275,7 @@ fun CategoryItemCard(
         .size(68.dp)
         .clip(RoundedCornerShape(16.dp))
         .background(Color(category.colorHex))
-        .border(1.dp, Color(0xFFEDE9FE), RoundedCornerShape(16.dp)),
+        .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(16.dp)),
       contentAlignment = Alignment.Center
     ) {
       Icon(
@@ -327,7 +327,7 @@ fun ProductGridCard(
           .fillMaxWidth()
           .height(130.dp)
           .clip(RoundedCornerShape(12.dp))
-          .background(Color(0xFFF8FAFC)),
+          .background(MaterialTheme.colorScheme.surfaceVariant),
         contentAlignment = Alignment.Center
       ) {
         when {
