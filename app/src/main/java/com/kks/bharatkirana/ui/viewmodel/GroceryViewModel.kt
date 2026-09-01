@@ -14,6 +14,7 @@ import com.kks.bharatkirana.data.repository.GroceryRepository
 import com.kks.bharatkirana.data.supabase.SupabaseAuthService
 import com.kks.bharatkirana.data.supabase.SupabaseGroceryRepo
 import com.kks.bharatkirana.data.supabase.SupabaseRealtimeClient
+import com.kks.bharatkirana.data.supabase.DuplicateProductException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -76,6 +77,12 @@ class GroceryViewModel(
 
   private val _cartItems = MutableStateFlow<List<CartItem>>(emptyList())
   val cartItems: StateFlow<List<CartItem>> = _cartItems.asStateFlow()
+
+  private val _cartShopSwitchAlert = MutableStateFlow<CartShopSwitchAlert?>(null)
+  val cartShopSwitchAlert: StateFlow<CartShopSwitchAlert?> = _cartShopSwitchAlert.asStateFlow()
+
+  private val _wishlistIds = MutableStateFlow(loadWishlistFromPrefs())
+  val wishlistIds: StateFlow<Set<String>> = _wishlistIds.asStateFlow()
 
   private val _orders = MutableStateFlow<List<Order>>(emptyList())
   val orders: StateFlow<List<Order>> = _orders.asStateFlow()
@@ -264,6 +271,26 @@ class GroceryViewModel(
   fun onBarcodeScanned(barcode: String) {
     val clean = barcode.trim()
     if (clean.isBlank()) return
+
+    // Proactive dedup: if the current vendor's shop already has a product
+    // with this barcode, show the duplicate dialog immediately and skip the
+    // Supabase lookup + AddProduct navigation entirely.
+    val shopId = _userProfile.value.shopId
+    if (shopId != null) {
+      val already = _products.value.firstOrNull {
+        it.shopId == shopId && it.catalogRef == "barcode:$clean"
+      }
+      if (already != null) {
+        _duplicateAlert.value = DuplicateAlert(
+          existing = already,
+          severity = DuplicateAlert.Severity.Hard,
+          source = DuplicateAlert.Source.Barcode
+        )
+        navigateBack()
+        return
+      }
+    }
+
     _scannedBarcode.value = clean
     _barcodeStatusMessage.value = "Looking up $clean…"
     viewModelScope.launch {
@@ -325,6 +352,26 @@ class GroceryViewModel(
   }
 
   fun applyCatalogChoice(product: Product) {
+    // Proactive dedup for catalog picks that carry a barcode — same rule as
+    // the scan path. Products without a barcode fall through to the app-side
+    // soft check on List Product.
+    val shopId = _userProfile.value.shopId
+    val bc = product.barcode.trim()
+    if (shopId != null && bc.isNotBlank()) {
+      val already = _products.value.firstOrNull {
+        it.shopId == shopId && it.catalogRef == "barcode:$bc"
+      }
+      if (already != null) {
+        _duplicateAlert.value = DuplicateAlert(
+          existing = already,
+          severity = DuplicateAlert.Severity.Hard,
+          source = DuplicateAlert.Source.CatalogSelect
+        )
+        _catalogSearchResults.value = emptyList()
+        return
+      }
+    }
+
     _scannedProductTemplate.value = product
     _scannedBarcode.value = product.barcode.ifBlank { "" }
     _barcodeStatusMessage.value = "Selected from catalog: ${product.name}"
@@ -336,6 +383,18 @@ class GroceryViewModel(
   private val _productAddedSuccess = MutableStateFlow(false)
   val productAddedSuccess: StateFlow<Boolean> = _productAddedSuccess.asStateFlow()
   fun clearProductAddedSuccess() { _productAddedSuccess.value = false }
+
+  // Fires when addNewProduct detects a duplicate — either via the DB partial
+  // unique index (hard) or via the app-side identity check (soft).
+  private val _duplicateAlert = MutableStateFlow<DuplicateAlert?>(null)
+  val duplicateAlert: StateFlow<DuplicateAlert?> = _duplicateAlert.asStateFlow()
+  fun clearDuplicateAlert() { _duplicateAlert.value = null }
+
+  // Optional product id to open the edit dialog for on VendorDashboard's
+  // Inventory tab. Set by the "Update Stock" action of the duplicate alert.
+  private val _inventoryEditProductId = MutableStateFlow<String?>(null)
+  val inventoryEditProductId: StateFlow<String?> = _inventoryEditProductId.asStateFlow()
+  fun setInventoryEditProduct(productId: String?) { _inventoryEditProductId.value = productId }
 
   // Which tab VendorDashboardScreen should open on. 0=Overview 1=Inventory
   // 2=Orders 3=Reviews. Set by other flows (e.g. Add Product success) and read
@@ -390,10 +449,63 @@ class GroceryViewModel(
     val status = OrderStatus.entries.firstOrNull { it.label == statusStr }
 
     when (change.type) {
+      "INSERT" -> {
+        val recordShopId = record.optString("shop_id").takeIf { it.isNotBlank() }
+        val myShopId = _userProfile.value.shopId?.takeIf { it.isNotBlank() }
+        val recordUserId = record.optString("user_id").takeIf { it.isNotBlank() }
+        val myUserId = supabaseAuthService.currentUserId
+        val isVendorForShop = myShopId != null && recordShopId == myShopId
+        val isCustomerOfOrder = myUserId != null && recordUserId == myUserId
+        if (!isVendorForShop && !isCustomerOfOrder) return
+
+        // Vendor sees the row for the first time — customer's local-first
+        // insert already put it in _orders on their device.
+        if (_orders.value.any { it.id == orderId }) return
+
+        val timeline = buildOrderTimeline(
+          currentStatus = OrderStatus.PLACED,
+          orderDate = record.optString("order_date", "Today"),
+          nowLabel = record.optString("order_date", "Today")
+        )
+        val newOrder = Order(
+          id = orderId,
+          shopId = recordShopId ?: "default_shop",
+          items = emptyList(),
+          totalAmount = record.optInt("total_amount", 0),
+          orderDate = record.optString("order_date", "Today"),
+          status = status ?: OrderStatus.PLACED,
+          expectedPickupTime = "Awaiting shop confirmation",
+          qrCodePayload = record.optString("qr_code_payload", "ORDER:$orderId"),
+          timeline = timeline
+        )
+        _orders.update { listOf(newOrder) + it }
+
+        if (isVendorForShop) {
+          showSystemNotification(
+            title = "New order received!",
+            message = "Order #$orderId for ₹${newOrder.totalAmount}. Open the app to confirm.",
+            channelId = "vendor_notifications",
+            channelName = "Vendor Alerts"
+          )
+        }
+        // The Realtime payload only carries the parent row; fetch the line
+        // items so the UI shows the full product breakdown right away.
+        viewModelScope.launch {
+          supabaseGroceryRepo.fetchOrderItems(orderId, supabaseAuthService.currentAccessToken)
+            .onSuccess { fetchedItems ->
+              if (fetchedItems.isNotEmpty()) {
+                _orders.update { list ->
+                  list.map { if (it.id == orderId) it.copy(items = fetchedItems) else it }
+                }
+              }
+            }
+        }
+      }
       "UPDATE" -> {
         if (status == null) return
         val timeFormat = SimpleDateFormat("h:mm a", Locale.getDefault())
         val now = timeFormat.format(Date())
+        val existing = _orders.value.firstOrNull { it.id == orderId }
         _orders.update { list ->
           list.map { order ->
             if (order.id != orderId) return@map order
@@ -405,12 +517,24 @@ class GroceryViewModel(
             order.copy(status = status, timeline = rebuilt)
           }
         }
+        // "Confirmed" is the one status the server-side notify-order-status
+        // function doesn't emit. Ping the customer locally so they get the
+        // "Your order has been accepted" signal they expect.
+        val myShopId = _userProfile.value.shopId?.takeIf { it.isNotBlank() }
+        val recordShopId = record.optString("shop_id").takeIf { it.isNotBlank() }
+        val isCustomerForThisOrder = existing != null && myShopId != recordShopId
+        if (status == OrderStatus.CONFIRMED && isCustomerForThisOrder) {
+          showSystemNotification(
+            title = "Your order has been accepted",
+            message = "Order #$orderId is being prepared. We'll notify you when it's ready.",
+            channelId = "customer_notifications",
+            channelName = "Order Updates"
+          )
+        }
       }
       "DELETE" -> {
         _orders.update { list -> list.filter { it.id != orderId } }
       }
-      // "INSERT" — skipped intentionally: vendor's dashboard triggers a refresh
-      // via loadSupabaseData when opened, and the customer already inserted locally.
     }
   }
 
@@ -650,11 +774,25 @@ class GroceryViewModel(
         _userLocation.value?.let { updateShopDistances(it) }
       }
 
-      // Sync orders
+      // Sync orders. Skip entirely if we don't know who the user is yet — a
+      // transient empty response during session restore would otherwise wipe
+      // the customer's own just-placed local order from the UI.
       val email = _userProfile.value.email
       val isAdmin = _userProfile.value.isAdmin
-      supabaseGroceryRepo.fetchOrders(customerEmail = email, isAdmin = isAdmin).onSuccess { liveOrders ->
-        _orders.value = liveOrders
+      val vendorShopId = _userProfile.value.shopId?.takeIf { it.isNotBlank() }
+      if (isAdmin || !vendorShopId.isNullOrBlank() || email.isNotBlank()) {
+        supabaseGroceryRepo.fetchOrders(
+          customerEmail = email,
+          isAdmin = isAdmin,
+          vendorShopId = vendorShopId,
+          accessToken = supabaseAuthService.currentAccessToken
+        ).onSuccess { liveOrders ->
+          // Preserve any locally-inserted orders (just-placed by the customer)
+          // whose ids the server hasn't returned yet.
+          val serverIds = liveOrders.map { it.id }.toSet()
+          val localOnly = _orders.value.filter { it.id !in serverIds }
+          _orders.value = localOnly + liveOrders
+        }
       }
     }
   }
@@ -722,8 +860,7 @@ class GroceryViewModel(
       }
       is SearchSuggestion.ShopSuggestion -> {
         _searchQuery.value = ""
-        selectShop(suggestion.shop.id)
-        navigateTo(AppScreen.StoreInfo)
+        navigateTo(AppScreen.ShopDetail(suggestion.shop.id))
       }
     }
   }
@@ -745,6 +882,23 @@ class GroceryViewModel(
   }
 
   fun addToCart(product: Product, weightOption: WeightOption, quantity: Int = 1) {
+    // Enforce one-shop-per-cart: if the cart already has items from a
+    // different shop, expose a state the UI can render as a confirmation
+    // dialog. Do NOT silently merge or drop.
+    val current = _cartItems.value
+    val existingShopId = current.firstOrNull()?.product?.shopId
+    if (existingShopId != null && existingShopId != product.shopId) {
+      _cartShopSwitchAlert.value = CartShopSwitchAlert(
+        currentShopId = existingShopId,
+        currentShopName = _shops.value.firstOrNull { it.id == existingShopId }?.name ?: "another shop",
+        newShopName = _shops.value.firstOrNull { it.id == product.shopId }?.name ?: "this shop",
+        pendingProduct = product,
+        pendingWeight = weightOption,
+        pendingQty = quantity
+      )
+      return
+    }
+
     _cartItems.update { currentList ->
       val existingIndex = currentList.indexOfFirst {
         it.product.id == product.id && it.selectedWeight.label == weightOption.label
@@ -765,6 +919,17 @@ class GroceryViewModel(
     }
     persistCart()
   }
+
+  /** Vendor picks "Clear Cart & Add This Item" — wipe + add pending. */
+  fun clearCartAndAddPending() {
+    val pending = _cartShopSwitchAlert.value ?: return
+    _cartShopSwitchAlert.value = null
+    _cartItems.value = emptyList()
+    persistCart()
+    addToCart(pending.pendingProduct, pending.pendingWeight, pending.pendingQty)
+  }
+
+  fun dismissCartShopSwitchAlert() { _cartShopSwitchAlert.value = null }
 
   fun updateCartQuantity(productId: String, weightLabel: String, delta: Int) {
     _cartItems.update { currentList ->
@@ -817,6 +982,31 @@ class GroceryViewModel(
       .putString("cart_items", arr.toString())
       .putString("active_shop_id", _activeShopId.value.orEmpty())
       .apply()
+  }
+
+  private fun loadWishlistFromPrefs(): Set<String> {
+    val raw = prefs.getString("wishlist_ids", null) ?: return emptySet()
+    return raw.split("|").filter { it.isNotBlank() }.toSet()
+  }
+
+  private fun persistWishlist() {
+    prefs.edit().putString("wishlist_ids", _wishlistIds.value.joinToString("|")).apply()
+  }
+
+  fun isInWishlist(productId: String): Boolean = _wishlistIds.value.contains(productId)
+
+  fun toggleWishlist(productId: String) {
+    if (productId.isBlank()) return
+    _wishlistIds.update { current ->
+      if (productId in current) current - productId else current + productId
+    }
+    persistWishlist()
+  }
+
+  fun removeFromWishlist(productId: String) {
+    if (productId !in _wishlistIds.value) return
+    _wishlistIds.update { it - productId }
+    persistWishlist()
   }
 
   private fun restoreCartFromPrefs() {
@@ -904,8 +1094,14 @@ class GroceryViewModel(
     _promoStatusMessage.value = null
     navigateTo(AppScreen.OrderPlaced(orderId))
 
-    // Simulation: Notify Vendor
-    simulateVendorNotification(newOrder)
+    // Confirmation for the customer. Not "New Order Received" — that goes to
+    // the vendor via realtime / server push.
+    showSystemNotification(
+      title = "Order placed successfully",
+      message = "Order #${newOrder.id} for ₹${newOrder.totalAmount}. We'll notify you when ${newOrder.storeName.ifBlank { "the shop" }} accepts it.",
+      channelId = "customer_notifications",
+      channelName = "Order Updates"
+    )
 
     // Asynchronously sync order to Supabase
     viewModelScope.launch {
@@ -957,13 +1153,11 @@ class GroceryViewModel(
   }
 
   private fun simulateVendorNotification(order: Order) {
-    // Show a real system notification for the vendor
-    showSystemNotification(
-      title = "New Order Received! 🛍️",
-      message = "Order #${order.id} for ₹${order.totalAmount} has been placed at ${order.storeName}.",
-      channelId = "vendor_notifications",
-      channelName = "Vendor Alerts"
-    )
+    // Kept as a stub for backwards compatibility with any lingering call sites.
+    // Vendor "New Order Received" notifications are delivered via the Supabase
+    // Realtime INSERT handler on the vendor's device — never here on the
+    // customer's device.
+    val _unused = order
   }
 
   private fun showSystemNotification(title: String, message: String, channelId: String, channelName: String) {
@@ -1349,7 +1543,13 @@ class GroceryViewModel(
 
       // Load orders using the (possibly updated) admin flag
       val effectiveIsAdmin = _userProfile.value.isAdmin
-      supabaseGroceryRepo.fetchOrders(customerEmail = cleanEmail, isAdmin = effectiveIsAdmin).onSuccess { liveOrders ->
+      val effectiveVendorShopId = _userProfile.value.shopId?.takeIf { it.isNotBlank() }
+      supabaseGroceryRepo.fetchOrders(
+        customerEmail = cleanEmail,
+        isAdmin = effectiveIsAdmin,
+        vendorShopId = effectiveVendorShopId,
+        accessToken = supabaseAuthService.currentAccessToken
+      ).onSuccess { liveOrders ->
         if (liveOrders.isNotEmpty()) {
           _orders.value = liveOrders
         }
@@ -1373,6 +1573,24 @@ class GroceryViewModel(
     _notifications.update { list -> list.map { if (it.id == notificationId) it.copy(isRead = true) else it } }
     viewModelScope.launch {
       supabaseGroceryRepo.markNotificationRead(notificationId, supabaseAuthService.currentAccessToken)
+    }
+  }
+
+  fun markAllNotificationsRead() {
+    val userId = supabaseAuthService.currentUserId ?: return
+    if (_notifications.value.none { !it.isRead }) return
+    _notifications.update { list -> list.map { if (!it.isRead) it.copy(isRead = true) else it } }
+    viewModelScope.launch {
+      supabaseGroceryRepo.markAllNotificationsRead(userId, supabaseAuthService.currentAccessToken)
+    }
+  }
+
+  fun clearAllNotifications() {
+    val userId = supabaseAuthService.currentUserId ?: return
+    if (_notifications.value.isEmpty()) return
+    _notifications.value = emptyList()
+    viewModelScope.launch {
+      supabaseGroceryRepo.deleteAllNotifications(userId, supabaseAuthService.currentAccessToken)
     }
   }
 
@@ -1944,6 +2162,8 @@ class GroceryViewModel(
     val shop = _shops.value.find { it.id == shopId }
     if (shop != null) {
       _userProfile.update { it.copy(activeStore = shop.name, activeStoreAddress = shop.address) }
+    } else if (shopId == null) {
+      _userProfile.update { it.copy(activeStore = "", activeStoreAddress = "") }
     }
   }
 
@@ -1970,7 +2190,8 @@ class GroceryViewModel(
     stockQty: Int? = null,
     imageUris: List<Uri>,
     barcode: String = "",
-    fallbackImageUrl: String = ""
+    fallbackImageUrl: String = "",
+    forceInsertDespiteSoftMatch: Boolean = false
   ) {
     if (!canAddMoreProducts()) {
       val cap = currentTier()?.itemCap ?: 500
@@ -1979,7 +2200,26 @@ class GroceryViewModel(
     }
     val productId = "p_${System.currentTimeMillis()}"
     val shopId = _userProfile.value.shopId ?: "s_bharat_kirana"
-    
+
+    // Stable identity for DB-level dedup. Only barcodes are globally stable;
+    // manual entries pass NULL and fall to the app-side soft check below.
+    val cleanBarcode = barcode.trim()
+    val catalogRef = if (cleanBarcode.isNotBlank()) "barcode:$cleanBarcode" else null
+
+    // App-side soft check for manual entries. Barcode dupes are caught at
+    // DB level so we don't check them here (avoids double-warning on race).
+    if (catalogRef == null && !forceInsertDespiteSoftMatch) {
+      val existing = findLocalIdentityMatch(shopId, name, "Store Item", unit)
+      if (existing != null) {
+        _duplicateAlert.value = DuplicateAlert(
+          existing = existing,
+          severity = DuplicateAlert.Severity.Soft,
+          source = DuplicateAlert.Source.ManualIdentity
+        )
+        return
+      }
+    }
+
     _isLoading.value = true
     _productUploadMessage.value = null
     viewModelScope.launch {
@@ -1987,7 +2227,7 @@ class GroceryViewModel(
       var uploadSuccessCount = 0
       var uploadFailCount = 0
       var readFailCount = 0
-      
+
       // 1. Handle Multiple Images Upload
       imageUris.forEachIndexed { index, uri ->
         val bytes = getBytesFromUri(uri)
@@ -2034,7 +2274,8 @@ class GroceryViewModel(
           if (fallbackImageUrl.isNotBlank()) listOf(fallbackImageUrl) else emptyList()
         },
         weightOptions = listOf(WeightOption(unit, price, mrp)),
-        barcode = barcode
+        barcode = cleanBarcode,
+        catalogRef = catalogRef
       )
 
       // 3. Sync to Supabase & Local
@@ -2042,7 +2283,29 @@ class GroceryViewModel(
       val insertResult = supabaseGroceryRepo.addProduct(newProd, supabaseAuthService.currentAccessToken)
       _isLoading.value = false
 
-      // 4. Surface upload outcome so AddProductScreen can toast the vendor.
+      // 4. Handle the outcome. DB dedup rejection is a first-class case: the
+      // repo throws DuplicateProductException, we surface a hard dialog with
+      // the existing row (looked up in the local cache by catalogRef).
+      val dupErr = insertResult.exceptionOrNull() as? DuplicateProductException
+      if (dupErr != null) {
+        _products.update { list -> list.filterNot { it.id == productId } }
+        val existing = dupErr.catalogRef?.let { ref ->
+          _products.value.firstOrNull { it.shopId == dupErr.shopId && it.catalogRef == ref }
+        }
+        if (existing != null) {
+          _duplicateAlert.value = DuplicateAlert(
+            existing = existing,
+            severity = DuplicateAlert.Severity.Hard,
+            source = if (dupErr.catalogRef?.startsWith("barcode:") == true) DuplicateAlert.Source.Barcode
+                    else DuplicateAlert.Source.CatalogSelect
+          )
+        } else {
+          _productUploadMessage.value = "This product is already in your inventory."
+        }
+        return@launch
+      }
+
+      // 5. Surface upload outcome so AddProductScreen can toast the vendor.
       val totalAttempted = imageUris.size
       _productUploadMessage.value = when {
         insertResult.isFailure -> {
@@ -2056,7 +2319,7 @@ class GroceryViewModel(
           "Product added, but ${uploadFailCount + readFailCount} of $totalAttempted images failed. You can edit the product to retry."
       }
 
-      // 5. Fire the success signal only on a real DB save so the caller can
+      // 6. Fire the success signal only on a real DB save so the caller can
       // close the Add Product screen and route to Inventory. On failure, stay
       // put and let the vendor retry.
       if (insertResult.isSuccess) {
@@ -2066,6 +2329,25 @@ class GroceryViewModel(
         // phantom product they think was saved.
         _products.update { list -> list.filterNot { it.id == productId } }
       }
+    }
+  }
+
+  /** Local identity matcher used for the soft "possible duplicate" flow. */
+  private fun findLocalIdentityMatch(
+    shopId: String,
+    name: String,
+    brand: String,
+    unit: String
+  ): Product? {
+    val n = name.trim().lowercase()
+    val b = brand.trim().lowercase()
+    val u = unit.replace(Regex("\\s+"), "").lowercase()
+    if (n.isBlank()) return null
+    return _products.value.firstOrNull { p ->
+      p.shopId == shopId &&
+        p.name.trim().lowercase() == n &&
+        p.brand.trim().lowercase() == b &&
+        p.unit.replace(Regex("\\s+"), "").lowercase() == u
     }
   }
 
@@ -2153,6 +2435,28 @@ class GroceryViewModel(
   fun reorder(order: Order) {
     _cartItems.value = order.items
     navigateTo(AppScreen.Cart)
+  }
+
+  /**
+   * On-demand line-item fetch. OrderDetailsScreen fires this when it opens an
+   * order whose items list is empty (e.g. the ORDER_ITEMS_MIGRATION.sql fallback
+   * ran and stripped the embed, or the customer opened a historical order that
+   * predates the local placeOrder path). Populates in place so the tracker
+   * shows product images, quantities and per-line totals.
+   */
+  fun hydrateOrderItems(orderId: String) {
+    val existing = _orders.value.firstOrNull { it.id == orderId } ?: return
+    if (existing.items.isNotEmpty()) return
+    viewModelScope.launch {
+      supabaseGroceryRepo.fetchOrderItems(orderId, supabaseAuthService.currentAccessToken)
+        .onSuccess { fetched ->
+          if (fetched.isNotEmpty()) {
+            _orders.update { list ->
+              list.map { if (it.id == orderId) it.copy(items = fetched) else it }
+            }
+          }
+        }
+    }
   }
 
   fun rateShop(shopId: String, orderId: String, rating: Int, review: String) {

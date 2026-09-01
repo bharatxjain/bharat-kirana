@@ -54,12 +54,13 @@ fun ProductDetailScreen(
   onProductClick: (Product) -> Unit,
   onViewCartClick: () -> Unit,
   onStoreClick: (Shop) -> Unit = {},
+  isFavorite: Boolean = false,
+  onFavoriteToggle: () -> Unit = {},
   modifier: Modifier = Modifier
 ) {
   val defaultWeight = product.weightOptions.firstOrNull() ?: WeightOption(product.unit, product.currentPrice)
   var selectedWeight by remember { mutableStateOf(defaultWeight) }
   var quantity by remember { mutableIntStateOf(1) }
-  var isFavorite by remember { mutableStateOf(false) }
 
   val context = LocalContext.current
 
@@ -127,7 +128,7 @@ fun ProductDetailScreen(
           }
           Spacer(modifier = Modifier.width(8.dp))
           IconButton(
-            onClick = { isFavorite = !isFavorite },
+            onClick = { onFavoriteToggle() },
             modifier = Modifier
               .size(40.dp)
               .clip(CircleShape)

@@ -25,6 +25,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -96,7 +98,7 @@ fun StoreLocationHeader(
       Column {
         Row(verticalAlignment = Alignment.CenterVertically) {
           Text(
-            text = "Delivering to",
+            text = "Shopping at",
             style = MaterialTheme.typography.labelSmall,
             color = BharatTextSecondary
           )
@@ -200,17 +202,29 @@ fun GrocerySearchBar(
   query: String,
   onQueryChange: (String) -> Unit,
   modifier: Modifier = Modifier,
-  placeholder: String = "Search groceries, rice, atta..."
+  placeholder: String = "Search groceries, rice, atta...",
+  autoFocus: Boolean = false,
+  readOnly: Boolean = false,
+  onClick: (() -> Unit)? = null
 ) {
+  val focusRequester = remember { FocusRequester() }
+  androidx.compose.runtime.LaunchedEffect(autoFocus) {
+    if (autoFocus && !readOnly) focusRequester.requestFocus()
+  }
+  val baseModifier = modifier
+    .fillMaxWidth()
+    .padding(horizontal = 16.dp, vertical = 6.dp)
+    .shadow(elevation = 2.dp, shape = RoundedCornerShape(14.dp), spotColor = Color(0x1A000000))
+    .background(Color.White, RoundedCornerShape(14.dp))
+    .testTag("grocery_search_bar")
+    .then(if (readOnly && onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
+
   OutlinedTextField(
     value = query,
-    onValueChange = onQueryChange,
-    modifier = modifier
-      .fillMaxWidth()
-      .padding(horizontal = 16.dp, vertical = 6.dp)
-      .shadow(elevation = 2.dp, shape = RoundedCornerShape(14.dp), spotColor = Color(0x1A000000))
-      .background(Color.White, RoundedCornerShape(14.dp))
-      .testTag("grocery_search_bar"),
+    onValueChange = { if (!readOnly) onQueryChange(it) },
+    modifier = baseModifier.then(if (!readOnly) Modifier.focusRequester(focusRequester) else Modifier),
+    readOnly = readOnly,
+    enabled = !readOnly,
     placeholder = {
       Text(
         text = placeholder,
@@ -230,6 +244,11 @@ fun GrocerySearchBar(
     colors = OutlinedTextFieldDefaults.colors(
       focusedTextColor = BharatTextPrimary,
       unfocusedTextColor = BharatTextPrimary,
+      disabledTextColor = BharatTextPrimary,
+      disabledPlaceholderColor = BharatTextMuted,
+      disabledLeadingIconColor = BharatTextMuted,
+      disabledBorderColor = MaterialTheme.colorScheme.outline,
+      disabledContainerColor = Color.White,
       focusedBorderColor = BharatPurplePrimary,
       unfocusedBorderColor = MaterialTheme.colorScheme.outline
     )

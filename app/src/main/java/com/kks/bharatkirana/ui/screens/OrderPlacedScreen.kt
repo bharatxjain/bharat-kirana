@@ -64,6 +64,7 @@ fun OrderPlacedScreen(
   order: Order,
   onViewOrdersClick: () -> Unit,
   onHomeClick: () -> Unit,
+  onTrackOrderClick: () -> Unit = onViewOrdersClick,
   shopDistanceLabel: String? = null,
   modifier: Modifier = Modifier
 ) {
@@ -306,26 +307,49 @@ fun OrderPlacedScreen(
           verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
           Button(
-            onClick = onViewOrdersClick,
+            onClick = onTrackOrderClick,
             modifier = Modifier
               .fillMaxWidth()
               .height(48.dp)
-              .testTag("view_all_orders_button"),
+              .testTag("track_order_button"),
             colors = ButtonDefaults.buttonColors(containerColor = BharatPurplePrimary),
             shape = RoundedCornerShape(12.dp)
           ) {
             Icon(
-              imageVector = Icons.Default.ReceiptLong,
+              imageVector = Icons.Default.LocationOn,
               contentDescription = null,
               tint = Color.White,
               modifier = Modifier.size(18.dp)
             )
             Spacer(modifier = Modifier.width(8.dp))
             Text(
-              text = "View All Orders",
+              text = "Track Order",
               fontWeight = FontWeight.Bold,
               fontSize = 15.sp,
               color = Color.White
+            )
+          }
+
+          OutlinedButton(
+            onClick = onViewOrdersClick,
+            modifier = Modifier
+              .fillMaxWidth()
+              .height(48.dp)
+              .testTag("view_all_orders_button"),
+            shape = RoundedCornerShape(12.dp)
+          ) {
+            Icon(
+              imageVector = Icons.Default.ReceiptLong,
+              contentDescription = null,
+              tint = BharatPurplePrimary,
+              modifier = Modifier.size(18.dp)
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+              text = "View All Orders",
+              fontWeight = FontWeight.SemiBold,
+              fontSize = 15.sp,
+              color = BharatPurplePrimary
             )
           }
 

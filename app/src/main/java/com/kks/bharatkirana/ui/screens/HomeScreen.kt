@@ -1,6 +1,8 @@
 package com.kks.bharatkirana.ui.screens
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -11,6 +13,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -19,6 +22,8 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -26,12 +31,14 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Campaign
+import androidx.compose.material.icons.filled.ShoppingBag
 import androidx.compose.ui.unit.sp
 import com.kks.bharatkirana.data.model.CartItem
 import com.kks.bharatkirana.data.model.Category
@@ -47,6 +54,8 @@ import com.kks.bharatkirana.ui.components.ShimmerDailyEssentialCard
 import com.kks.bharatkirana.ui.components.ShimmerProductRow
 import com.kks.bharatkirana.ui.components.StoreLocationHeader
 import com.kks.bharatkirana.ui.theme.BharatBackground
+import com.kks.bharatkirana.ui.theme.BharatGreen
+import com.kks.bharatkirana.ui.theme.BharatPurplePrimary
 import com.kks.bharatkirana.ui.theme.BharatTextPrimary
 import com.kks.bharatkirana.ui.theme.BharatTextSecondary
 
@@ -72,19 +81,13 @@ fun HomeScreen(
   promoBanner: String? = null,
   isLoading: Boolean = false,
   activeShopId: String? = null,
+  shops: List<com.kks.bharatkirana.data.model.Shop> = emptyList(),
+  onShopClick: (com.kks.bharatkirana.data.model.Shop) -> Unit = {},
+  onViewAllShopsClick: () -> Unit = {},
   modifier: Modifier = Modifier
 ) {
   val cartItemCount = cartItems.sumOf { it.quantity }
   val cartTotal = cartItems.sumOf { it.totalPrice }
-
-  val shopProducts = if (activeShopId != null) {
-    products.filter { it.shopId == activeShopId }
-  } else {
-    products
-  }
-
-  val popularProducts = shopProducts.filter { it.isPopular }
-  val dailyEssentials = shopProducts.filter { it.isDailyEssential }
 
   Box(
     modifier = modifier
@@ -112,11 +115,14 @@ fun HomeScreen(
         )
       }
 
-      // Search Bar
+      // Search Bar — tap navigates to the Search tab (which owns the real
+      // TextField) so the keyboard stays open while the user types.
       item {
         GrocerySearchBar(
-          query = searchQuery,
-          onQueryChange = onSearchQueryChange
+          query = "",
+          onQueryChange = {},
+          readOnly = true,
+          onClick = { onSearchQueryChange("") }
         )
         Spacer(modifier = Modifier.height(10.dp))
       }
@@ -185,108 +191,34 @@ fun HomeScreen(
         Spacer(modifier = Modifier.height(16.dp))
       }
 
-      // Section: Popular in Rice & Grains
+      // Section: All Shops — full-width row cards below categories. Tapping a
+      // shop opens its dedicated ShopDetail page.
       item {
-        Column(modifier = Modifier.fillMaxWidth()) {
+        Text(
+          text = "Shops Near You",
+          style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold, fontSize = 18.sp),
+          color = BharatTextPrimary,
+          modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
+        )
+      }
+      if (shops.isEmpty()) {
+        item {
           Text(
-            text = "Popular in Rice & Grains",
-            style = MaterialTheme.typography.titleLarge.copy(
-              fontWeight = FontWeight.Bold,
-              fontSize = 18.sp
-            ),
-            color = BharatTextPrimary,
+            text = "No shops available yet. Check back soon.",
+            style = MaterialTheme.typography.bodySmall,
+            color = BharatTextSecondary,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 24.dp)
+          )
+        }
+      } else {
+        items(shops) { shop ->
+          NearbyShopRowCard(
+            shop = shop,
+            onClick = { onShopClick(shop) },
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
           )
-
-          if (isLoading && products.isEmpty()) {
-            ShimmerProductRow()
-          } else if (popularProducts.isEmpty()) {
-            Text(
-              text = "No products found in this category",
-              style = MaterialTheme.typography.bodySmall,
-              color = BharatTextSecondary,
-              modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)
-            )
-          } else {
-            LazyRow(
-              contentPadding = PaddingValues(horizontal = 16.dp),
-              horizontalArrangement = Arrangement.spacedBy(14.dp),
-              modifier = Modifier.fillMaxWidth()
-            ) {
-              items(popularProducts) { product ->
-                val qtyInCart = cartItems
-                  .filter { it.product.id == product.id }
-                  .sumOf { it.quantity }
-
-                ProductGridCard(
-                  product = product,
-                  quantityInCart = qtyInCart,
-                  onProductClick = { onProductClick(product) },
-                  onAddToCart = { onAddToCart(product) },
-                  onIncrease = {
-                    val weight = product.weightOptions.firstOrNull()?.label ?: product.unit
-                    onUpdateCartQty(product.id, weight, 1)
-                  },
-                  onDecrease = {
-                    val weight = product.weightOptions.firstOrNull()?.label ?: product.unit
-                    onUpdateCartQty(product.id, weight, -1)
-                  }
-                )
-              }
-            }
-          }
         }
-        Spacer(modifier = Modifier.height(24.dp))
-      }
-
-      // Section: Daily Essentials
-      item {
-        Column(
-          modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp)
-        ) {
-          Text(
-            text = "Daily Essentials",
-            style = MaterialTheme.typography.titleLarge.copy(
-              fontWeight = FontWeight.Bold,
-              fontSize = 18.sp
-            ),
-            color = BharatTextPrimary,
-            modifier = Modifier.padding(vertical = 6.dp)
-          )
-
-          if (isLoading && products.isEmpty()) {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-              repeat(3) {
-                ShimmerDailyEssentialCard()
-              }
-            }
-          } else if (dailyEssentials.isEmpty()) {
-            Text(
-              text = "No products found in this category",
-              style = MaterialTheme.typography.bodySmall,
-              color = BharatTextSecondary,
-              modifier = Modifier.padding(vertical = 12.dp)
-            )
-          } else {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-              dailyEssentials.forEach { product ->
-                val qtyInCart = cartItems
-                  .filter { it.product.id == product.id }
-                  .sumOf { it.quantity }
-
-                DailyEssentialCard(
-                  product = product,
-                  quantityInCart = qtyInCart,
-                  onProductClick = { onProductClick(product) },
-                  onAddToCart = { onAddToCart(product) }
-                )
-              }
-            }
-          }
-        }
-        Spacer(modifier = Modifier.height(24.dp))
+        item { Spacer(modifier = Modifier.height(12.dp)) }
       }
     }
 
@@ -300,5 +232,83 @@ fun HomeScreen(
         .align(Alignment.BottomCenter)
         .padding(bottom = 8.dp)
     )
+  }
+}
+
+@Composable
+private fun NearbyShopRowCard(
+  shop: com.kks.bharatkirana.data.model.Shop,
+  onClick: () -> Unit,
+  modifier: Modifier = Modifier
+) {
+  val open = shop.isOpen
+  Card(
+    onClick = onClick,
+    shape = RoundedCornerShape(14.dp),
+    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+    modifier = modifier.fillMaxWidth()
+  ) {
+    Row(
+      modifier = Modifier.padding(12.dp),
+      verticalAlignment = Alignment.CenterVertically
+    ) {
+      Box(
+        modifier = Modifier
+          .size(56.dp)
+          .clip(RoundedCornerShape(12.dp))
+          .background(MaterialTheme.colorScheme.primaryContainer),
+        contentAlignment = Alignment.Center
+      ) {
+        Icon(
+          imageVector = Icons.Default.ShoppingBag,
+          contentDescription = null,
+          tint = BharatPurplePrimary,
+          modifier = Modifier.size(28.dp)
+        )
+      }
+      Spacer(modifier = Modifier.width(12.dp))
+      Column(modifier = Modifier.weight(1f)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+          Text(
+            text = shop.name,
+            fontWeight = FontWeight.Bold,
+            color = BharatTextPrimary,
+            fontSize = 15.sp,
+            maxLines = 1,
+            modifier = Modifier.weight(1f, fill = false)
+          )
+          Spacer(modifier = Modifier.width(8.dp))
+          Surface(
+            color = if (open) BharatGreen else Color(0xFFDC2626),
+            shape = RoundedCornerShape(6.dp)
+          ) {
+            Text(
+              text = if (open) "Open" else "Closed",
+              color = Color.White,
+              fontSize = 9.sp,
+              fontWeight = FontWeight.ExtraBold,
+              modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+            )
+          }
+        }
+        Spacer(modifier = Modifier.height(2.dp))
+        Text(
+          text = shop.address.ifBlank { "Nearby" },
+          fontSize = 12.sp,
+          color = BharatTextSecondary,
+          maxLines = 2
+        )
+        if (shop.distance.isNotBlank() && shop.distance != "---") {
+          Spacer(modifier = Modifier.height(2.dp))
+          Text(
+            text = shop.distance,
+            fontSize = 11.sp,
+            color = BharatTextSecondary,
+            fontWeight = FontWeight.Medium
+          )
+        }
+      }
+    }
   }
 }

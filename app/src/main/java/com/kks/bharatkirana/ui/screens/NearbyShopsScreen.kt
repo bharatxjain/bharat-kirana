@@ -103,7 +103,7 @@ fun NearbyShopsScreen(
             Spacer(modifier = Modifier.width(8.dp))
             Column {
               Text(
-                text = "Delivering to",
+                text = "Nearby shops in",
                 style = MaterialTheme.typography.labelSmall,
                 color = BharatTextSecondary
               )

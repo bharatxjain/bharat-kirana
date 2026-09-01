@@ -5,6 +5,35 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
+/**
+ * Signals to the vendor that the product they're trying to list is already in
+ * their shop's inventory. Severity distinguishes the confidence:
+ *   - Hard: definitive match (barcode / catalog identity). App refuses to insert.
+ *   - Soft: heuristic name/brand/unit match. Vendor can override.
+ */
+data class DuplicateAlert(
+  val existing: Product,
+  val severity: Severity,
+  val source: Source
+) {
+  enum class Severity { Hard, Soft }
+  enum class Source { Barcode, CatalogSelect, ManualIdentity }
+}
+
+/**
+ * Fires when addToCart is called with a product whose shopId differs from
+ * whatever's already in the cart. The UI renders a confirmation dialog:
+ * customers can either wipe the cart to start fresh or cancel the add.
+ */
+data class CartShopSwitchAlert(
+  val currentShopId: String,
+  val currentShopName: String,
+  val newShopName: String,
+  val pendingProduct: Product,
+  val pendingWeight: WeightOption,
+  val pendingQty: Int
+)
+
 data class Category(
   val id: String,
   val name: String,
@@ -99,7 +128,11 @@ data class Product(
   val inStock: Boolean = true,
   val isPopular: Boolean = false,
   val isDailyEssential: Boolean = false,
-  val barcode: String = ""
+  val barcode: String = "",
+  // Stable identity for duplicate protection: "barcode:<code>" when known,
+  // NULL for manual/heuristic entries. Enforced unique per shop by the
+  // idx_products_shop_catalog_ref partial index (see FIX_PRODUCT_DUPLICATES.sql).
+  val catalogRef: String? = null
 ) {
   val stockStatus: String
     get() = when {
@@ -280,6 +313,7 @@ sealed class AppScreen {
   data object RoleSelection : AppScreen()
   data object CustomerOnboarding : AppScreen()
   data class ProductDetail(val productId: String) : AppScreen()
+  data class ShopDetail(val shopId: String) : AppScreen()
   data object Cart : AppScreen()
   data class OrderPlaced(val orderId: String) : AppScreen()
   data class OrderDetails(val orderId: String) : AppScreen()
@@ -298,6 +332,7 @@ sealed class AppScreen {
   data class ShopsForProduct(val productName: String) : AppScreen()
   data class ResetPassword(val accessToken: String) : AppScreen()
   data object Notifications : AppScreen()
+  data object Wishlist : AppScreen()
 }
 
 /**

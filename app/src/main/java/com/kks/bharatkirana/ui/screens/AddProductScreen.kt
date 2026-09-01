@@ -31,6 +31,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.kks.bharatkirana.data.model.Category
+import com.kks.bharatkirana.data.model.DuplicateAlert
 import com.kks.bharatkirana.data.model.Product
 import com.kks.bharatkirana.ui.theme.*
 
@@ -52,6 +53,11 @@ fun AddProductScreen(
   onSearchCatalog: (String) -> Unit = {},
   onSelectCatalogProduct: (Product) -> Unit = {},
   categories: List<Category> = emptyList(),
+  duplicateAlert: DuplicateAlert? = null,
+  onDuplicateDismiss: () -> Unit = {},
+  onDuplicateUpdateStock: (Product) -> Unit = {},
+  onDuplicateViewProduct: (Product) -> Unit = {},
+  onDuplicateForceInsert: () -> Unit = {},
   modifier: Modifier = Modifier
 ) {
   // Category names come from the ViewModel (which mirrors the Supabase
@@ -781,6 +787,99 @@ fun AddProductScreen(
         }
       }
     }
+  }
+
+  // Duplicate product alert. Fired by the ViewModel from either the DB
+  // rejection path (hard) or the app-side identity check (soft). Hard blocks
+  // insertion entirely; soft offers a "Yes, Different Product" override.
+  duplicateAlert?.let { alert ->
+    val existing = alert.existing
+    val isHard = alert.severity == DuplicateAlert.Severity.Hard
+    AlertDialog(
+      onDismissRequest = onDuplicateDismiss,
+      containerColor = Color.White,
+      shape = RoundedCornerShape(16.dp),
+      title = {
+        Text(
+          text = if (isHard) "Already in Inventory" else "Possible duplicate",
+          fontWeight = FontWeight.Bold,
+          color = BharatTextPrimary
+        )
+      },
+      text = {
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+          Text(
+            text = if (isHard)
+              "\"${existing.name}\" is already listed in your inventory."
+            else
+              "This looks similar to a product you already have. Continue anyway if it's a different item.",
+            fontSize = 13.sp,
+            color = BharatTextSecondary
+          )
+          OutlinedCard(
+            shape = RoundedCornerShape(12.dp),
+            colors = CardDefaults.outlinedCardColors(containerColor = MaterialTheme.colorScheme.surface),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+            modifier = Modifier.fillMaxWidth()
+          ) {
+            Row(
+              modifier = Modifier.padding(12.dp),
+              verticalAlignment = Alignment.CenterVertically
+            ) {
+              if (existing.imageUrl.isNotBlank()) {
+                AsyncImage(
+                  model = existing.imageUrl,
+                  contentDescription = null,
+                  modifier = Modifier.size(48.dp).clip(RoundedCornerShape(8.dp)),
+                  contentScale = ContentScale.Crop
+                )
+              } else {
+                Box(
+                  modifier = Modifier
+                    .size(48.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(MaterialTheme.colorScheme.primaryContainer),
+                  contentAlignment = Alignment.Center
+                ) {
+                  Icon(Icons.Default.Inventory2, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(22.dp))
+                }
+              }
+              Spacer(modifier = Modifier.width(12.dp))
+              Column(modifier = Modifier.weight(1f)) {
+                Text(existing.name, fontWeight = FontWeight.Bold, fontSize = 14.sp, color = BharatTextPrimary, maxLines = 1)
+                Text(
+                  text = "\u20B9${existing.currentPrice} \u2022 ${existing.stockStatus}",
+                  fontSize = 12.sp,
+                  color = BharatTextSecondary
+                )
+              }
+            }
+          }
+        }
+      },
+      confirmButton = {
+        Row {
+          TextButton(onClick = { onDuplicateUpdateStock(existing) }) {
+            Text("Update Stock", color = BharatPurplePrimary, fontWeight = FontWeight.Bold)
+          }
+          Spacer(modifier = Modifier.width(4.dp))
+          TextButton(onClick = { onDuplicateViewProduct(existing) }) {
+            Text("View Product", color = BharatPurplePrimary, fontWeight = FontWeight.SemiBold)
+          }
+        }
+      },
+      dismissButton = {
+        if (isHard) {
+          TextButton(onClick = onDuplicateDismiss) {
+            Text("Cancel", color = BharatTextSecondary)
+          }
+        } else {
+          TextButton(onClick = onDuplicateForceInsert) {
+            Text("Yes, Different", color = BharatTextSecondary, fontWeight = FontWeight.SemiBold)
+          }
+        }
+      }
+    )
   }
 
   // Community catalog search dialog. Query hits Supabase; user taps a result

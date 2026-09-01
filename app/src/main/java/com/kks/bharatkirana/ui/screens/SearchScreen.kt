@@ -48,10 +48,13 @@ import androidx.compose.ui.unit.sp
 import com.kks.bharatkirana.data.model.CartItem
 import com.kks.bharatkirana.data.model.Product
 import com.kks.bharatkirana.data.model.SearchSuggestion
+import com.kks.bharatkirana.data.model.Shop
+import com.kks.bharatkirana.data.model.isCurrentlyOpen
 import com.kks.bharatkirana.ui.components.CartFloatingBanner
 import com.kks.bharatkirana.ui.components.GrocerySearchBar
 import com.kks.bharatkirana.ui.components.ProductGridCard
 import com.kks.bharatkirana.ui.theme.BharatBackground
+import com.kks.bharatkirana.ui.theme.BharatGreen
 import com.kks.bharatkirana.ui.theme.BharatPurpleContainer
 import com.kks.bharatkirana.ui.theme.BharatPurplePrimary
 import com.kks.bharatkirana.ui.theme.BharatTextMuted
@@ -68,6 +71,8 @@ fun SearchScreen(
   onAddToCart: (Product) -> Unit,
   onUpdateCartQty: (String, String, Int) -> Unit,
   onViewCartClick: () -> Unit,
+  shops: List<Shop> = emptyList(),
+  onShopClick: (Shop) -> Unit = {},
   suggestions: List<SearchSuggestion> = emptyList(),
   onSuggestionClick: (SearchSuggestion) -> Unit = {},
   modifier: Modifier = Modifier
@@ -101,14 +106,30 @@ fun SearchScreen(
     }
   }
 
-  val filteredProducts = if (searchQuery.trim().isEmpty()) {
+  val q = searchQuery.trim()
+  val shopIdToName = remember(shops) { shops.associate { it.id to it.name } }
+
+  val filteredShops = if (q.isEmpty()) emptyList()
+  else shops.filter {
+    it.name.contains(q, ignoreCase = true) ||
+      it.address.contains(q, ignoreCase = true) ||
+      it.primaryCategory.contains(q, ignoreCase = true)
+  }
+
+  val filteredProducts = if (q.isEmpty()) {
     products
   } else {
-    products.filter {
-      it.name.contains(searchQuery, ignoreCase = true) ||
-        it.brand.contains(searchQuery, ignoreCase = true) ||
-        it.description.contains(searchQuery, ignoreCase = true)
+    products.filter { p ->
+      val shopName = shopIdToName[p.shopId].orEmpty()
+      p.name.contains(q, ignoreCase = true) ||
+        p.brand.contains(q, ignoreCase = true) ||
+        p.description.contains(q, ignoreCase = true) ||
+        shopName.contains(q, ignoreCase = true)
     }
+  }
+  // Dedupe by name+brand: tapping a card opens a "shops carrying this" list.
+  val displayProducts = filteredProducts.distinctBy {
+    "${it.name.trim().lowercase()}|${it.brand.trim().lowercase()}"
   }
 
   val cartItemCount = cartItems.sumOf { it.quantity }
@@ -129,7 +150,8 @@ fun SearchScreen(
       GrocerySearchBar(
         query = searchQuery,
         onQueryChange = onSearchQueryChange,
-        placeholder = "Search across 1000+ items..."
+        placeholder = "Search across 1000+ items...",
+        autoFocus = true
       )
 
       // Autosuggestions dropdown: mixes matching products and shops.
@@ -222,18 +244,46 @@ fun SearchScreen(
 
       Spacer(modifier = Modifier.height(16.dp))
 
+      // Matching shops appear above products so the customer can jump straight
+      // to a shop when they searched by shop name.
+      if (q.isNotEmpty() && filteredShops.isNotEmpty()) {
+        Row(
+          modifier = Modifier.fillMaxWidth(),
+          horizontalArrangement = Arrangement.SpaceBetween,
+          verticalAlignment = Alignment.CenterVertically
+        ) {
+          Text(
+            text = "Shops",
+            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+            color = BharatTextPrimary
+          )
+          Text(
+            text = "${filteredShops.size} results",
+            style = MaterialTheme.typography.bodySmall,
+            color = BharatTextMuted
+          )
+        }
+        Spacer(modifier = Modifier.height(8.dp))
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+          filteredShops.take(5).forEach { shop ->
+            SearchShopRow(shop = shop, onClick = { onShopClick(shop) })
+          }
+        }
+        Spacer(modifier = Modifier.height(16.dp))
+      }
+
       Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
       ) {
         Text(
-          text = if (searchQuery.isEmpty()) "All Products" else "Search Results",
+          text = if (q.isEmpty()) "All Products" else "Products",
           style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
           color = BharatTextPrimary
         )
         Text(
-          text = "${filteredProducts.size} results",
+          text = "${displayProducts.size} results",
           style = MaterialTheme.typography.bodySmall,
           color = BharatTextMuted
         )
@@ -241,17 +291,26 @@ fun SearchScreen(
 
       Spacer(modifier = Modifier.height(8.dp))
 
-      if (filteredProducts.isEmpty()) {
-        Box(
-          modifier = Modifier
-            .fillMaxWidth()
-            .weight(1f),
-          contentAlignment = Alignment.Center
-        ) {
+      if (displayProducts.isEmpty()) {
+        if (filteredShops.isEmpty()) {
+          Box(
+            modifier = Modifier
+              .fillMaxWidth()
+              .weight(1f),
+            contentAlignment = Alignment.Center
+          ) {
+            Text(
+              text = "No shops or products match \"$searchQuery\"",
+              style = MaterialTheme.typography.bodyMedium,
+              color = BharatTextSecondary
+            )
+          }
+        } else {
           Text(
-            text = "No groceries found matching \"$searchQuery\"",
+            text = "No products match \"$searchQuery\"",
             style = MaterialTheme.typography.bodyMedium,
-            color = BharatTextSecondary
+            color = BharatTextSecondary,
+            modifier = Modifier.padding(vertical = 12.dp)
           )
         }
       } else {
@@ -262,7 +321,7 @@ fun SearchScreen(
           verticalArrangement = Arrangement.spacedBy(12.dp),
           modifier = Modifier.fillMaxSize()
         ) {
-          items(filteredProducts) { product ->
+          items(displayProducts) { product ->
             val qtyInCart = cartItems
               .filter { it.product.id == product.id }
               .sumOf { it.quantity }
@@ -373,6 +432,67 @@ private fun SuggestionRow(
     Column(modifier = Modifier.weight(1f)) {
       Text(text = title, fontWeight = FontWeight.Bold, color = BharatTextPrimary, fontSize = 14.sp)
       Text(text = subtitle, fontSize = 11.sp, color = BharatTextMuted)
+    }
+  }
+}
+
+@Composable
+private fun SearchShopRow(shop: Shop, onClick: () -> Unit) {
+  val open = shop.isOpen
+  Card(
+    onClick = onClick,
+    shape = RoundedCornerShape(12.dp),
+    colors = CardDefaults.cardColors(containerColor = Color.White),
+    elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFE2E8F0)),
+    modifier = Modifier.fillMaxWidth()
+  ) {
+    Row(
+      modifier = Modifier.padding(10.dp),
+      verticalAlignment = Alignment.CenterVertically
+    ) {
+      Box(
+        modifier = Modifier
+          .size(44.dp)
+          .clip(RoundedCornerShape(10.dp))
+          .background(BharatPurpleContainer),
+        contentAlignment = Alignment.Center
+      ) {
+        Icon(
+          imageVector = Icons.Default.Storefront,
+          contentDescription = null,
+          tint = BharatPurplePrimary,
+          modifier = Modifier.size(22.dp)
+        )
+      }
+      Spacer(modifier = Modifier.width(10.dp))
+      Column(modifier = Modifier.weight(1f)) {
+        Text(
+          text = shop.name,
+          fontWeight = FontWeight.Bold,
+          color = BharatTextPrimary,
+          fontSize = 14.sp,
+          maxLines = 1
+        )
+        Text(
+          text = shop.address.ifBlank { "Nearby" },
+          fontSize = 11.sp,
+          color = BharatTextSecondary,
+          maxLines = 1
+        )
+      }
+      Surface(
+        color = if (open) BharatGreen else Color(0xFFDC2626),
+        shape = RoundedCornerShape(6.dp)
+      ) {
+        Text(
+          text = if (open) "Open" else "Closed",
+          color = Color.White,
+          fontSize = 9.sp,
+          fontWeight = FontWeight.ExtraBold,
+          modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+        )
+      }
     }
   }
 }

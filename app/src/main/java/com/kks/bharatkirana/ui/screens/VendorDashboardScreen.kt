@@ -1,11 +1,17 @@
 package com.kks.bharatkirana.ui.screens
 
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -21,14 +27,20 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
 import coil.compose.AsyncImage
+import com.google.android.gms.location.LocationServices
 import com.kks.bharatkirana.data.model.*
 import com.kks.bharatkirana.ui.theme.*
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -45,6 +57,7 @@ fun VendorDashboardScreen(
   onUpdateProductStock: (String, Boolean) -> Unit = { _, _ -> },
   onUpdateProductPrice: (String, Int) -> Unit = { _, _ -> },
   onUpdateProductQty: (String, Int?) -> Unit = { _, _ -> },
+  onDeleteProduct: (String) -> Unit = {},
   onSupportClick: () -> Unit = {},
   onRefreshStatus: () -> Unit = {},
   onManagePlan: () -> Unit = {},
@@ -53,9 +66,11 @@ fun VendorDashboardScreen(
   currentTierItemCap: Int = 10,
   initialTab: Int = 0,
   onInitialTabConsumed: () -> Unit = {},
+  initialEditProductId: String? = null,
+  onInitialEditProductConsumed: () -> Unit = {},
   modifier: Modifier = Modifier
 ) {
-  var selectedTab by remember { mutableIntStateOf(initialTab) } // 0: Overview, 1: Inventory, 2: Orders, 3: Reviews
+  var selectedTab by remember { mutableIntStateOf(initialTab) } // 0: Overview, 1: Inventory, 2: Orders, 3: Plan
   // If a caller (e.g. Add Product success) asked for a specific starting tab
   // AFTER the screen already exists, honour it and reset the flag.
   LaunchedEffect(initialTab) {
@@ -68,6 +83,22 @@ fun VendorDashboardScreen(
   var editingProductId by remember { mutableStateOf<String?>(null) }
   var editingProductPrice by remember { mutableStateOf("") }
   var editingProductQty by remember { mutableStateOf("") }
+  var inventorySearch by remember { mutableStateOf("") }
+  var inventoryFilter by remember { mutableStateOf("All") }
+  var pendingDeleteProductId by remember { mutableStateOf<String?>(null) }
+
+  // Open the edit dialog automatically when the caller pre-selected a product
+  // (used by the duplicate-alert "Update Stock" action).
+  LaunchedEffect(initialEditProductId, products) {
+    val id = initialEditProductId ?: return@LaunchedEffect
+    val target = products.firstOrNull { it.id == id }
+    if (target != null) {
+      editingProductId = id
+      editingProductPrice = target.currentPrice.toString()
+      editingProductQty = (target.stockQty?.toString().orEmpty())
+      onInitialEditProductConsumed()
+    }
+  }
 
   // Real Analytics Calculations
   val totalOrders = orders.size
@@ -395,63 +426,139 @@ fun VendorDashboardScreen(
             }
           }
           1 -> {
-            LazyColumn(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-               item {
-                 Button(onClick = onManageProducts, modifier = Modifier.fillMaxWidth().height(50.dp), colors = ButtonDefaults.buttonColors(containerColor = BharatPurplePrimary), shape = RoundedCornerShape(12.dp)) {
-                   Icon(Icons.Default.Add, null)
-                   Spacer(Modifier.width(8.dp))
-                   Text("Add New Product", fontWeight = FontWeight.Bold)
-                 }
-               }
-               items(products) { product ->
-                  Card(
-                    onClick = {
+            val q = inventorySearch.trim()
+            val filteredInventory = products.filter { p ->
+              val matchesQuery = q.isEmpty() ||
+                p.name.contains(q, ignoreCase = true) ||
+                p.brand.contains(q, ignoreCase = true)
+              val matchesFilter = when (inventoryFilter) {
+                "In Stock" -> p.stockStatus == "In Stock"
+                "Low Stock" -> p.stockStatus == "Low Stock"
+                "Out of Stock" -> p.stockStatus == "Out of Stock"
+                else -> true
+              }
+              matchesQuery && matchesFilter
+            }
+            val outCount = products.count { it.stockStatus == "Out of Stock" }
+            val lowCount = products.count { it.stockStatus == "Low Stock" }
+            val inCount = products.count { it.stockStatus == "In Stock" }
+
+            LazyColumn(
+              modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background),
+              contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+              verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+              item {
+                Button(
+                  onClick = onManageProducts,
+                  modifier = Modifier.fillMaxWidth().height(50.dp),
+                  colors = ButtonDefaults.buttonColors(containerColor = BharatPurplePrimary),
+                  shape = RoundedCornerShape(12.dp)
+                ) {
+                  Icon(Icons.Default.Add, null, tint = Color.White)
+                  Spacer(Modifier.width(8.dp))
+                  Text("Add New Product", fontWeight = FontWeight.Bold, color = Color.White)
+                }
+              }
+
+              item {
+                OutlinedTextField(
+                  value = inventorySearch,
+                  onValueChange = { inventorySearch = it },
+                  placeholder = { Text("Search products…", color = BharatTextMuted) },
+                  leadingIcon = { Icon(Icons.Default.Search, null, tint = BharatTextSecondary) },
+                  trailingIcon = {
+                    if (inventorySearch.isNotEmpty()) {
+                      IconButton(onClick = { inventorySearch = "" }) {
+                        Icon(Icons.Default.Close, null, tint = BharatTextSecondary)
+                      }
+                    }
+                  },
+                  singleLine = true,
+                  shape = RoundedCornerShape(12.dp),
+                  modifier = Modifier.fillMaxWidth(),
+                  colors = OutlinedTextFieldDefaults.colors(
+                    focusedTextColor = BharatTextPrimary,
+                    unfocusedTextColor = BharatTextPrimary,
+                    focusedContainerColor = Color.White,
+                    unfocusedContainerColor = Color.White,
+                    focusedBorderColor = BharatPurplePrimary,
+                    unfocusedBorderColor = MaterialTheme.colorScheme.outline
+                  )
+                )
+              }
+
+              item {
+                val filters = listOf(
+                  "All" to products.size,
+                  "In Stock" to inCount,
+                  "Low Stock" to lowCount,
+                  "Out of Stock" to outCount
+                )
+                Row(
+                  modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                  horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                  filters.forEach { (label, count) ->
+                    val selected = inventoryFilter == label
+                    FilterChip(
+                      selected = selected,
+                      onClick = { inventoryFilter = label },
+                      label = { Text("$label · $count", fontSize = 12.sp, fontWeight = FontWeight.SemiBold) },
+                      colors = FilterChipDefaults.filterChipColors(
+                        containerColor = Color.White,
+                        selectedContainerColor = BharatPurplePrimary,
+                        labelColor = BharatTextPrimary,
+                        selectedLabelColor = Color.White
+                      ),
+                      border = FilterChipDefaults.filterChipBorder(
+                        enabled = true,
+                        selected = selected,
+                        borderColor = MaterialTheme.colorScheme.outline,
+                        selectedBorderColor = BharatPurplePrimary
+                      )
+                    )
+                  }
+                }
+              }
+
+              if (filteredInventory.isEmpty()) {
+                item {
+                  Box(
+                    modifier = Modifier.fillMaxWidth().padding(top = 48.dp),
+                    contentAlignment = Alignment.Center
+                  ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                      Icon(Icons.Default.Inventory2, null, tint = Color(0xFFCBD5E1), modifier = Modifier.size(48.dp))
+                      Spacer(Modifier.height(10.dp))
+                      Text(
+                        text = if (products.isEmpty()) "No products yet" else "No products match this filter",
+                        fontWeight = FontWeight.Bold,
+                        color = BharatTextPrimary
+                      )
+                      Text(
+                        text = if (products.isEmpty()) "Tap Add New Product to list your first item." else "Try a different filter or search.",
+                        fontSize = 12.sp,
+                        color = BharatTextSecondary,
+                        textAlign = TextAlign.Center
+                      )
+                    }
+                  }
+                }
+              } else {
+                items(filteredInventory, key = { it.id }) { product ->
+                  InventoryRow(
+                    product = product,
+                    onEdit = {
                       editingProductId = product.id
                       editingProductPrice = product.currentPrice.toString()
                       editingProductQty = product.stockQty?.toString().orEmpty()
                     },
-                    shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.cardColors(containerColor = Color.White),
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
-                  ) {
-                    Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                      Box(
-                        modifier = Modifier.size(50.dp).clip(RoundedCornerShape(8.dp)).background(Color(0xFFF1F5F9)),
-                        contentAlignment = Alignment.Center
-                      ) {
-                        val previewUrl = product.imageUrls.firstOrNull()?.takeIf { it.isNotBlank() }
-                          ?: product.imageUrl.takeIf { it.isNotBlank() }
-                        if (previewUrl != null) {
-                          AsyncImage(
-                            model = previewUrl,
-                            contentDescription = product.name,
-                            modifier = Modifier.fillMaxSize(),
-                            contentScale = androidx.compose.ui.layout.ContentScale.Crop
-                          )
-                        } else {
-                          Icon(Icons.Default.Inventory, null, tint = BharatPurplePrimary)
-                        }
-                      }
-                      Spacer(Modifier.width(12.dp))
-                      Column(modifier = Modifier.weight(1f)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                          Text(product.name, fontWeight = FontWeight.Bold, color = BharatTextPrimary, modifier = Modifier.weight(1f, fill = false))
-                          Spacer(Modifier.width(6.dp))
-                          Icon(Icons.Default.Edit, contentDescription = "Edit", tint = BharatPurplePrimary, modifier = Modifier.size(14.dp))
-                        }
-                        Text(
-                          text = buildString {
-                            append(product.stockQty?.let { "$it in stock" } ?: "Qty not set")
-                            append(" • ₹${product.currentPrice} • Tap to edit")
-                          },
-                          fontSize = 11.sp,
-                          color = BharatTextSecondary
-                        )
-                      }
-                      Switch(checked = product.inStock, onCheckedChange = { onUpdateProductStock(product.id, it) }, colors = SwitchDefaults.colors(checkedTrackColor = BharatGreen))
-                    }
-                  }
-               }
+                    onToggleAvailability = { onUpdateProductStock(product.id, !product.inStock) },
+                    onDelete = { pendingDeleteProductId = product.id }
+                  )
+                }
+              }
             }
           }
           2 -> {
@@ -673,6 +780,70 @@ fun VendorDashboardScreen(
     var owner by remember { mutableStateOf(shop.ownerName) }
     var addr by remember { mutableStateOf(shop.address) }
     var phone by remember { mutableStateOf(shop.phone) }
+    var pendingLat by remember { mutableStateOf<Double?>(null) }
+    var pendingLng by remember { mutableStateOf<Double?>(null) }
+    var isFetchingLocation by remember { mutableStateOf(false) }
+    var locationError by remember { mutableStateOf<String?>(null) }
+    var locationSuccess by remember { mutableStateOf(false) }
+
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val fusedLocationClient = remember { LocationServices.getFusedLocationProviderClient(context) }
+
+    fun fetchAndFillAddress() {
+      isFetchingLocation = true
+      locationError = null
+      locationSuccess = false
+      try {
+        fusedLocationClient.getCurrentLocation(
+          com.google.android.gms.location.Priority.PRIORITY_HIGH_ACCURACY,
+          null
+        ).addOnSuccessListener { location ->
+          if (location == null) {
+            isFetchingLocation = false
+            locationError = "Couldn't detect your location. Try again outside or enter address manually."
+            return@addOnSuccessListener
+          }
+          scope.launch {
+            val resolvedAddress = withContext(Dispatchers.IO) {
+              runCatching {
+                @Suppress("DEPRECATION")
+                android.location.Geocoder(context, java.util.Locale.getDefault())
+                  .getFromLocation(location.latitude, location.longitude, 1)
+                  ?.firstOrNull()
+                  ?.getAddressLine(0)
+              }.getOrNull()
+            }
+            isFetchingLocation = false
+            if (!resolvedAddress.isNullOrBlank()) {
+              addr = resolvedAddress
+              pendingLat = location.latitude
+              pendingLng = location.longitude
+              locationSuccess = true
+            } else {
+              // Fall back to setting only the coordinates so the map pin still moves.
+              pendingLat = location.latitude
+              pendingLng = location.longitude
+              locationSuccess = true
+              locationError = "Location captured but couldn't resolve an address. Please edit it manually before saving."
+            }
+          }
+        }.addOnFailureListener {
+          isFetchingLocation = false
+          locationError = "Couldn't detect your location. Please try again or enter address manually."
+        }
+      } catch (e: SecurityException) {
+        isFetchingLocation = false
+        locationError = "Location permission missing. Please enable it in Settings."
+      }
+    }
+
+    val locationPermissionLauncher = rememberLauncherForActivityResult(
+      ActivityResultContracts.RequestPermission()
+    ) { granted ->
+      if (granted) fetchAndFillAddress()
+      else locationError = "Location permission denied. Please enter address manually."
+    }
 
     AlertDialog(
       onDismissRequest = { showEditShopDialog = false },
@@ -688,13 +859,64 @@ fun VendorDashboardScreen(
           OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Shop Name") }, modifier = Modifier.fillMaxWidth(), colors = OutlinedTextFieldDefaults.colors(focusedTextColor = BharatTextPrimary, unfocusedTextColor = BharatTextPrimary, focusedLabelColor = BharatPurplePrimary, unfocusedLabelColor = BharatTextSecondary, focusedContainerColor = Color.White, unfocusedContainerColor = Color.White))
           OutlinedTextField(value = owner, onValueChange = { owner = it }, label = { Text("Owner Name") }, modifier = Modifier.fillMaxWidth(), colors = OutlinedTextFieldDefaults.colors(focusedTextColor = BharatTextPrimary, unfocusedTextColor = BharatTextPrimary, focusedLabelColor = BharatPurplePrimary, unfocusedLabelColor = BharatTextSecondary, focusedContainerColor = Color.White, unfocusedContainerColor = Color.White))
           OutlinedTextField(value = phone, onValueChange = { phone = it }, label = { Text("Phone") }, modifier = Modifier.fillMaxWidth(), colors = OutlinedTextFieldDefaults.colors(focusedTextColor = BharatTextPrimary, unfocusedTextColor = BharatTextPrimary, focusedLabelColor = BharatPurplePrimary, unfocusedLabelColor = BharatTextSecondary, focusedContainerColor = Color.White, unfocusedContainerColor = Color.White))
-          OutlinedTextField(value = addr, onValueChange = { addr = it }, label = { Text("Address") }, minLines = 2, modifier = Modifier.fillMaxWidth(), colors = OutlinedTextFieldDefaults.colors(focusedTextColor = BharatTextPrimary, unfocusedTextColor = BharatTextPrimary, focusedLabelColor = BharatPurplePrimary, unfocusedLabelColor = BharatTextSecondary, focusedContainerColor = Color.White, unfocusedContainerColor = Color.White))
+          OutlinedTextField(value = addr, onValueChange = { addr = it; locationSuccess = false }, label = { Text("Address") }, minLines = 2, modifier = Modifier.fillMaxWidth(), colors = OutlinedTextFieldDefaults.colors(focusedTextColor = BharatTextPrimary, unfocusedTextColor = BharatTextPrimary, focusedLabelColor = BharatPurplePrimary, unfocusedLabelColor = BharatTextSecondary, focusedContainerColor = Color.White, unfocusedContainerColor = Color.White))
+          OutlinedButton(
+            onClick = {
+              val hasPermission = ContextCompat.checkSelfPermission(
+                context, Manifest.permission.ACCESS_FINE_LOCATION
+              ) == PackageManager.PERMISSION_GRANTED
+              if (hasPermission) fetchAndFillAddress()
+              else locationPermissionLauncher.launch(Manifest.permission.ACCESS_FINE_LOCATION)
+            },
+            enabled = !isFetchingLocation,
+            shape = RoundedCornerShape(10.dp),
+            border = BorderStroke(1.dp, BharatPurplePrimary),
+            modifier = Modifier.fillMaxWidth()
+          ) {
+            if (isFetchingLocation) {
+              CircularProgressIndicator(
+                modifier = Modifier.size(16.dp),
+                strokeWidth = 2.dp,
+                color = BharatPurplePrimary
+              )
+              Spacer(Modifier.width(8.dp))
+              Text("Detecting…", color = BharatPurplePrimary, fontWeight = FontWeight.SemiBold)
+            } else {
+              Icon(Icons.Default.MyLocation, null, tint = BharatPurplePrimary, modifier = Modifier.size(16.dp))
+              Spacer(Modifier.width(8.dp))
+              Text("Use Current Location", color = BharatPurplePrimary, fontWeight = FontWeight.SemiBold)
+            }
+          }
+          if (locationSuccess && pendingLat != null && pendingLng != null) {
+            Text(
+              text = "Detected. Review the address, then tap Save.",
+              fontSize = 11.sp,
+              color = BharatGreen
+            )
+          }
+          if (locationError != null) {
+            Text(
+              text = locationError!!,
+              fontSize = 11.sp,
+              color = Color(0xFFDC2626)
+            )
+          }
         }
       },
       confirmButton = {
         Button(
           onClick = {
-            onUpdateShop(shop.id, shop.copy(name = name, ownerName = owner, address = addr, phone = phone))
+            onUpdateShop(
+              shop.id,
+              shop.copy(
+                name = name,
+                ownerName = owner,
+                address = addr,
+                phone = phone,
+                lat = pendingLat ?: shop.lat,
+                lng = pendingLng ?: shop.lng
+              )
+            )
             showEditShopDialog = false
           },
           colors = ButtonDefaults.buttonColors(containerColor = BharatPurplePrimary)
@@ -755,7 +977,7 @@ fun VendorDashboardScreen(
                     null -> "⚠️ Customers see \"Call to Confirm\""
                     0 -> "Customers see \"Out of Stock\""
                     in 1..5 -> "Customers see \"Low Stock\""
-                    else -> "ðŸŸ¢ Customers see \"In Stock\""
+                    else -> "Customers see \"In Stock\" when quantity is greater than 0."
                   },
                   fontSize = 11.sp,
                   color = BharatTextSecondary
@@ -799,6 +1021,188 @@ fun VendorDashboardScreen(
           }
         }
       )
+    }
+  }
+
+  pendingDeleteProductId?.let { pid ->
+    val prod = products.firstOrNull { it.id == pid }
+    if (prod == null) {
+      pendingDeleteProductId = null
+    } else {
+      AlertDialog(
+        onDismissRequest = { pendingDeleteProductId = null },
+        containerColor = Color.White,
+        titleContentColor = BharatTextPrimary,
+        textContentColor = BharatTextPrimary,
+        title = { Text("Delete this product?", fontWeight = FontWeight.Bold) },
+        text = {
+          Text(
+            text = "\"${prod.name}\" will be removed from your inventory. Customers won't be able to see or order it anymore. This can't be undone.",
+            fontSize = 13.sp,
+            color = BharatTextSecondary
+          )
+        },
+        confirmButton = {
+          Button(
+            onClick = {
+              onDeleteProduct(prod.id)
+              pendingDeleteProductId = null
+            },
+            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626))
+          ) { Text("Delete", color = Color.White, fontWeight = FontWeight.Bold) }
+        },
+        dismissButton = {
+          TextButton(onClick = { pendingDeleteProductId = null }) {
+            Text("Cancel", color = BharatPurplePrimary)
+          }
+        }
+      )
+    }
+  }
+}
+
+@Composable
+private fun InventoryRow(
+  product: Product,
+  onEdit: () -> Unit,
+  onToggleAvailability: () -> Unit,
+  onDelete: () -> Unit
+) {
+  var menuOpen by remember { mutableStateOf(false) }
+  val status = product.stockStatus
+  val (badgeColor, badgeBg) = when (status) {
+    "In Stock" -> BharatGreen to Color(0xFFDCFCE7)
+    "Low Stock" -> Color(0xFFD97706) to Color(0xFFFEF3C7)
+    "Out of Stock" -> Color(0xFFDC2626) to Color(0xFFFEE2E2)
+    else -> Color(0xFF64748B) to Color(0xFFF1F5F9)
+  }
+  val stockText = when {
+    !product.inStock -> "Unavailable"
+    product.stockQty == null -> "Qty not tracked"
+    product.stockQty <= 0 -> "Out of stock"
+    product.stockQty in 1..5 -> "Only ${product.stockQty} left"
+    else -> "${product.stockQty} in stock"
+  }
+  val dim = !product.inStock
+
+  Card(
+    onClick = onEdit,
+    shape = RoundedCornerShape(16.dp),
+    colors = CardDefaults.cardColors(containerColor = Color.White),
+    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
+  ) {
+    Row(
+      modifier = Modifier.padding(12.dp),
+      verticalAlignment = Alignment.CenterVertically
+    ) {
+      Box(
+        modifier = Modifier
+          .size(54.dp)
+          .clip(RoundedCornerShape(10.dp))
+          .background(Color(0xFFF1F5F9)),
+        contentAlignment = Alignment.Center
+      ) {
+        val previewUrl = product.imageUrls.firstOrNull()?.takeIf { it.isNotBlank() }
+          ?: product.imageUrl.takeIf { it.isNotBlank() }
+        if (previewUrl != null) {
+          AsyncImage(
+            model = previewUrl,
+            contentDescription = product.name,
+            modifier = Modifier.fillMaxSize(),
+            contentScale = androidx.compose.ui.layout.ContentScale.Crop
+          )
+        } else {
+          Icon(Icons.Default.Inventory, null, tint = BharatPurplePrimary)
+        }
+      }
+      Spacer(Modifier.width(12.dp))
+      Column(modifier = Modifier.weight(1f)) {
+        Text(
+          text = product.name,
+          fontWeight = FontWeight.Bold,
+          color = if (dim) BharatTextSecondary else BharatTextPrimary,
+          maxLines = 1
+        )
+        Spacer(Modifier.height(3.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+          Text(
+            text = "₹${product.currentPrice}",
+            fontSize = 13.sp,
+            fontWeight = FontWeight.Bold,
+            color = BharatTextPrimary
+          )
+          Spacer(Modifier.width(8.dp))
+          Surface(
+            color = badgeBg,
+            shape = RoundedCornerShape(6.dp)
+          ) {
+            Row(
+              modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+              verticalAlignment = Alignment.CenterVertically
+            ) {
+              Box(
+                modifier = Modifier
+                  .size(6.dp)
+                  .clip(CircleShape)
+                  .background(badgeColor)
+              )
+              Spacer(Modifier.width(4.dp))
+              Text(
+                text = stockText,
+                fontSize = 10.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = badgeColor
+              )
+            }
+          }
+        }
+      }
+      Box {
+        IconButton(onClick = { menuOpen = true }) {
+          Icon(Icons.Default.MoreVert, contentDescription = "More", tint = BharatTextSecondary)
+        }
+        DropdownMenu(
+          expanded = menuOpen,
+          onDismissRequest = { menuOpen = false },
+          containerColor = Color.White
+        ) {
+          DropdownMenuItem(
+            text = { Text("Edit price & stock", color = BharatTextPrimary) },
+            leadingIcon = { Icon(Icons.Default.Edit, null, tint = BharatPurplePrimary) },
+            onClick = {
+              menuOpen = false
+              onEdit()
+            }
+          )
+          DropdownMenuItem(
+            text = {
+              Text(
+                text = if (product.inStock) "Mark as unavailable" else "Mark as available",
+                color = BharatTextPrimary
+              )
+            },
+            leadingIcon = {
+              Icon(
+                imageVector = if (product.inStock) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                contentDescription = null,
+                tint = if (product.inStock) Color(0xFFD97706) else BharatGreen
+              )
+            },
+            onClick = {
+              menuOpen = false
+              onToggleAvailability()
+            }
+          )
+          DropdownMenuItem(
+            text = { Text("Delete product", color = Color(0xFFDC2626)) },
+            leadingIcon = { Icon(Icons.Default.Delete, null, tint = Color(0xFFDC2626)) },
+            onClick = {
+              menuOpen = false
+              onDelete()
+            }
+          )
+        }
+      }
     }
   }
 }
@@ -1208,6 +1612,24 @@ private fun VendorOrderActionCard(
         Text(text = "\u20b9${order.totalAmount}", fontWeight = FontWeight.ExtraBold, color = BharatTextPrimary, fontSize = 16.sp)
       }
 
+      if (order.items.isNotEmpty()) {
+        Spacer(modifier = Modifier.height(12.dp))
+        HorizontalDivider(color = Color(0xFFF1F5F9))
+        Spacer(modifier = Modifier.height(10.dp))
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+          order.items.forEach { item ->
+            VendorOrderLineItem(item)
+          }
+        }
+        Spacer(modifier = Modifier.height(10.dp))
+        HorizontalDivider(color = Color(0xFFF1F5F9))
+        Spacer(modifier = Modifier.height(8.dp))
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+          Text("Order total", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = BharatTextSecondary)
+          Text("\u20b9${order.totalAmount}", fontSize = 14.sp, fontWeight = FontWeight.ExtraBold, color = BharatTextPrimary)
+        }
+      }
+
       Spacer(modifier = Modifier.height(12.dp))
       Row(
         modifier = Modifier.fillMaxWidth(),
@@ -1233,5 +1655,46 @@ private fun VendorOrderActionCard(
         }
       }
     }
+  }
+}
+
+@Composable
+private fun VendorOrderLineItem(item: CartItem) {
+  val previewUrl = item.product.imageUrls.firstOrNull { it.isNotBlank() }
+    ?: item.product.imageUrl.takeIf { it.isNotBlank() }
+  Row(verticalAlignment = Alignment.CenterVertically) {
+    Box(
+      modifier = Modifier
+        .size(44.dp)
+        .clip(RoundedCornerShape(8.dp))
+        .background(Color(0xFFF1F5F9)),
+      contentAlignment = Alignment.Center
+    ) {
+      if (previewUrl != null) {
+        AsyncImage(
+          model = previewUrl,
+          contentDescription = item.product.name,
+          modifier = Modifier.fillMaxSize(),
+          contentScale = androidx.compose.ui.layout.ContentScale.Crop
+        )
+      } else {
+        Icon(Icons.Default.Inventory, null, tint = BharatPurplePrimary, modifier = Modifier.size(20.dp))
+      }
+    }
+    Spacer(modifier = Modifier.width(10.dp))
+    Column(modifier = Modifier.weight(1f)) {
+      Text(item.product.name, fontWeight = FontWeight.SemiBold, color = BharatTextPrimary, fontSize = 13.sp, maxLines = 1)
+      Text(
+        text = buildString {
+          append(item.selectedWeight.label)
+          append(" \u2022 Qty ${item.quantity}")
+          append(" \u2022 \u20b9${item.selectedWeight.price} each")
+        },
+        fontSize = 11.sp,
+        color = BharatTextSecondary,
+        maxLines = 1
+      )
+    }
+    Text("\u20b9${item.totalPrice}", fontWeight = FontWeight.Bold, color = BharatTextPrimary, fontSize = 13.sp)
   }
 }

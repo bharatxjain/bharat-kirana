@@ -52,6 +52,12 @@ private class ProgressRequestBody(
   }
 }
 
+/** Thrown by addProduct when the DB's partial unique index rejects the insert. */
+class DuplicateProductException(
+  val shopId: String,
+  val catalogRef: String?
+) : Exception("This product is already listed in your shop.")
+
 class SupabaseGroceryRepo(
   private val client: OkHttpClient = OkHttpClient.Builder()
     .connectTimeout(15, TimeUnit.SECONDS)
@@ -288,6 +294,37 @@ class SupabaseGroceryRepo(
       }
     }
 
+  suspend fun markAllNotificationsRead(userId: String, accessToken: String? = null): Result<Unit> =
+    withContext(Dispatchers.IO) {
+      runCatching {
+        val url = "${SupabaseConfig.restUrl}/notifications?user_id=eq.$userId&is_read=eq.false"
+        val payload = JSONObject().apply { put("is_read", true) }
+        val request = baseRequestBuilder(url, accessToken)
+          .addHeader("Prefer", "return=minimal")
+          .patch(payload.toString().toRequestBody(jsonMediaType))
+          .build()
+        val response = client.newCall(request).execute()
+        if (!response.isSuccessful) {
+          throw Exception("Failed to mark all notifications read: HTTP ${response.code}")
+        }
+      }
+    }
+
+  suspend fun deleteAllNotifications(userId: String, accessToken: String? = null): Result<Unit> =
+    withContext(Dispatchers.IO) {
+      runCatching {
+        val url = "${SupabaseConfig.restUrl}/notifications?user_id=eq.$userId"
+        val request = baseRequestBuilder(url, accessToken)
+          .addHeader("Prefer", "return=minimal")
+          .delete()
+          .build()
+        val response = client.newCall(request).execute()
+        if (!response.isSuccessful) {
+          throw Exception("Failed to clear notifications: HTTP ${response.code}")
+        }
+      }
+    }
+
   /**
    * Add Product in Supabase (Store Admin)
    */
@@ -322,6 +359,9 @@ class SupabaseGroceryRepo(
           put("image_urls", JSONArray(product.imageUrls))
           put("image_url", product.imageUrl)
           if (product.barcode.isNotBlank()) put("barcode", product.barcode)
+          // catalog_ref is the DB-enforced dedup key. NULL means "no stable
+          // identity" and skips the unique index (see FIX_PRODUCT_DUPLICATES.sql).
+          if (product.catalogRef != null) put("catalog_ref", product.catalogRef) else put("catalog_ref", JSONObject.NULL)
         }
 
         val request = baseRequestBuilder(url, accessToken)
@@ -331,8 +371,14 @@ class SupabaseGroceryRepo(
 
         val response = client.newCall(request).execute()
         if (!response.isSuccessful) {
-          val err = response.body?.string()?.take(200) ?: ""
-          throw Exception("Failed to add product: HTTP ${response.code}${if (err.isNotBlank()) " — $err" else ""}")
+          val body = response.body?.string()?.take(400) ?: ""
+          // Postgres unique_violation on our partial index means the shop
+          // already has this catalog_ref. Surface as a typed exception so the
+          // ViewModel can show the "Already in Inventory" dialog.
+          if (response.code == 409 && body.contains("23505") && body.contains("idx_products_shop_catalog_ref")) {
+            throw DuplicateProductException(shopId = product.shopId, catalogRef = product.catalogRef)
+          }
+          throw Exception("Failed to add product: HTTP ${response.code}${if (body.isNotBlank()) " — $body" else ""}")
         }
       }
     }
@@ -422,65 +468,136 @@ class SupabaseGroceryRepo(
   /**
    * Fetch Orders from Supabase
    */
-  suspend fun fetchOrders(customerEmail: String? = null, isAdmin: Boolean = false, accessToken: String? = null): Result<List<Order>> =
+  suspend fun fetchOrders(customerEmail: String? = null, isAdmin: Boolean = false, vendorShopId: String? = null, accessToken: String? = null): Result<List<Order>> =
     withContext(Dispatchers.IO) {
       runCatching {
-        val url = if (isAdmin || customerEmail == null) {
-          "${SupabaseConfig.restUrl}/orders?select=*&order=created_at.desc"
-        } else {
-          "${SupabaseConfig.restUrl}/orders?customer_email=eq.${customerEmail.trim().lowercase()}&select=*&order=created_at.desc"
+        // Try embedding order_items first for a single-round-trip fetch; if the
+        // migration for order_items hasn't been applied on this Supabase project
+        // the embed 400s, so fall through to a plain select=* fetch.
+        fun buildUrl(select: String): String = when {
+          isAdmin -> "${SupabaseConfig.restUrl}/orders?$select&order=created_at.desc"
+          !vendorShopId.isNullOrBlank() -> "${SupabaseConfig.restUrl}/orders?shop_id=eq.$vendorShopId&$select&order=created_at.desc"
+          customerEmail != null -> "${SupabaseConfig.restUrl}/orders?customer_email=eq.${customerEmail.trim().lowercase()}&$select&order=created_at.desc"
+          else -> "${SupabaseConfig.restUrl}/orders?$select&order=created_at.desc"
         }
 
+        val embedRequest = baseRequestBuilder(buildUrl("select=*,order_items(*)"), accessToken).get().build()
+        var response = client.newCall(embedRequest).execute()
+        var body = response.body?.string() ?: ""
+
+        if (!response.isSuccessful) {
+          // Retry without the embed so vendors and customers still see their
+          // orders on Supabase projects that haven't applied ORDER_ITEMS_MIGRATION.sql.
+          val plainRequest = baseRequestBuilder(buildUrl("select=*"), accessToken).get().build()
+          response = client.newCall(plainRequest).execute()
+          body = response.body?.string() ?: ""
+          if (!response.isSuccessful) {
+            throw Exception("Failed to fetch orders: HTTP ${response.code}")
+          }
+        }
+
+        val array = JSONArray(body)
+        val orderList = mutableListOf<Order>()
+
+        for (i in 0 until array.length()) {
+          val obj = array.getJSONObject(i)
+          val id = obj.optString("id")
+          val totalAmount = obj.optInt("total_amount", 0)
+          val orderDate = obj.optString("order_date", "Today")
+          val statusStr = obj.optString("status", "Order Placed")
+          val qrCodePayload = obj.optString("qr_code_payload", "ORDER:$id")
+          val shopIdField = obj.optString("shop_id").takeIf { it.isNotBlank() } ?: "default_shop"
+
+          val status = when (statusStr) {
+            OrderStatus.CONFIRMED.label -> OrderStatus.CONFIRMED
+            OrderStatus.PREPARING.label -> OrderStatus.PREPARING
+            OrderStatus.READY_FOR_PICKUP.label -> OrderStatus.READY_FOR_PICKUP
+            OrderStatus.COMPLETED.label -> OrderStatus.COMPLETED
+            OrderStatus.CANCELLED.label -> OrderStatus.CANCELLED
+            else -> OrderStatus.PLACED
+          }
+
+          val timeline = com.kks.bharatkirana.data.model.buildOrderTimeline(
+            currentStatus = status,
+            orderDate = orderDate,
+            nowLabel = orderDate
+          )
+
+          val itemsArray = obj.optJSONArray("order_items")
+          val items = if (itemsArray != null) parseOrderItems(itemsArray) else emptyList()
+
+          orderList.add(
+            Order(
+              id = id,
+              shopId = shopIdField,
+              items = items,
+              totalAmount = totalAmount,
+              orderDate = orderDate,
+              status = status,
+              expectedPickupTime = "Today by 5:30 PM",
+              qrCodePayload = qrCodePayload,
+              timeline = timeline
+            )
+          )
+        }
+        orderList
+      }
+    }
+
+  /**
+   * Convert embedded `order_items` JSON rows into UI-shaped [CartItem]s.
+   * Uses the denormalised snapshot fields so historical orders stay readable
+   * even if the underlying product row later changes.
+   */
+  private fun parseOrderItems(itemsArray: JSONArray): List<com.kks.bharatkirana.data.model.CartItem> {
+    val list = mutableListOf<com.kks.bharatkirana.data.model.CartItem>()
+    for (j in 0 until itemsArray.length()) {
+      val row = itemsArray.getJSONObject(j)
+      val productId = row.optString("product_id")
+      val productName = row.optString("product_name")
+      val brand = row.optString("brand", "")
+      val imageUrl = row.optString("image_url", "")
+      val weightLabel = row.optString("weight_label", "1x")
+      val unitPrice = row.optInt("unit_price", 0)
+      val quantity = row.optInt("quantity", 1)
+      val synthetic = com.kks.bharatkirana.data.model.Product(
+        id = productId,
+        name = productName,
+        brand = brand,
+        categoryId = "",
+        currentPrice = unitPrice,
+        originalPrice = unitPrice,
+        unit = weightLabel,
+        imageUrl = imageUrl,
+        imageUrls = if (imageUrl.isNotBlank()) listOf(imageUrl) else emptyList()
+      )
+      list.add(
+        com.kks.bharatkirana.data.model.CartItem(
+          product = synthetic,
+          selectedWeight = com.kks.bharatkirana.data.model.WeightOption(label = weightLabel, price = unitPrice),
+          quantity = quantity
+        )
+      )
+    }
+    return list
+  }
+
+  /**
+   * Fetch the line items of a single order. Used by the vendor's Realtime
+   * INSERT handler, where the WebSocket payload only carries the `orders`
+   * row and not its embedded children.
+   */
+  suspend fun fetchOrderItems(orderId: String, accessToken: String? = null): Result<List<com.kks.bharatkirana.data.model.CartItem>> =
+    withContext(Dispatchers.IO) {
+      runCatching {
+        val url = "${SupabaseConfig.restUrl}/order_items?order_id=eq.$orderId&select=*&order=id"
         val request = baseRequestBuilder(url, accessToken).get().build()
         val response = client.newCall(request).execute()
         val body = response.body?.string() ?: ""
-
-        if (response.isSuccessful) {
-          val array = JSONArray(body)
-          val orderList = mutableListOf<Order>()
-
-          for (i in 0 until array.length()) {
-            val obj = array.getJSONObject(i)
-            val id = obj.optString("id")
-            val totalAmount = obj.optInt("total_amount", 0)
-            val orderDate = obj.optString("order_date", "Today")
-            val statusStr = obj.optString("status", "Order Placed")
-            val qrCodePayload = obj.optString("qr_code_payload", "ORDER:$id")
-
-            val status = when (statusStr) {
-              OrderStatus.CONFIRMED.label -> OrderStatus.CONFIRMED
-              OrderStatus.PREPARING.label -> OrderStatus.PREPARING
-              OrderStatus.READY_FOR_PICKUP.label -> OrderStatus.READY_FOR_PICKUP
-              OrderStatus.COMPLETED.label -> OrderStatus.COMPLETED
-              OrderStatus.CANCELLED.label -> OrderStatus.CANCELLED
-              else -> OrderStatus.PLACED
-            }
-
-            // Round 6: reuse the same helper the client uses at insert time so
-            // the customer sees a consistent 5-step timeline everywhere.
-            val timeline = com.kks.bharatkirana.data.model.buildOrderTimeline(
-              currentStatus = status,
-              orderDate = orderDate,
-              nowLabel = orderDate
-            )
-
-            orderList.add(
-              Order(
-                id = id,
-                items = emptyList(),
-                totalAmount = totalAmount,
-                orderDate = orderDate,
-                status = status,
-                expectedPickupTime = "Today by 5:30 PM",
-                qrCodePayload = qrCodePayload,
-                timeline = timeline
-              )
-            )
-          }
-          orderList
-        } else {
-          throw Exception("Failed to fetch orders: HTTP ${response.code}")
+        if (!response.isSuccessful) {
+          throw Exception("Failed to fetch order items: HTTP ${response.code}")
         }
+        parseOrderItems(JSONArray(body))
       }
     }
 
@@ -525,6 +642,41 @@ class SupabaseGroceryRepo(
         val response = client.newCall(request).execute()
         if (!response.isSuccessful) {
           throw Exception("Failed to create order: HTTP ${response.code}")
+        }
+
+        // Persist line items in a single batch POST so vendors see the full
+        // product breakdown. Denormalised snapshot fields (name, brand, image,
+        // weight, unit_price) keep old orders readable even if the underlying
+        // product later changes or is deleted. See ORDER_ITEMS_MIGRATION.sql.
+        if (order.items.isNotEmpty()) {
+          val itemsUrl = "${SupabaseConfig.restUrl}/order_items"
+          val itemsArray = JSONArray().apply {
+            order.items.forEach { ci ->
+              val imageUrl = ci.product.imageUrls.firstOrNull { it.isNotBlank() }
+                ?: ci.product.imageUrl
+              put(
+                JSONObject().apply {
+                  put("order_id", order.id)
+                  put("product_id", ci.product.id)
+                  put("product_name", ci.product.name)
+                  put("brand", ci.product.brand)
+                  put("image_url", imageUrl)
+                  put("weight_label", ci.selectedWeight.label)
+                  put("unit_price", ci.selectedWeight.price)
+                  put("quantity", ci.quantity)
+                  put("line_total", ci.selectedWeight.price * ci.quantity)
+                }
+              )
+            }
+          }
+          val itemsRequest = baseRequestBuilder(itemsUrl, accessToken)
+            .addHeader("Prefer", "return=minimal")
+            .post(itemsArray.toString().toRequestBody(jsonMediaType))
+            .build()
+          val itemsResponse = client.newCall(itemsRequest).execute()
+          if (!itemsResponse.isSuccessful) {
+            throw Exception("Failed to create order items: HTTP ${itemsResponse.code}")
+          }
         }
       }
     }

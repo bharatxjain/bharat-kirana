@@ -24,6 +24,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import com.kks.bharatkirana.data.model.AppScreen
 import com.kks.bharatkirana.data.model.AuthPath
@@ -36,6 +37,21 @@ import com.kks.bharatkirana.ui.theme.BharatPurplePrimary
 import com.kks.bharatkirana.ui.theme.BharatTextPrimary
 import com.kks.bharatkirana.ui.theme.BharatTextSecondary
 import com.kks.bharatkirana.ui.viewmodel.GroceryViewModel
+
+/** Snapshot of the last List Product tap so the duplicate-alert "Yes, Different" button can re-fire the insert with the same values. */
+private data class AddProductAttempt(
+  val name: String,
+  val cat: String,
+  val unit: String,
+  val price: Int,
+  val mrp: Int,
+  val desc: String,
+  val stock: Boolean,
+  val stockQty: Int?,
+  val imageUris: List<android.net.Uri>,
+  val barcode: String,
+  val scannedImage: String
+)
 
 @Composable
 fun MainScreen(
@@ -65,6 +81,7 @@ fun MainScreen(
   val activeShopId by viewModel.activeShopId.collectAsState()
   val notifications by viewModel.notifications.collectAsState()
   val unreadNotificationCount by viewModel.unreadNotificationCount.collectAsState()
+  val cartShopSwitchAlert by viewModel.cartShopSwitchAlert.collectAsState()
 
   // Round 3: Remote Config-driven state
   val isMaintenanceMode by viewModel.isMaintenanceMode.collectAsState()
@@ -113,12 +130,56 @@ fun MainScreen(
     }
   }
 
-  BackHandler(enabled = (currentScreen != AppScreen.Main && currentScreen != AppScreen.AdminDashboard && currentScreen != AppScreen.VendorDashboard) || (currentScreen == AppScreen.Main && currentTab != MainTab.HOME)) {
-    if (currentScreen != AppScreen.Main && currentScreen != AppScreen.AdminDashboard && currentScreen != AppScreen.VendorDashboard) {
-      viewModel.navigateBack()
-    } else if (currentScreen == AppScreen.Main && currentTab != MainTab.HOME) {
-      viewModel.setTab(MainTab.HOME)
+  val activeShopIdForBack by viewModel.activeShopId.collectAsState()
+  BackHandler(
+    enabled = (currentScreen != AppScreen.Main && currentScreen != AppScreen.AdminDashboard && currentScreen != AppScreen.VendorDashboard)
+      || (currentScreen == AppScreen.Main && currentTab != MainTab.HOME)
+      || (currentScreen == AppScreen.Main && currentTab == MainTab.HOME && activeShopIdForBack != null)
+  ) {
+    when {
+      currentScreen == AppScreen.Main && currentTab != MainTab.HOME -> viewModel.setTab(MainTab.HOME)
+      currentScreen == AppScreen.Main && activeShopIdForBack != null -> {
+        // Clear the active-shop context on back so returning to Home later
+        // doesn't keep showing that shop's categories.
+        viewModel.selectShop(null)
+        viewModel.navigateBack()
+      }
+      currentScreen != AppScreen.Main && currentScreen != AppScreen.AdminDashboard && currentScreen != AppScreen.VendorDashboard -> viewModel.navigateBack()
     }
+  }
+
+  // Global cart-shop-switch confirmation. Sits at the top of MainScreen so any
+  // add-to-cart from Home / ShopDetail / ProductDetail / Categories fires it.
+  cartShopSwitchAlert?.let { alert ->
+    AlertDialog(
+      onDismissRequest = { viewModel.dismissCartShopSwitchAlert() },
+      containerColor = Color.White,
+      shape = RoundedCornerShape(16.dp),
+      title = { Text("Your cart contains items from another shop", fontWeight = FontWeight.Bold, color = BharatTextPrimary) },
+      text = {
+        Column {
+          Text(
+            text = "You can only order from one shop at a time. Your cart has items from \"${alert.currentShopName}\". Clear it to start a new order from \"${alert.newShopName}\"?",
+            fontSize = 13.sp,
+            color = BharatTextSecondary
+          )
+        }
+      },
+      confirmButton = {
+        Button(
+          onClick = { viewModel.clearCartAndAddPending() },
+          colors = ButtonDefaults.buttonColors(containerColor = BharatPurplePrimary),
+          shape = RoundedCornerShape(10.dp)
+        ) {
+          Text("Clear Cart & Add", color = Color.White, fontWeight = FontWeight.Bold)
+        }
+      },
+      dismissButton = {
+        TextButton(onClick = { viewModel.dismissCartShopSwitchAlert() }) {
+          Text("Keep Current Cart", color = BharatPurplePrimary, fontWeight = FontWeight.SemiBold)
+        }
+      }
+    )
   }
 
   Box(
@@ -313,12 +374,15 @@ fun MainScreen(
         } else {
         val recommendations = products.filter { it.id != product.id }.take(4)
         val vendor = shops.find { it.id == product.shopId }
-        
+        val wishlistIds by viewModel.wishlistIds.collectAsState()
+
         ProductDetailScreen(
           product = product,
           vendor = vendor,
           recommendations = recommendations,
           cartItems = cartItems,
+          isFavorite = product.id in wishlistIds,
+          onFavoriteToggle = { viewModel.toggleWishlist(product.id) },
           onBackClick = { viewModel.navigateBack() },
           onAddToCart = { prod, weight, qty ->
             viewModel.addToCart(prod, weight, qty)
@@ -381,6 +445,9 @@ fun MainScreen(
               viewModel.setTab(MainTab.ORDERS)
               viewModel.navigateTo(AppScreen.Main)
             },
+            onTrackOrderClick = {
+              viewModel.navigateTo(AppScreen.OrderDetails(order.id))
+            },
             onHomeClick = {
               viewModel.setTab(MainTab.HOME)
               viewModel.navigateTo(AppScreen.Main)
@@ -391,10 +458,20 @@ fun MainScreen(
       }
 
       is AppScreen.OrderDetails -> {
-        val order = orders.find { it.id == screen.orderId } ?: orders.firstOrNull()
+        val order = orders.find { it.id == screen.orderId }
         val ratedIds by viewModel.ratedOrderIds.collectAsState()
+        // Populate order.items lazily so the tracker shows product images and
+        // per-line totals even when the initial fetch returned only the parent
+        // row (e.g. order_items embed was declined by RLS or predates the
+        // migration).
+        LaunchedEffect(screen.orderId, order?.items?.size) {
+          if (order != null && order.items.isEmpty()) {
+            viewModel.hydrateOrderItems(screen.orderId)
+          }
+        }
         if (order != null) {
-          val shopDistance = shops.firstOrNull { it.id == order.shopId }?.distance
+          val orderShop = shops.firstOrNull { it.id == order.shopId }
+          val shopDistance = orderShop?.distance
           OrderDetailsScreen(
             order = order,
             onBackClick = { viewModel.navigateBack() },
@@ -404,7 +481,15 @@ fun MainScreen(
             },
             onCancelOrder = { orderId -> viewModel.cancelOrder(orderId) },
             hasAlreadyRated = ratedIds.contains(order.id),
-            shopDistanceLabel = shopDistance
+            shopDistanceLabel = shopDistance,
+            shop = orderShop,
+            userLocation = userLocation
+          )
+        } else {
+          OrderNotFoundScreen(
+            orderId = screen.orderId,
+            onBackClick = { viewModel.navigateBack() },
+            onRefresh = { viewModel.loadSupabaseData() }
           )
         }
       }
@@ -442,6 +527,27 @@ fun MainScreen(
             if (notification.orderId != null) {
               viewModel.navigateTo(AppScreen.OrderDetails(notification.orderId))
             }
+          },
+          onMarkAllRead = { viewModel.markAllNotificationsRead() },
+          onClearAll = { viewModel.clearAllNotifications() }
+        )
+      }
+
+      is AppScreen.Wishlist -> {
+        val wishlistIds by viewModel.wishlistIds.collectAsState()
+        val wishlistProducts = products.filter { it.id in wishlistIds }
+        WishlistScreen(
+          products = wishlistProducts,
+          onBackClick = { viewModel.navigateBack() },
+          onProductClick = { prod -> viewModel.selectProduct(prod) },
+          onAddToCart = { prod ->
+            val defaultWeight = prod.weightOptions.firstOrNull()
+            if (defaultWeight != null) viewModel.addToCart(prod, defaultWeight, 1)
+          },
+          onRemove = { id -> viewModel.removeFromWishlist(id) },
+          onExploreClick = {
+            viewModel.setTab(MainTab.HOME)
+            viewModel.navigateTo(AppScreen.Main)
           }
         )
       }
@@ -450,8 +556,10 @@ fun MainScreen(
         NearbyShopsScreen(
           shops = shops,
           onShopClick = { shop ->
-            viewModel.selectShop(shop.id)
-            viewModel.navigateBack()
+            // Open the dedicated shop page; do NOT flip activeShop or return
+            // to Home. This keeps the customer inside NearbyShops until they
+            // navigate away, and back returns them to the list.
+            viewModel.navigateTo(AppScreen.ShopDetail(shop.id))
           },
           onProfileClick = {
             viewModel.setTab(MainTab.PROFILE)
@@ -462,6 +570,43 @@ fun MainScreen(
           onNotificationsClick = { viewModel.navigateTo(AppScreen.Notifications) },
           userLocation = userLocation
         )
+      }
+
+      is AppScreen.ShopDetail -> {
+        val shop = shops.firstOrNull { it.id == screen.shopId }
+        if (shop == null) {
+          LaunchedEffect(Unit) { viewModel.navigateBack() }
+        } else {
+          val shopProducts = products.filter { it.shopId == shop.id }
+          ShopDetailScreen(
+            shop = shop,
+            products = shopProducts,
+            categories = categories,
+            cartQuantityFor = { product ->
+              cartItems.filter { it.product.id == product.id }.sumOf { it.quantity }
+            },
+            onBackClick = { viewModel.navigateBack() },
+            onProductClick = { p -> viewModel.navigateTo(AppScreen.ProductDetail(p.id)) },
+            onAddToCart = { p ->
+              val weight = p.weightOptions.firstOrNull() ?: com.kks.bharatkirana.data.model.WeightOption(
+                label = p.unit, price = p.currentPrice, originalPrice = p.originalPrice
+              )
+              viewModel.addToCart(p, weight, 1)
+            },
+            onIncreaseQty = { p ->
+              val weight = p.weightOptions.firstOrNull() ?: com.kks.bharatkirana.data.model.WeightOption(
+                label = p.unit, price = p.currentPrice, originalPrice = p.originalPrice
+              )
+              viewModel.updateCartQuantity(p.id, weight.label, +1)
+            },
+            onDecreaseQty = { p ->
+              val weight = p.weightOptions.firstOrNull() ?: com.kks.bharatkirana.data.model.WeightOption(
+                label = p.unit, price = p.currentPrice, originalPrice = p.originalPrice
+              )
+              viewModel.updateCartQuantity(p.id, weight.label, -1)
+            }
+          )
+        }
       }
 
       is AppScreen.VendorRegistration -> {
@@ -519,6 +664,7 @@ fun MainScreen(
         val tiers by viewModel.subscriptionTiers.collectAsState()
         val currentTier = tiers.firstOrNull { it.id == vendorSub?.tierId }
         val initialTab by viewModel.vendorInitialTab.collectAsState()
+        val initialEditProductId by viewModel.inventoryEditProductId.collectAsState()
         VendorDashboardScreen(
           shop = vendorShop,
           orders = orders.filter { it.shopId == vendorShop.id },
@@ -539,12 +685,15 @@ fun MainScreen(
           onUpdateProductStock = { prodId, inStock -> viewModel.updateProductStock(prodId, inStock) },
           onUpdateProductPrice = { prodId, price -> viewModel.updateProductPrice(prodId, price) },
           onUpdateProductQty = { prodId, qty -> viewModel.updateProductQty(prodId, qty) },
+          onDeleteProduct = { prodId -> viewModel.deleteProduct(prodId) },
           onSupportClick = { viewModel.openSupportWhatsApp() },
           onRefreshStatus = { viewModel.loadSupabaseData() },
           onManagePlan = { viewModel.navigateTo(AppScreen.Subscription) },
           onOpenProfile = { viewModel.navigateTo(AppScreen.VendorProfile) },
           initialTab = initialTab,
-          onInitialTabConsumed = { viewModel.setVendorInitialTab(0) }
+          onInitialTabConsumed = { viewModel.setVendorInitialTab(0) },
+          initialEditProductId = initialEditProductId,
+          onInitialEditProductConsumed = { viewModel.setInventoryEditProduct(null) }
         )
         }
       }
@@ -617,6 +766,11 @@ fun MainScreen(
         val catalogResults by viewModel.catalogSearchResults.collectAsState()
         val catalogLoading by viewModel.catalogSearchLoading.collectAsState()
         val productAddedSuccess by viewModel.productAddedSuccess.collectAsState()
+        val duplicateAlert by viewModel.duplicateAlert.collectAsState()
+
+        // Cache the last-attempted form values so "Yes, Different" can re-fire
+        // addNewProduct with force=true. Recorded on every List Product tap.
+        var lastAttempt by remember { mutableStateOf<AddProductAttempt?>(null) }
 
         // Auto-close AddProduct + jump to Inventory tab on the dashboard once
         // the row actually saved to Supabase. Waiting for the real success
@@ -634,10 +788,8 @@ fun MainScreen(
         AddProductScreen(
           onBackClick = { viewModel.navigateBack() },
           onListProduct = { name, cat, unit, price, mrp, desc, stock, stockQty, imageUris, barcode, scannedImage ->
+             lastAttempt = AddProductAttempt(name, cat, unit, price, mrp, desc, stock, stockQty, imageUris, barcode, scannedImage)
              viewModel.addNewProduct(name, cat, unit, price, mrp, desc, stock, stockQty, imageUris, barcode, scannedImage)
-             // Screen stays put; the LaunchedEffect above closes it when the
-             // Supabase insert actually succeeds. On failure, the vendor sees
-             // the amber banner and can retry.
           },
           onScanBarcode = { viewModel.navigateTo(AppScreen.BarcodeScanner) },
           scannedTemplate = scannedTemplate,
@@ -654,7 +806,32 @@ fun MainScreen(
           catalogSearchLoading = catalogLoading,
           onSearchCatalog = { viewModel.searchCatalog(it) },
           onSelectCatalogProduct = { viewModel.applyCatalogChoice(it) },
-          categories = categories
+          categories = categories,
+          duplicateAlert = duplicateAlert,
+          onDuplicateDismiss = { viewModel.clearDuplicateAlert() },
+          onDuplicateUpdateStock = { existing ->
+            viewModel.clearDuplicateAlert()
+            viewModel.setVendorInitialTab(1)
+            viewModel.setInventoryEditProduct(existing.id)
+            viewModel.clearScannedTemplate()
+            viewModel.navigateBack()
+          },
+          onDuplicateViewProduct = { _ ->
+            viewModel.clearDuplicateAlert()
+            viewModel.setVendorInitialTab(1)
+            viewModel.clearScannedTemplate()
+            viewModel.navigateBack()
+          },
+          onDuplicateForceInsert = {
+            viewModel.clearDuplicateAlert()
+            lastAttempt?.let { a ->
+              viewModel.addNewProduct(
+                a.name, a.cat, a.unit, a.price, a.mrp, a.desc, a.stock,
+                a.stockQty, a.imageUris, a.barcode, a.scannedImage,
+                forceInsertDespiteSoftMatch = true
+              )
+            }
+          }
         )
       }
 
@@ -748,14 +925,12 @@ fun MainScreen(
         } else {
         Scaffold(
           bottomBar = {
-            if (activeShopId != null || currentTab == MainTab.PROFILE || currentTab == MainTab.ORDERS) {
-              Column {
-                BharatBottomNavigationBar(
-                  currentTab = currentTab,
-                  onTabSelected = { tab -> viewModel.setTab(tab) },
-                  cartItemCount = totalCartCount
-                )
-              }
+            Column {
+              BharatBottomNavigationBar(
+                currentTab = currentTab,
+                onTabSelected = { tab -> viewModel.setTab(tab) },
+                cartItemCount = totalCartCount
+              )
             }
           }
         ) { paddingValues ->
@@ -766,122 +941,86 @@ fun MainScreen(
           ) {
             when (currentTab) {
               MainTab.HOME -> {
-                if (activeShopId == null) {
-                  NearbyShopsScreen(
-                    shops = shops,
-                    onShopClick = { shop ->
-                      viewModel.selectShop(shop.id)
-                    },
-                    onProfileClick = {
-                      viewModel.setTab(MainTab.PROFILE)
-                    },
-                    onBackClick = { /* Home Root */ },
-                    userInitial = userProfile.fullName.firstOrNull()?.toString() ?: "U",
-                    unreadNotificationCount = unreadNotificationCount,
-                    onNotificationsClick = { viewModel.navigateTo(AppScreen.Notifications) },
-                    userLocation = userLocation
-                  )
-                } else {
-                  HomeScreen(
-                    userProfile = userProfile,
-                    categories = categories,
-                    products = products,
-                    cartItems = cartItems,
-                    searchQuery = searchQuery,
-                    onSearchQueryChange = { q ->
-                      viewModel.onSearchQueryChange(q)
-                      if (q.isNotEmpty()) viewModel.setTab(MainTab.SEARCH)
-                    },
-                    onCategoryClick = { cat -> viewModel.selectCategory(cat) },
-                    onProductClick = { prod -> viewModel.selectProduct(prod) },
-                    onAddToCart = { prod ->
-                      val defaultWeight = prod.weightOptions.firstOrNull()
-                      if (defaultWeight != null) viewModel.addToCart(prod, defaultWeight, 1)
-                    },
-                    onUpdateCartQty = { prodId, weightLabel, delta ->
-                      viewModel.updateCartQuantity(prodId, weightLabel, delta)
-                    },
-                    onViewCartClick = { viewModel.navigateTo(AppScreen.Cart) },
-                    onProfileClick = { viewModel.setTab(MainTab.PROFILE) },
-                    onStoreClick = { viewModel.navigateTo(AppScreen.StoreInfo) },
-                    onChangeStoreClick = { viewModel.selectShop(null) },
-                    onAdminClick = {
-                      if (userProfile.isSuperAdmin) viewModel.navigateTo(AppScreen.AdminDashboard)
-                      else if (userProfile.isVendor) viewModel.navigateTo(AppScreen.VendorDashboard)
-                    },
-                    onNotificationsClick = { viewModel.navigateTo(AppScreen.Notifications) },
-                    unreadNotificationCount = unreadNotificationCount,
-                    promoBanner = promoBanner,
-                    isLoading = isLoading,
-                    activeShopId = activeShopId
-                  )
-                }
+                HomeScreen(
+                  userProfile = userProfile,
+                  categories = categories,
+                  products = products,
+                  cartItems = cartItems,
+                  searchQuery = searchQuery,
+                  onSearchQueryChange = { q ->
+                    viewModel.onSearchQueryChange(q)
+                    viewModel.setTab(MainTab.SEARCH)
+                  },
+                  onCategoryClick = { cat -> viewModel.selectCategory(cat) },
+                  onProductClick = { prod -> viewModel.selectProduct(prod) },
+                  onAddToCart = { prod ->
+                    val defaultWeight = prod.weightOptions.firstOrNull()
+                    if (defaultWeight != null) viewModel.addToCart(prod, defaultWeight, 1)
+                  },
+                  onUpdateCartQty = { prodId, weightLabel, delta ->
+                    viewModel.updateCartQuantity(prodId, weightLabel, delta)
+                  },
+                  onViewCartClick = { viewModel.navigateTo(AppScreen.Cart) },
+                  onProfileClick = { viewModel.setTab(MainTab.PROFILE) },
+                  onStoreClick = { viewModel.navigateTo(AppScreen.StoreInfo) },
+                  onChangeStoreClick = { viewModel.selectShop(null) },
+                  onAdminClick = {
+                    if (userProfile.isSuperAdmin) viewModel.navigateTo(AppScreen.AdminDashboard)
+                    else if (userProfile.isVendor) viewModel.navigateTo(AppScreen.VendorDashboard)
+                  },
+                  onNotificationsClick = { viewModel.navigateTo(AppScreen.Notifications) },
+                  unreadNotificationCount = unreadNotificationCount,
+                  promoBanner = promoBanner,
+                  isLoading = isLoading,
+                  activeShopId = activeShopId,
+                  shops = shops,
+                  onShopClick = { shop -> viewModel.navigateTo(AppScreen.ShopDetail(shop.id)) },
+                  onViewAllShopsClick = { viewModel.navigateTo(AppScreen.NearbyShops) }
+                )
               }
 
               MainTab.CATEGORIES -> {
-                if (activeShopId == null) {
-                  NearbyShopsScreen(
-                    shops = shops,
-                    onShopClick = { shop -> viewModel.selectShop(shop.id) },
-                    onProfileClick = { viewModel.setTab(MainTab.PROFILE) },
-                    onBackClick = { viewModel.setTab(MainTab.HOME) },
-                    userInitial = userProfile.fullName.firstOrNull()?.toString() ?: "U",
-                    unreadNotificationCount = unreadNotificationCount,
-                    onNotificationsClick = { viewModel.navigateTo(AppScreen.Notifications) },
-                    userLocation = userLocation
-                  )
-                } else {
-                  CategoriesScreen(
-                    categories = categories,
-                    products = products.filter { it.shopId == activeShopId },
-                    selectedCategory = selectedCategory,
-                    cartItems = cartItems,
-                    onSelectCategory = { cat -> viewModel.selectCategory(cat) },
-                    onProductClick = { prod -> viewModel.selectProduct(prod) },
-                    onAddToCart = { prod ->
-                      val defaultWeight = prod.weightOptions.firstOrNull()
-                      if (defaultWeight != null) viewModel.addToCart(prod, defaultWeight, 1)
-                    },
-                    onUpdateCartQty = { prodId, weightLabel, delta ->
-                      viewModel.updateCartQuantity(prodId, weightLabel, delta)
-                    },
-                    onViewCartClick = { viewModel.navigateTo(AppScreen.Cart) },
-                    isLoading = isLoading
-                  )
-                }
+                CategoriesScreen(
+                  categories = categories,
+                  products = products,
+                  selectedCategory = selectedCategory,
+                  cartItems = cartItems,
+                  onSelectCategory = { cat -> viewModel.selectCategory(cat) },
+                  onProductClick = { prod -> viewModel.selectProduct(prod) },
+                  onAddToCart = { prod ->
+                    val defaultWeight = prod.weightOptions.firstOrNull()
+                    if (defaultWeight != null) viewModel.addToCart(prod, defaultWeight, 1)
+                  },
+                  onUpdateCartQty = { prodId, weightLabel, delta ->
+                    viewModel.updateCartQuantity(prodId, weightLabel, delta)
+                  },
+                  onViewCartClick = { viewModel.navigateTo(AppScreen.Cart) },
+                  isLoading = isLoading
+                )
               }
 
               MainTab.SEARCH -> {
-                if (activeShopId == null) {
-                   NearbyShopsScreen(
-                    shops = shops,
-                    onShopClick = { shop -> viewModel.selectShop(shop.id) },
-                    onProfileClick = { viewModel.setTab(MainTab.PROFILE) },
-                    onBackClick = { viewModel.setTab(MainTab.HOME) },
-                    userInitial = userProfile.fullName.firstOrNull()?.toString() ?: "U",
-                    unreadNotificationCount = unreadNotificationCount,
-                    onNotificationsClick = { viewModel.navigateTo(AppScreen.Notifications) },
-                    userLocation = userLocation
-                  )
-                } else {
-                  SearchScreen(
-                    searchQuery = searchQuery,
-                    products = products.filter { it.shopId == activeShopId },
-                    cartItems = cartItems,
-                    onSearchQueryChange = { q -> viewModel.onSearchQueryChange(q) },
-                    onProductClick = { prod -> viewModel.selectProduct(prod) },
-                    onAddToCart = { prod ->
-                      val defaultWeight = prod.weightOptions.firstOrNull()
-                      if (defaultWeight != null) viewModel.addToCart(prod, defaultWeight, 1)
-                    },
-                    onUpdateCartQty = { prodId, weightLabel, delta ->
-                      viewModel.updateCartQuantity(prodId, weightLabel, delta)
-                    },
-                    onViewCartClick = { viewModel.navigateTo(AppScreen.Cart) },
-                    suggestions = searchSuggestions,
-                    onSuggestionClick = { suggestion -> viewModel.onSuggestionSelected(suggestion) }
-                  )
-                }
+                SearchScreen(
+                  searchQuery = searchQuery,
+                  products = products,
+                  shops = shops,
+                  cartItems = cartItems,
+                  onSearchQueryChange = { q -> viewModel.onSearchQueryChange(q) },
+                  onProductClick = { prod ->
+                    viewModel.navigateTo(AppScreen.ShopsForProduct(prod.name))
+                  },
+                  onShopClick = { shop -> viewModel.navigateTo(AppScreen.ShopDetail(shop.id)) },
+                  onAddToCart = { prod ->
+                    val defaultWeight = prod.weightOptions.firstOrNull()
+                    if (defaultWeight != null) viewModel.addToCart(prod, defaultWeight, 1)
+                  },
+                  onUpdateCartQty = { prodId, weightLabel, delta ->
+                    viewModel.updateCartQuantity(prodId, weightLabel, delta)
+                  },
+                  onViewCartClick = { viewModel.navigateTo(AppScreen.Cart) },
+                  suggestions = searchSuggestions,
+                  onSuggestionClick = { suggestion -> viewModel.onSuggestionSelected(suggestion) }
+                )
               }
 
               MainTab.ORDERS -> {
@@ -953,6 +1092,7 @@ fun MainScreen(
                     }
                   )
                 } else {
+                  val wishlistIds by viewModel.wishlistIds.collectAsState()
                   ProfileScreen(
                     userProfile = userProfile,
                     orders = orders,
@@ -978,6 +1118,9 @@ fun MainScreen(
                     onVendorRegisterClick = {
                       viewModel.navigateTo(AppScreen.VendorRegistration)
                     },
+                    onMyOrdersClick = { viewModel.setTab(MainTab.ORDERS) },
+                    onWishlistClick = { viewModel.navigateTo(AppScreen.Wishlist) },
+                    wishlistCount = wishlistIds.size,
                     onLogout = {
                       viewModel.logout()
                     },

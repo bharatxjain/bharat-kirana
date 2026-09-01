@@ -38,6 +38,7 @@ import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Policy
 import androidx.compose.material.icons.filled.QrCode
+import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.ReceiptLong
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Shield
@@ -81,6 +82,7 @@ import androidx.compose.ui.unit.sp
 import com.kks.bharatkirana.data.model.Order
 import com.kks.bharatkirana.data.model.OrderStatus
 import com.kks.bharatkirana.data.model.UserProfile
+import com.kks.bharatkirana.data.model.UserRole
 import com.kks.bharatkirana.ui.components.CustomQrCodePattern
 import com.kks.bharatkirana.ui.theme.BharatBackground
 import com.kks.bharatkirana.ui.theme.BharatGreen
@@ -106,6 +108,9 @@ fun ProfileScreen(
   onPrivacyPolicyClick: () -> Unit = {},
   onTermsClick: () -> Unit = {},
   onVendorRegisterClick: () -> Unit = {},
+  onMyOrdersClick: () -> Unit = {},
+  onWishlistClick: () -> Unit = {},
+  wishlistCount: Int = 0,
   onLogout: () -> Unit = {},
   onDeleteAccount: () -> Unit = {},
   hasSupport: Boolean = false,
@@ -270,6 +275,10 @@ fun ProfileScreen(
               Spacer(modifier = Modifier.width(14.dp))
 
               Column(modifier = Modifier.weight(1f)) {
+                // "Shop Owner" only when the account is actually a vendor (role
+                // + real shop). Accounts that picked vendor at signup but never
+                // finished shop registration are UX-wise still customers.
+                val isRealVendor = userProfile.serverRole == UserRole.VENDOR && userProfile.shopId != null
                 Row(verticalAlignment = Alignment.CenterVertically) {
                   Text(
                     text = userProfile.fullName,
@@ -278,13 +287,13 @@ fun ProfileScreen(
                   )
                   Spacer(modifier = Modifier.width(6.dp))
 
-                  // Role Badge
+                  // Role Badge.
                   val roleLabel = when {
                     userProfile.isAdmin -> "Admin"
-                    userProfile.isVendor -> "Shop Owner"
+                    isRealVendor -> "Shop Owner"
                     else -> "Customer"
                   }
-                  val roleIsHighlighted = userProfile.isAdmin || userProfile.isVendor
+                  val roleIsHighlighted = userProfile.isAdmin || isRealVendor
                   Surface(
                     shape = RoundedCornerShape(6.dp),
                     color = if (roleIsHighlighted) BharatPurpleContainer else Color(0xFFF1F5F9)
@@ -296,7 +305,7 @@ fun ProfileScreen(
                       Icon(
                         imageVector = when {
                           userProfile.isAdmin -> Icons.Default.AdminPanelSettings
-                          userProfile.isVendor -> Icons.Default.Storefront
+                          isRealVendor -> Icons.Default.Storefront
                           else -> Icons.Default.Person
                         },
                         contentDescription = "Role",
@@ -320,7 +329,7 @@ fun ProfileScreen(
                 Text(
                   text = userProfile.email,
                   style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium),
-                  color = if (userProfile.isAdmin || userProfile.isVendor) BharatPurplePrimary else BharatTextSecondary
+                  color = if (userProfile.isAdmin || isRealVendor) BharatPurplePrimary else BharatTextSecondary
                 )
 
                 Text(
@@ -616,6 +625,88 @@ fun ProfileScreen(
           }
           Spacer(modifier = Modifier.height(20.dp))
         }
+      }
+
+      // Quick access: Your Orders and Your Wishlist. Rendered before the
+      // vendor onboarding CTA so returning customers hit them first.
+      item {
+        Card(
+          shape = RoundedCornerShape(16.dp),
+          colors = CardDefaults.cardColors(containerColor = Color.White),
+          border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
+          modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp)
+        ) {
+          Column {
+            Row(
+              modifier = Modifier
+                .fillMaxWidth()
+                .clickable { onMyOrdersClick() }
+                .padding(horizontal = 16.dp, vertical = 14.dp)
+                .testTag("profile_your_orders_row"),
+              verticalAlignment = Alignment.CenterVertically
+            ) {
+              Box(
+                modifier = Modifier
+                  .size(38.dp)
+                  .clip(CircleShape)
+                  .background(BharatPurpleContainer),
+                contentAlignment = Alignment.Center
+              ) {
+                Icon(Icons.Default.ReceiptLong, null, tint = BharatPurplePrimary, modifier = Modifier.size(20.dp))
+              }
+              Spacer(modifier = Modifier.width(14.dp))
+              Column(modifier = Modifier.weight(1f)) {
+                Text(
+                  text = "Your Orders",
+                  style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+                  color = BharatTextPrimary
+                )
+                Text(
+                  text = if (orders.isEmpty()) "See your past orders here" else "${orders.size} orders placed",
+                  style = MaterialTheme.typography.bodySmall,
+                  color = BharatTextSecondary
+                )
+              }
+              Icon(Icons.Default.ChevronRight, null, tint = BharatTextMuted)
+            }
+            HorizontalDivider(color = Color(0xFFF1F5F9))
+            Row(
+              modifier = Modifier
+                .fillMaxWidth()
+                .clickable { onWishlistClick() }
+                .padding(horizontal = 16.dp, vertical = 14.dp)
+                .testTag("profile_wishlist_row"),
+              verticalAlignment = Alignment.CenterVertically
+            ) {
+              Box(
+                modifier = Modifier
+                  .size(38.dp)
+                  .clip(CircleShape)
+                  .background(Color(0xFFFEE2E2)),
+                contentAlignment = Alignment.Center
+              ) {
+                Icon(Icons.Default.Favorite, null, tint = Color(0xFFDC2626), modifier = Modifier.size(20.dp))
+              }
+              Spacer(modifier = Modifier.width(14.dp))
+              Column(modifier = Modifier.weight(1f)) {
+                Text(
+                  text = "Your Wishlist",
+                  style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+                  color = BharatTextPrimary
+                )
+                Text(
+                  text = if (wishlistCount == 0) "Save items to buy later" else "$wishlistCount saved items",
+                  style = MaterialTheme.typography.bodySmall,
+                  color = BharatTextSecondary
+                )
+              }
+              Icon(Icons.Default.ChevronRight, null, tint = BharatTextMuted)
+            }
+          }
+        }
+        Spacer(modifier = Modifier.height(20.dp))
       }
 
       // Vendor Onboarding Card — only shown once the server profile has actually
