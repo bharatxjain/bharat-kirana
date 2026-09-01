@@ -16,9 +16,9 @@ android {
   defaultConfig {
     applicationId = "com.kks.bharatkirana"
     minSdk = 24
-    targetSdk = 35
-    versionCode = 9
-    versionName = "1.09"
+    targetSdk = 36
+    versionCode = 10
+    versionName = "1.10"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
