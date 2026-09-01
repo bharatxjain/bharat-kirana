@@ -29,3 +29,7 @@ my-upload-key.jks
 *.aab
 *.apk
 
+
+# Local build helper scripts + captured build logs
+build_and_check.bat
+build_out.txt
