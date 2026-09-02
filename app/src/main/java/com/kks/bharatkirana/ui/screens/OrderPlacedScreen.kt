@@ -130,7 +130,7 @@ fun OrderPlacedScreen(
           color = BharatPurpleContainer
         ) {
           Text(
-            text = "Order #${order.id}",
+            text = "Order ${order.displayNumber}",
             color = BharatPurpleDark,
             fontWeight = FontWeight.Bold,
             fontSize = 14.sp,

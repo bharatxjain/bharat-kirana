@@ -487,6 +487,20 @@ class GroceryViewModel(
             channelId = "vendor_notifications",
             channelName = "Vendor Alerts"
           )
+          // Persist to the notifications inbox so it also shows up in the
+          // Notifications screen — the local system push is transient.
+          val vendorUserId = supabaseAuthService.currentUserId
+          if (!vendorUserId.isNullOrBlank()) {
+            viewModelScope.launch {
+              supabaseGroceryRepo.insertNotification(
+                userId = vendorUserId,
+                title = "New order received",
+                message = "Order #$orderId for ₹${newOrder.totalAmount}. Tap to view details.",
+                orderId = orderId,
+                accessToken = supabaseAuthService.currentAccessToken
+              )
+            }
+          }
         }
         // The Realtime payload only carries the parent row; fetch the line
         // items so the UI shows the full product breakdown right away.
@@ -1103,7 +1117,8 @@ class GroceryViewModel(
       channelName = "Order Updates"
     )
 
-    // Asynchronously sync order to Supabase
+    // Asynchronously sync order to Supabase. Failures are surfaced via
+    // _authStatusMessage so we never silently drop an order server-side.
     viewModelScope.launch {
       supabaseGroceryRepo.insertOrder(
         order = newOrder,
@@ -1114,7 +1129,10 @@ class GroceryViewModel(
         promoCode = appliedCode,
         promoDiscount = promoDiscount,
         accessToken = supabaseAuthService.currentAccessToken
-      )
+      ).onFailure { err ->
+        android.util.Log.e("GroceryViewModel", "insertOrder failed for ${newOrder.id}: ${err.message}", err)
+        _authStatusMessage.value = "Order saved locally — sync failed: ${err.localizedMessage ?: "network error"}. Please refresh."
+      }
     }
 
     return newOrder
@@ -1399,13 +1417,8 @@ class GroceryViewModel(
     }
     supabaseRealtime.disconnect()
     clearSavedSession()
-    _userProfile.value = UserProfile(
-      fullName = "",
-      email = ""
-    )
+    resetUserScopedState()
     _authStatusMessage.value = null
-    _cartItems.value = emptyList()
-    _profileFetchComplete.value = false
     screenBackStack.clear()
     _currentScreen.value = AppScreen.Auth
   }
@@ -1421,14 +1434,67 @@ class GroceryViewModel(
         supabaseGroceryRepo.deleteUserProfile(userId, supabaseAuthService.currentAccessToken)
       }
       supabaseAuthService.signOut()
+      supabaseRealtime.disconnect()
       clearSavedSession()
-      _userProfile.value = UserProfile()
-      _orders.value = emptyList()
-      _cartItems.value = emptyList()
+      resetUserScopedState()
       _authStatusMessage.value = "Account and data deleted successfully."
       screenBackStack.clear()
       _currentScreen.value = AppScreen.Auth
     }
+  }
+
+  /**
+   * Wipe every per-user StateFlow the ViewModel holds. Called from both
+   * `logout()` and `deleteAccount()` so switching accounts never leaves
+   * stale orders / notifications / cart / wishlist from the previous user
+   * visible to the next one. Public data (shops, products, subscription
+   * tiers, remote-config toggles) is intentionally kept — it survives a
+   * signout because it isn't scoped to a user.
+   */
+  private fun resetUserScopedState() {
+    _userProfile.value = UserProfile()
+    _profileFetchComplete.value = false
+    _profileSyncPending.value = false
+
+    // Cart + shop
+    _cartItems.value = emptyList()
+    _activeShopId.value = null
+    _cartShopSwitchAlert.value = null
+
+    // Orders + history
+    _orders.value = emptyList()
+    _latestPlacedOrderId.value = null
+    _ratedOrderIds.value = emptySet()
+
+    // Notifications
+    _notifications.value = emptyList()
+
+    // Wishlist (in-memory + persisted)
+    _wishlistIds.value = emptySet()
+    prefs.edit().remove("wishlist_ids").apply()
+
+    // Search
+    _searchQuery.value = ""
+    // searchSuggestions is derived from _searchQuery via combine() so it
+    // clears automatically when the query is emptied.
+    _selectedProduct.value = null
+    _selectedCategory.value = null
+
+    // Promo state
+    _appliedPromo.value = null
+    _promoStatusMessage.value = null
+
+    // Pending vendor / customer signup drafts
+    _pendingSignupName.value = null
+    _pendingSignupMobile.value = null
+
+    // Vendor-side state
+    _vendorSubscription.value = null
+    _vendorAnalytics.value = VendorAnalytics()
+    _tierCapMessage.value = null
+    _duplicateAlert.value = null
+    _inventoryEditProductId.value = null
+    _vendorInitialTab.value = 0
   }
 
   fun login(
@@ -1491,13 +1557,22 @@ class GroceryViewModel(
         supabaseGroceryRepo.fetchProfile(userId, supabaseAuthService.currentAccessToken)
           .onSuccess { serverProfile ->
             _userProfile.update { local ->
+              // Trust the server's shopId literally. If the server says null,
+              // clear any local stale value — a leftover shopId from a prior
+              // aborted vendor registration must not carry over into the
+              // customer view.
+              val resolvedShopId = if (serverProfile.serverRole == UserRole.VENDOR) {
+                serverProfile.shopId ?: local.shopId
+              } else {
+                serverProfile.shopId
+              }
               local.copy(
                 fullName = serverProfile.fullName.ifBlank { local.fullName },
                 mobileNumber = serverProfile.mobileNumber.ifBlank { local.mobileNumber },
                 address = serverProfile.address.ifBlank { local.address },
                 loyaltyPoints = serverProfile.loyaltyPoints,
                 walletBalance = serverProfile.walletBalance,
-                shopId = serverProfile.shopId ?: local.shopId,
+                shopId = resolvedShopId,
                 profileCompleted = serverProfile.profileCompleted || local.profileCompleted,
                 phoneVerified = serverProfile.phoneVerified || local.phoneVerified,
                 serverRole = serverProfile.serverRole
@@ -1541,7 +1616,9 @@ class GroceryViewModel(
           .onSuccess { ids -> _ratedOrderIds.value = ids }
       }
 
-      // Load orders using the (possibly updated) admin flag
+      // Load orders using the (possibly updated) admin flag. Unconditionally
+      // overwrite so the newly-authenticated user never sees stale rows from
+      // the previous account — even if their own list is genuinely empty.
       val effectiveIsAdmin = _userProfile.value.isAdmin
       val effectiveVendorShopId = _userProfile.value.shopId?.takeIf { it.isNotBlank() }
       supabaseGroceryRepo.fetchOrders(
@@ -1550,9 +1627,7 @@ class GroceryViewModel(
         vendorShopId = effectiveVendorShopId,
         accessToken = supabaseAuthService.currentAccessToken
       ).onSuccess { liveOrders ->
-        if (liveOrders.isNotEmpty()) {
-          _orders.value = liveOrders
-        }
+        _orders.value = liveOrders
       }
 
       loadNotifications()
@@ -2006,6 +2081,60 @@ class GroceryViewModel(
   private val _vendorAnalytics = MutableStateFlow(VendorAnalytics())
   val vendorAnalytics: StateFlow<VendorAnalytics> = _vendorAnalytics.asStateFlow()
 
+  // ---- Vendor pickup verification -----------------------------------------
+
+  private val _pickupState = MutableStateFlow(PickupState())
+  val pickupState: StateFlow<PickupState> = _pickupState.asStateFlow()
+
+  fun resetPickupState() {
+    _pickupState.value = PickupState()
+  }
+
+  /** Look up an order in the calling vendor's shop by its short display number. */
+  fun findVendorOrderByNumber(number: Int) {
+    if (number <= 0) {
+      _pickupState.update { it.copy(errorMessage = "Enter a valid order number.", isBusy = false) }
+      return
+    }
+    _pickupState.update { it.copy(isBusy = true, errorMessage = null, lookup = null, completedOrderId = null) }
+    viewModelScope.launch {
+      supabaseGroceryRepo.findShopOrderByNumber(number, supabaseAuthService.currentAccessToken)
+        .onSuccess { lookup ->
+          if (lookup == null) {
+            _pickupState.update { it.copy(isBusy = false, errorMessage = "No order #$number in your shop.") }
+          } else {
+            _pickupState.update { it.copy(isBusy = false, lookup = lookup) }
+          }
+        }
+        .onFailure { err ->
+          _pickupState.update { it.copy(isBusy = false, errorMessage = err.localizedMessage ?: "Lookup failed.") }
+        }
+    }
+  }
+
+  /** Complete a pickup via the customer's QR token or after a manual lookup. */
+  fun completeOrderByPickupToken(token: String) {
+    if (token.isBlank()) {
+      _pickupState.update { it.copy(errorMessage = "Empty pickup code.", isBusy = false) }
+      return
+    }
+    _pickupState.update { it.copy(isBusy = true, errorMessage = null) }
+    viewModelScope.launch {
+      supabaseGroceryRepo.completeOrderByPickupToken(token, supabaseAuthService.currentAccessToken)
+        .onSuccess { completedId ->
+          // Optimistic local update — reflect the completion until Realtime
+          // catches up.
+          _orders.update { list ->
+            list.map { if (it.id == completedId) it.copy(status = OrderStatus.COMPLETED) else it }
+          }
+          _pickupState.update { it.copy(isBusy = false, completedOrderId = completedId, errorMessage = null) }
+        }
+        .onFailure { err ->
+          _pickupState.update { it.copy(isBusy = false, errorMessage = err.localizedMessage ?: "Pickup failed.") }
+        }
+    }
+  }
+
   fun loadVendorAnalytics() {
     if (!hasBasicAnalytics()) return
     val shopId = _userProfile.value.shopId ?: return
@@ -2108,12 +2237,10 @@ class GroceryViewModel(
     val order = _orders.value.find { it.id == orderId } ?: return
     if (order.status == OrderStatus.COMPLETED || order.status == OrderStatus.CANCELLED) return
     updateOrderStatus(orderId, OrderStatus.CANCELLED)
-    showSystemNotification(
-      title = "Order cancelled",
-      message = "Order #${order.id} has been cancelled.",
-      channelId = "customer_notifications",
-      channelName = "Order Status"
-    )
+    // Customer is notified via the server-side notify-order-status Edge
+    // Function on the CANCELLED status transition — never fire a local push
+    // here, otherwise whichever device called this (vendor or customer) would
+    // pop up "Order cancelled" for the wrong party.
   }
 
   fun updateProductStock(productId: String, inStock: Boolean) {
@@ -2456,6 +2583,28 @@ class GroceryViewModel(
             }
           }
         }
+    }
+  }
+
+  /**
+   * One-shot hydrate of every order in `_orders` whose items list is empty.
+   * Called when the vendor opens their dashboard so their order cards show
+   * accurate item counts + product breakdown instead of "0 items".
+   */
+  fun hydrateAllEmptyOrderItems() {
+    val emptyIds = _orders.value.filter { it.items.isEmpty() }.map { it.id }
+    if (emptyIds.isEmpty()) return
+    viewModelScope.launch {
+      emptyIds.forEach { orderId ->
+        supabaseGroceryRepo.fetchOrderItems(orderId, supabaseAuthService.currentAccessToken)
+          .onSuccess { fetched ->
+            if (fetched.isNotEmpty()) {
+              _orders.update { list ->
+                list.map { if (it.id == orderId) it.copy(items = fetched) else it }
+              }
+            }
+          }
+      }
     }
   }
 

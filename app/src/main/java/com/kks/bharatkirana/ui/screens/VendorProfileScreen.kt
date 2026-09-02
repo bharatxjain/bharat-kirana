@@ -78,6 +78,8 @@ fun VendorProfileScreen(
   onOpenReviews: () -> Unit,
   onSupportClick: () -> Unit,
   onLogout: () -> Unit,
+  totalOrders: Int = 0,
+  totalRevenue: Int = 0,
   modifier: Modifier = Modifier
 ) {
   var showEditShopDialog by remember { mutableStateOf(false) }
@@ -170,6 +172,31 @@ fun VendorProfileScreen(
       }
 
       // ── Action cards ──────────────────────────────────────────────────────
+      item {
+        Card(
+          shape = RoundedCornerShape(16.dp),
+          colors = CardDefaults.cardColors(containerColor = Color.White),
+          border = BorderStroke(1.dp, Color(0xFFF1F5F9)),
+          modifier = Modifier.fillMaxWidth()
+        ) {
+          Row(modifier = Modifier.padding(16.dp)) {
+            Column(modifier = Modifier.weight(1f)) {
+              Text("TOTAL ORDERS", fontWeight = FontWeight.ExtraBold, fontSize = 10.sp, color = BharatTextSecondary, letterSpacing = 0.5.sp)
+              Spacer(modifier = Modifier.height(4.dp))
+              Text(text = "$totalOrders", fontWeight = FontWeight.ExtraBold, fontSize = 22.sp, color = BharatTextPrimary)
+              Text("Lifetime orders", fontSize = 11.sp, color = BharatTextSecondary)
+            }
+            Spacer(modifier = Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+              Text("LIFETIME REVENUE", fontWeight = FontWeight.ExtraBold, fontSize = 10.sp, color = BharatTextSecondary, letterSpacing = 0.5.sp)
+              Spacer(modifier = Modifier.height(4.dp))
+              Text(text = "\u20b9$totalRevenue", fontWeight = FontWeight.ExtraBold, fontSize = 22.sp, color = BharatTextPrimary)
+              Text("Verified settlements", fontSize = 11.sp, color = BharatTextSecondary)
+            }
+          }
+        }
+      }
+
       item {
         ProfileActionCard(
           icon = Icons.Default.Edit,

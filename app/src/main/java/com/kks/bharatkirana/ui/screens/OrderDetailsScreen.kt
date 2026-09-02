@@ -47,6 +47,7 @@ import com.kks.bharatkirana.data.model.Order
 import com.kks.bharatkirana.data.model.OrderStatus
 import com.kks.bharatkirana.data.model.Shop
 import com.kks.bharatkirana.ui.components.CustomQrCodePattern
+import com.kks.bharatkirana.ui.components.QrCode
 import com.kks.bharatkirana.ui.components.OrderTimelineView
 import com.kks.bharatkirana.ui.theme.*
 import com.mappls.sdk.maps.MapView
@@ -92,7 +93,7 @@ fun OrderDetailsScreen(
       onDismissRequest = { showCancelDialog = false },
       containerColor = Color.White,
       title = { Text("Cancel this order?", fontWeight = FontWeight.Bold, color = BharatTextPrimary) },
-      text = { Text("Order #${order.id} will be cancelled. This can't be undone \u2014 the shop will be notified.", color = BharatTextSecondary) },
+      text = { Text("Order ${order.displayNumber} will be cancelled. This can't be undone \u2014 the shop will be notified.", color = BharatTextSecondary) },
       confirmButton = {
         Button(
           onClick = {
@@ -117,15 +118,29 @@ fun OrderDetailsScreen(
       title = { Text("Pickup Code", fontWeight = FontWeight.Bold, color = BharatTextPrimary) },
       text = {
         Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
+          val payload = order.pickupToken
           Box(
-            modifier = Modifier.size(220.dp).clip(RoundedCornerShape(16.dp)).background(Color.White).padding(12.dp),
+            modifier = Modifier.size(240.dp).clip(RoundedCornerShape(16.dp)).background(Color.White).padding(12.dp),
             contentAlignment = Alignment.Center
           ) {
-            CustomQrCodePattern(tint = BharatPurpleDark)
+            if (!payload.isNullOrBlank()) {
+              QrCode(content = payload, size = 216.dp)
+            } else {
+              // Fallback for orders placed before ORDER_PICKUP_MIGRATION.sql
+              // was applied — no real token, so show the decorative pattern.
+              CustomQrCodePattern(tint = BharatPurpleDark)
+            }
           }
           Spacer(modifier = Modifier.height(12.dp))
-          Text("Order #${order.id}", fontWeight = FontWeight.Bold, color = BharatTextPrimary)
-          Text("Show this at the shop counter", fontSize = 12.sp, color = BharatTextSecondary)
+          Text("Order ${order.displayNumber}", fontWeight = FontWeight.Bold, color = BharatTextPrimary)
+          Text(
+            text = if (order.pickupToken.isNullOrBlank())
+              "Give this order number to the shop."
+            else
+              "Show this at the shop counter to collect your order.",
+            fontSize = 12.sp,
+            color = BharatTextSecondary
+          )
         }
       },
       confirmButton = {
@@ -165,14 +180,18 @@ fun OrderDetailsScreen(
             color = BharatTextPrimary
           )
           Text(
-            text = "Order #${order.id}",
+            text = "Order ${order.displayNumber}",
             fontSize = 12.sp,
             color = BharatPurplePrimary,
             fontWeight = FontWeight.SemiBold
           )
         }
-        IconButton(onClick = { showQrDialog = true }) {
-          Icon(Icons.Default.QrCode, contentDescription = "Show QR", tint = BharatPurplePrimary)
+        // The pickup QR is only actionable once the shop has bagged the
+        // order. Before that there's nothing for a vendor to verify.
+        if (order.status == OrderStatus.READY_FOR_PICKUP) {
+          IconButton(onClick = { showQrDialog = true }) {
+            Icon(Icons.Default.QrCode, contentDescription = "Show pickup QR", tint = BharatPurplePrimary)
+          }
         }
       }
 

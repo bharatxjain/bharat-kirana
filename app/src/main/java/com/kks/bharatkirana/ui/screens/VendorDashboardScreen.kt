@@ -62,6 +62,10 @@ fun VendorDashboardScreen(
   onRefreshStatus: () -> Unit = {},
   onManagePlan: () -> Unit = {},
   onOpenProfile: () -> Unit = {},
+  onOpenNotifications: () -> Unit = {},
+  onOpenOrderDetails: (String) -> Unit = {},
+  onOpenPickup: () -> Unit = {},
+  unreadNotificationCount: Int = 0,
   currentTierName: String? = null,
   currentTierItemCap: Int = 10,
   initialTab: Int = 0,
@@ -121,9 +125,48 @@ fun VendorDashboardScreen(
           }
         },
         actions = {
-          // Single Profile button. All account-related actions (edit store, edit
-          // personal info, subscription, support, logout) live inside the
-          // VendorProfileScreen this opens.
+          IconButton(onClick = onOpenPickup) {
+            Box(
+              modifier = Modifier
+                .size(36.dp)
+                .clip(CircleShape)
+                .background(MaterialTheme.colorScheme.primaryContainer),
+              contentAlignment = Alignment.Center
+            ) {
+              Icon(Icons.Default.QrCodeScanner, contentDescription = "Verify pickup", tint = BharatPurplePrimary, modifier = Modifier.size(20.dp))
+            }
+          }
+          IconButton(onClick = onOpenNotifications) {
+            Box(contentAlignment = Alignment.TopEnd) {
+              Box(
+                modifier = Modifier
+                  .size(36.dp)
+                  .clip(CircleShape)
+                  .background(MaterialTheme.colorScheme.primaryContainer),
+                contentAlignment = Alignment.Center
+              ) {
+                Icon(Icons.Default.Notifications, contentDescription = "Notifications", tint = BharatPurplePrimary, modifier = Modifier.size(20.dp))
+              }
+              if (unreadNotificationCount > 0) {
+                Surface(
+                  color = Color(0xFFDC2626),
+                  shape = CircleShape,
+                  modifier = Modifier.padding(top = 2.dp, end = 2.dp)
+                ) {
+                  Text(
+                    text = if (unreadNotificationCount > 9) "9+" else unreadNotificationCount.toString(),
+                    color = Color.White,
+                    fontSize = 9.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
+                  )
+                }
+              }
+            }
+          }
+          // All account-related actions (edit store, edit personal info,
+          // subscription, support, logout) live inside the VendorProfileScreen
+          // this opens.
           IconButton(onClick = onOpenProfile) {
             Box(
               modifier = Modifier
@@ -189,16 +232,74 @@ fun VendorDashboardScreen(
                 }
               }
 
-              // TOTAL ORDERS (moved up — was 4th).
+              // ACTIVE ORDERS — the Overview answers "what do I need to do
+              // right now?", so it deliberately excludes COMPLETED / CANCELLED.
+              // History still lives on the Orders tab.
+              val activeStatusPriority: (OrderStatus) -> Int = { s ->
+                when (s) {
+                  OrderStatus.PLACED -> 0
+                  OrderStatus.CONFIRMED -> 1
+                  OrderStatus.PREPARING -> 2
+                  OrderStatus.READY_FOR_PICKUP -> 3
+                  else -> 99
+                }
+              }
+              val activeOrders = orders
+                .filter { it.status != OrderStatus.COMPLETED && it.status != OrderStatus.CANCELLED }
+                .sortedWith(compareBy<Order> { activeStatusPriority(it.status) }.thenByDescending { it.createdAt.ifBlank { it.orderDate } })
+                .take(3)
               item {
-                StatsCardPremium(
-                  title = "TOTAL ORDERS",
-                  value = "$totalOrders",
-                  trend = "Lifetime orders",
-                  icon = Icons.AutoMirrored.Filled.ReceiptLong,
-                  iconBgColor = Color(0xFFF3E8FF),
-                  iconTint = BharatPurplePrimary
-                )
+                Row(
+                  modifier = Modifier.fillMaxWidth(),
+                  verticalAlignment = Alignment.CenterVertically
+                ) {
+                  Text(
+                    text = "Active Orders",
+                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                    color = BharatTextPrimary,
+                    modifier = Modifier.weight(1f)
+                  )
+                  if (activeOrders.isNotEmpty()) {
+                    TextButton(onClick = { selectedTab = 2 }) {
+                      Text("View All", color = BharatPurplePrimary, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                    }
+                  }
+                }
+              }
+              if (activeOrders.isEmpty()) {
+                item {
+                  Card(
+                    shape = RoundedCornerShape(20.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color.White),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+                    modifier = Modifier.fillMaxWidth()
+                  ) {
+                    Column(
+                      modifier = Modifier.padding(20.dp),
+                      horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                      Box(
+                        modifier = Modifier.size(56.dp).clip(CircleShape).background(BharatPurpleContainer),
+                        contentAlignment = Alignment.Center
+                      ) {
+                        Icon(Icons.AutoMirrored.Filled.ReceiptLong, null, tint = BharatPurplePrimary, modifier = Modifier.size(28.dp))
+                      }
+                      Spacer(modifier = Modifier.height(10.dp))
+                      Text("No active orders", fontWeight = FontWeight.Bold, color = BharatTextPrimary)
+                      Spacer(modifier = Modifier.height(4.dp))
+                      Text(
+                        "New customer orders will appear here in real time.",
+                        fontSize = 12.sp,
+                        color = BharatTextSecondary,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                      )
+                    }
+                  }
+                }
+              } else {
+                items(activeOrders, key = { it.id }) { order ->
+                  LatestOrderCard(order = order, onOpen = { onOpenOrderDetails(order.id) })
+                }
               }
 
               // REVENUE big purple card (unchanged shape, just moved up).
@@ -238,98 +339,8 @@ fun VendorDashboardScreen(
                 )
               }
 
-              // RECENT ORDERS — last 3, tap-through to the Orders tab for the rest.
-              val recentOrders = orders.sortedByDescending { it.orderDate }.take(3)
-              if (recentOrders.isNotEmpty()) {
-                item {
-                  Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically
-                  ) {
-                    Text(
-                      text = "Recent Orders",
-                      style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                      color = BharatTextPrimary,
-                      modifier = Modifier.weight(1f)
-                    )
-                    TextButton(onClick = { selectedTab = 2 }) {
-                      Text("View All", color = BharatPurplePrimary, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
-                    }
-                  }
-                }
-                items(recentOrders, key = { it.id }) { order ->
-                  Card(
-                    shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.cardColors(containerColor = Color.White),
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
-                  ) {
-                    Row(
-                      modifier = Modifier.fillMaxWidth().padding(14.dp),
-                      verticalAlignment = Alignment.CenterVertically
-                    ) {
-                      Box(
-                        modifier = Modifier.size(40.dp).clip(RoundedCornerShape(10.dp)).background(BharatPurpleContainer),
-                        contentAlignment = Alignment.Center
-                      ) {
-                        Text(
-                          text = "#${order.id.takeLast(3)}",
-                          fontSize = 10.sp,
-                          fontWeight = FontWeight.Bold,
-                          color = BharatPurpleDark
-                        )
-                      }
-                      Spacer(Modifier.width(12.dp))
-                      Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                          text = order.items.firstOrNull()?.product?.name?.let { name ->
-                            if (order.items.size > 1) "$name +${order.items.size - 1} more" else name
-                          } ?: "Order",
-                          fontWeight = FontWeight.SemiBold,
-                          color = BharatTextPrimary,
-                          fontSize = 13.sp
-                        )
-                        Text(
-                          text = "${order.items.size} items • ${order.orderDate}",
-                          fontSize = 11.sp,
-                          color = BharatTextSecondary
-                        )
-                        Text(
-                          text = "₹${order.totalAmount}",
-                          fontWeight = FontWeight.Bold,
-                          color = BharatTextPrimary,
-                          fontSize = 14.sp
-                        )
-                      }
-                      Surface(
-                        shape = RoundedCornerShape(50.dp),
-                        color = when (order.status) {
-                          OrderStatus.PLACED -> Color(0xFFFEF3C7)
-                          OrderStatus.CONFIRMED -> Color(0xFFDCFCE7)
-                          OrderStatus.PREPARING -> Color(0xFFE0F2FE)
-                          OrderStatus.READY_FOR_PICKUP -> Color(0xFFF0FDF4)
-                          OrderStatus.COMPLETED -> Color(0xFFF1F5F9)
-                          OrderStatus.CANCELLED -> Color(0xFFFFE4E6)
-                        }
-                      ) {
-                        Text(
-                          text = order.status.label,
-                          fontSize = 10.sp,
-                          fontWeight = FontWeight.Bold,
-                          color = when (order.status) {
-                            OrderStatus.PLACED -> Color(0xFFD97706)
-                            OrderStatus.CONFIRMED -> Color(0xFF10B981)
-                            OrderStatus.PREPARING -> Color(0xFF0284C7)
-                            OrderStatus.READY_FOR_PICKUP -> Color(0xFF166534)
-                            OrderStatus.COMPLETED -> BharatTextSecondary
-                            OrderStatus.CANCELLED -> Color(0xFFDC2626)
-                          },
-                          modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
-                        )
-                      }
-                    }
-                  }
-                }
-              }
+              // RECENT ORDERS block moved to the top of Overview above Revenue.
+              // See the "Latest Orders" block earlier in this LazyColumn.
 
               // Low Stock Alert (conditional)
               if (lowStockCount > 0) {
@@ -351,57 +362,8 @@ fun VendorDashboardScreen(
                 }
               }
 
-              // Store Operations card (unchanged, at bottom).
-              item {
-                Card(
-                  shape = RoundedCornerShape(24.dp),
-                  colors = CardDefaults.cardColors(containerColor = Color.White),
-                  modifier = Modifier.fillMaxWidth(),
-                  border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
-                ) {
-                  Column(modifier = Modifier.padding(20.dp)) {
-                    Row(
-                      modifier = Modifier.fillMaxWidth(),
-                      verticalAlignment = Alignment.CenterVertically,
-                      horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                      Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(
-                          modifier = Modifier
-                            .size(36.dp)
-                            .clip(CircleShape)
-                            .background(MaterialTheme.colorScheme.primaryContainer),
-                          contentAlignment = Alignment.Center
-                        ) {
-                          Icon(Icons.Default.LocationOn, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
-                        }
-                        Spacer(modifier = Modifier.width(12.dp))
-                        Text(text = "SHOP LOCATION", fontWeight = FontWeight.ExtraBold, fontSize = 11.sp, color = BharatTextSecondary, letterSpacing = 0.5.sp)
-                      }
-                      TextButton(onClick = { showEditShopDialog = true }) {
-                        Icon(Icons.Default.Edit, contentDescription = null, tint = BharatPurplePrimary, modifier = Modifier.size(16.dp))
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text("Edit", color = BharatPurplePrimary, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
-                      }
-                    }
-                    Spacer(modifier = Modifier.height(12.dp))
-                    Text(
-                      text = shop.address.ifBlank { "No address on file — tap Edit to add one" },
-                      fontSize = 14.sp,
-                      color = if (shop.address.isBlank()) BharatTextMuted else BharatTextPrimary,
-                      lineHeight = 20.sp
-                    )
-                    if (shop.phone.isNotBlank()) {
-                      Spacer(modifier = Modifier.height(6.dp))
-                      Text(
-                        text = "\u260E ${shop.phone}",
-                        fontSize = 12.sp,
-                        color = BharatTextSecondary
-                      )
-                    }
-                  }
-                }
-              }
+              // Shop location card removed from Overview — vendors edit shop
+              // address in Profile → Edit Store Details.
 
               // Store Operations card (unchanged, at bottom).
               item {
@@ -593,7 +555,8 @@ fun VendorDashboardScreen(
                     primaryLabel = "Confirm Order",
                     primaryColor = BharatGreen,
                     onPrimary = { onUpdateOrderStatus(order.id, OrderStatus.CONFIRMED) },
-                    onCancel = { onCancelOrder(order.id) }
+                    onCancel = { onCancelOrder(order.id) },
+                    onOpen = { onOpenOrderDetails(order.id) }
                   )
                 }
               }
@@ -605,7 +568,8 @@ fun VendorDashboardScreen(
                     primaryLabel = "Start Preparing",
                     primaryColor = Color(0xFF0284C7),
                     onPrimary = { onUpdateOrderStatus(order.id, OrderStatus.PREPARING) },
-                    onCancel = { onCancelOrder(order.id) }
+                    onCancel = { onCancelOrder(order.id) },
+                    onOpen = { onOpenOrderDetails(order.id) }
                   )
                 }
               }
@@ -617,7 +581,8 @@ fun VendorDashboardScreen(
                     primaryLabel = "Mark Ready for Pickup",
                     primaryColor = BharatPurplePrimary,
                     onPrimary = { onUpdateOrderStatus(order.id, OrderStatus.READY_FOR_PICKUP) },
-                    onCancel = { onCancelOrder(order.id) }
+                    onCancel = { onCancelOrder(order.id) },
+                    onOpen = { onOpenOrderDetails(order.id) }
                   )
                 }
               }
@@ -629,13 +594,16 @@ fun VendorDashboardScreen(
                     primaryLabel = "Mark Completed",
                     primaryColor = BharatPurpleDark,
                     onPrimary = { onUpdateOrderStatus(order.id, OrderStatus.COMPLETED) },
-                    onCancel = null
+                    onCancel = null,
+                    onOpen = { onOpenOrderDetails(order.id) }
                   )
                 }
               }
               if (history.isNotEmpty()) {
                 item { OrderSectionHeader("History", history.size, BharatTextSecondary) }
-                items(history, key = { it.id }) { order -> RecentOrderRow(order = order) }
+                items(history, key = { it.id }) { order ->
+                  RecentOrderRow(order = order, onClick = { onOpenOrderDetails(order.id) })
+                }
               }
             }
           }
@@ -1497,8 +1465,9 @@ fun StatsCardPremium(
 }
 
 @Composable
-fun RecentOrderRow(order: Order) {
+fun RecentOrderRow(order: Order, onClick: () -> Unit = {}) {
   Card(
+    onClick = onClick,
     shape = RoundedCornerShape(16.dp),
     colors = CardDefaults.cardColors(containerColor = Color.White),
     modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
@@ -1512,14 +1481,19 @@ fun RecentOrderRow(order: Order) {
         modifier = Modifier.size(50.dp).clip(RoundedCornerShape(12.dp)).background(Color(0xFFF5F3FF)),
         contentAlignment = Alignment.Center
       ) {
-        Text(text = "#" + order.id.takeLast(3), fontWeight = FontWeight.Bold, color = BharatPurplePrimary)
+        Text(text = order.displayNumber, fontWeight = FontWeight.Bold, color = BharatPurplePrimary)
       }
       Spacer(modifier = Modifier.width(16.dp))
       Column(modifier = Modifier.weight(1f)) {
-        Text(text = "Customer Name", fontWeight = FontWeight.Bold, color = BharatTextPrimary) // Placeholder
-        Text(text = "${order.items.size} items • 10 mins ago", style = MaterialTheme.typography.bodySmall, color = BharatTextSecondary)
+        val customerLabel = order.customerName.ifBlank { "Guest customer" }
+        Text(text = customerLabel, fontWeight = FontWeight.Bold, color = BharatTextPrimary)
+        Text(
+          text = "${order.items.size} items \u2022 ${relativeTimeLabel(order.createdAt, order.orderDate)}",
+          style = MaterialTheme.typography.bodySmall,
+          color = BharatTextSecondary
+        )
         Spacer(modifier = Modifier.height(4.dp))
-        Text(text = "₹${order.totalAmount}", fontWeight = FontWeight.ExtraBold, color = BharatTextPrimary, fontSize = 16.sp)
+        Text(text = "\u20b9${order.totalAmount}", fontWeight = FontWeight.ExtraBold, color = BharatTextPrimary, fontSize = 16.sp)
       }
       
       val statusColor = when(order.status) {
@@ -1584,9 +1558,11 @@ private fun VendorOrderActionCard(
   primaryLabel: String,
   primaryColor: Color,
   onPrimary: () -> Unit,
-  onCancel: (() -> Unit)? = null
+  onCancel: (() -> Unit)? = null,
+  onOpen: () -> Unit = {}
 ) {
   Card(
+    onClick = onOpen,
     shape = RoundedCornerShape(16.dp),
     colors = CardDefaults.cardColors(containerColor = Color.White),
     border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
@@ -1598,13 +1574,13 @@ private fun VendorOrderActionCard(
           modifier = Modifier.size(44.dp).clip(RoundedCornerShape(12.dp)).background(Color(0xFFF5F3FF)),
           contentAlignment = Alignment.Center
         ) {
-          Text("#" + order.id.takeLast(3), fontWeight = FontWeight.Bold, color = BharatPurplePrimary, fontSize = 12.sp)
+          Text(order.displayNumber, fontWeight = FontWeight.Bold, color = BharatPurplePrimary, fontSize = 12.sp)
         }
         Spacer(modifier = Modifier.width(12.dp))
         Column(modifier = Modifier.weight(1f)) {
-          Text(text = order.id, fontWeight = FontWeight.Bold, color = BharatTextPrimary, fontSize = 14.sp)
+          Text(text = order.customerName.ifBlank { "Guest customer" }, fontWeight = FontWeight.Bold, color = BharatTextPrimary, fontSize = 14.sp)
           Text(
-            text = "${order.items.size} items \u2022 ${order.orderDate}",
+            text = "Order ${order.displayNumber} \u2022 ${order.items.size} items \u2022 ${relativeTimeLabel(order.createdAt, order.orderDate)}",
             fontSize = 12.sp,
             color = BharatTextSecondary
           )
@@ -1696,5 +1672,218 @@ private fun VendorOrderLineItem(item: CartItem) {
       )
     }
     Text("\u20b9${item.totalPrice}", fontWeight = FontWeight.Bold, color = BharatTextPrimary, fontSize = 13.sp)
+  }
+}
+
+/**
+ * Polished vendor "Latest Orders" card. Driven entirely by real fields on the
+ * Order model — no placeholders. Active statuses render with a stronger left
+ * accent bar so a vendor sees which rows need action at a glance.
+ */
+@Composable
+private fun LatestOrderCard(order: Order, onOpen: () -> Unit) {
+  val (accentColor, chipBg, chipText, actionLabel) = orderStatusVisuals(order.status)
+  val isActive = when (order.status) {
+    OrderStatus.PLACED, OrderStatus.CONFIRMED, OrderStatus.PREPARING, OrderStatus.READY_FOR_PICKUP -> true
+    else -> false
+  }
+  val itemsPreview = buildItemsPreviewLabel(order.items)
+
+  Card(
+    onClick = onOpen,
+    shape = RoundedCornerShape(18.dp),
+    colors = CardDefaults.cardColors(containerColor = Color.White),
+    border = BorderStroke(1.dp, if (isActive) accentColor.copy(alpha = 0.35f) else MaterialTheme.colorScheme.outline),
+    elevation = CardDefaults.cardElevation(defaultElevation = if (isActive) 3.dp else 0.dp),
+    modifier = Modifier.fillMaxWidth()
+  ) {
+    Row(modifier = Modifier.fillMaxWidth()) {
+      // Left accent bar — only visible for active orders to reduce visual
+      // noise on completed / cancelled rows.
+      Box(
+        modifier = Modifier
+          .width(4.dp)
+          .fillMaxHeight()
+          .background(if (isActive) accentColor else Color.Transparent)
+      )
+      Column(modifier = Modifier.weight(1f).padding(14.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+          Box(
+            modifier = Modifier
+              .size(44.dp)
+              .clip(RoundedCornerShape(12.dp))
+              .background(accentColor.copy(alpha = 0.12f)),
+            contentAlignment = Alignment.Center
+          ) {
+            Text(
+              text = order.displayNumber,
+              fontSize = 11.sp,
+              fontWeight = FontWeight.ExtraBold,
+              color = accentColor
+            )
+          }
+          Spacer(Modifier.width(12.dp))
+          Column(modifier = Modifier.weight(1f)) {
+            Text(
+              text = order.customerName.ifBlank { "Guest customer" },
+              fontWeight = FontWeight.Bold,
+              color = BharatTextPrimary,
+              fontSize = 14.sp,
+              maxLines = 1
+            )
+            Text(
+              text = "Order ${order.displayNumber} \u2022 ${relativeTimeLabel(order.createdAt, order.orderDate)}",
+              fontSize = 11.sp,
+              color = BharatTextSecondary,
+              maxLines = 1
+            )
+          }
+          Surface(
+            shape = RoundedCornerShape(50.dp),
+            color = chipBg
+          ) {
+            Text(
+              text = order.status.label,
+              fontSize = 10.sp,
+              fontWeight = FontWeight.ExtraBold,
+              color = chipText,
+              modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+            )
+          }
+        }
+
+        Spacer(modifier = Modifier.height(10.dp))
+        HorizontalDivider(color = Color(0xFFF1F5F9))
+        Spacer(modifier = Modifier.height(10.dp))
+
+        Row(verticalAlignment = Alignment.CenterVertically) {
+          Icon(
+            imageVector = Icons.Default.Inventory,
+            contentDescription = null,
+            tint = BharatTextSecondary,
+            modifier = Modifier.size(14.dp)
+          )
+          Spacer(Modifier.width(6.dp))
+          Text(
+            text = itemsPreview.ifBlank { "Items not synced yet" },
+            fontSize = 12.sp,
+            color = if (itemsPreview.isBlank()) BharatTextMuted else BharatTextPrimary,
+            maxLines = 1,
+            modifier = Modifier.weight(1f)
+          )
+          Text(
+            text = "\u20b9${order.totalAmount}",
+            fontSize = 16.sp,
+            fontWeight = FontWeight.ExtraBold,
+            color = BharatTextPrimary
+          )
+        }
+
+        if (actionLabel != null) {
+          Spacer(modifier = Modifier.height(10.dp))
+          OutlinedButton(
+            onClick = onOpen,
+            border = BorderStroke(1.dp, accentColor),
+            shape = RoundedCornerShape(10.dp),
+            modifier = Modifier.fillMaxWidth().height(38.dp)
+          ) {
+            Text(actionLabel, color = accentColor, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+          }
+        }
+      }
+    }
+  }
+}
+
+private data class OrderStatusVisuals(
+  val accent: Color,
+  val chipBg: Color,
+  val chipText: Color,
+  val actionLabel: String?
+)
+
+private fun orderStatusVisuals(status: OrderStatus): OrderStatusVisuals = when (status) {
+  OrderStatus.PLACED -> OrderStatusVisuals(
+    accent = Color(0xFFD97706),
+    chipBg = Color(0xFFFEF3C7),
+    chipText = Color(0xFFD97706),
+    actionLabel = "Confirm order"
+  )
+  OrderStatus.CONFIRMED -> OrderStatusVisuals(
+    accent = Color(0xFF10B981),
+    chipBg = Color(0xFFDCFCE7),
+    chipText = Color(0xFF047857),
+    actionLabel = "Start preparing"
+  )
+  OrderStatus.PREPARING -> OrderStatusVisuals(
+    accent = Color(0xFF0284C7),
+    chipBg = Color(0xFFE0F2FE),
+    chipText = Color(0xFF0369A1),
+    actionLabel = "Mark ready for pickup"
+  )
+  OrderStatus.READY_FOR_PICKUP -> OrderStatusVisuals(
+    accent = Color(0xFF16A34A),
+    chipBg = Color(0xFFF0FDF4),
+    chipText = Color(0xFF166534),
+    actionLabel = "Mark completed"
+  )
+  OrderStatus.COMPLETED -> OrderStatusVisuals(
+    accent = Color(0xFF64748B),
+    chipBg = Color(0xFFF1F5F9),
+    chipText = Color(0xFF64748B),
+    actionLabel = null
+  )
+  OrderStatus.CANCELLED -> OrderStatusVisuals(
+    accent = Color(0xFFDC2626),
+    chipBg = Color(0xFFFEE2E2),
+    chipText = Color(0xFFDC2626),
+    actionLabel = null
+  )
+}
+
+/**
+ * Build a "Milk · Bread · +2 more" preview from the real order items list.
+ * Blank string means we haven't hydrated items yet — caller renders a
+ * neutral "Items not synced yet" hint instead of a fake "0 items".
+ */
+private fun buildItemsPreviewLabel(items: List<com.kks.bharatkirana.data.model.CartItem>): String {
+  if (items.isEmpty()) return ""
+  val visible = items.take(2).joinToString(" \u00b7 ") { it.product.name.ifBlank { "Item" } }
+  val extra = items.size - 2
+  return if (extra > 0) "$visible \u00b7 +$extra more" else visible
+}
+
+/**
+ * Convert an ISO-8601 `created_at` (or fall back to the legacy `order_date`
+ * display string) into a Blinkit-style relative label. Used on all vendor
+ * order cards so we stop showing the same hard-coded "10 mins ago" for every row.
+ */
+private fun relativeTimeLabel(createdAt: String, fallbackOrderDate: String): String {
+  if (createdAt.isBlank()) return fallbackOrderDate.ifBlank { "Just now" }
+  val instantMillis = runCatching {
+    // Supabase created_at looks like "2026-09-02T09:41:12.345678+00:00".
+    // SimpleDateFormat handles the millisecond precision; the +HH:mm offset
+    // parses via 'X' on API 26+. Anything unparsable falls through to the
+    // fallback so we never crash on a malformed timestamp.
+    val normalized = createdAt.replace("Z", "+0000").let { s ->
+      // Trim to millisecond precision if Supabase returned micros.
+      if (s.length > 23 && s[19] == '.') s.substring(0, 23) + s.substring(s.length - 6).replace(":", "") else s
+    }
+    val fmt = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSZ", java.util.Locale.US)
+    fmt.parse(normalized)?.time
+  }.getOrNull() ?: run {
+    return fallbackOrderDate.ifBlank { "Just now" }
+  }
+
+  val diffMinutes = ((System.currentTimeMillis() - instantMillis) / 60000).coerceAtLeast(0)
+  return when {
+    diffMinutes < 1 -> "Just now"
+    diffMinutes < 60 -> "$diffMinutes min ago"
+    diffMinutes < 24 * 60 -> "${diffMinutes / 60} h ago"
+    diffMinutes < 7 * 24 * 60 -> "${diffMinutes / (24 * 60)} d ago"
+    else -> {
+      val fmt = java.text.SimpleDateFormat("dd MMM", java.util.Locale.getDefault())
+      fmt.format(java.util.Date(instantMillis))
+    }
   }
 }

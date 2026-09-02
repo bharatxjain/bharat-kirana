@@ -103,7 +103,11 @@ fun HomeScreen(
       // Store Location Header
       item {
         StoreLocationHeader(
-          storeName = userProfile.activeStore,
+          // Prefer the user's saved delivery address over the legacy
+          // "activeStore" concept (which the new shop-scoped architecture no
+          // longer uses). Blank falls through to the "Pick a delivery
+          // location" placeholder inside the header component.
+          storeName = userProfile.address.ifBlank { userProfile.activeStore },
           userInitial = userProfile.fullName.firstOrNull()?.toString() ?: "R",
           isAdmin = userProfile.isAdmin,
           unreadNotificationCount = unreadNotificationCount,

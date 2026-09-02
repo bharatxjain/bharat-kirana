@@ -36,6 +36,7 @@ fun OrdersScreen(
   onOrderClick: (Order) -> Unit,
   onReorder: (Order) -> Unit,
   onExploreClick: () -> Unit,
+  onBackClick: (() -> Unit)? = null,
   modifier: Modifier = Modifier
 ) {
   val last10Orders = orders.take(10)
@@ -49,6 +50,13 @@ fun OrdersScreen(
             style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
             color = BharatTextPrimary
           )
+        },
+        navigationIcon = {
+          if (onBackClick != null) {
+            IconButton(onClick = onBackClick) {
+              Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = BharatTextPrimary)
+            }
+          }
         },
         colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.White)
       )
@@ -147,7 +155,7 @@ fun OrderCard(
       ) {
         Column {
           Text(
-            text = "Order #${order.id}",
+            text = "Order ${order.displayNumber}",
             style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
             color = BharatTextPrimary
           )

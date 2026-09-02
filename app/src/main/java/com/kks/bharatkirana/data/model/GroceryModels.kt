@@ -214,7 +214,11 @@ data class UserProfile(
     get() = isSuperAdmin || serverRole == UserRole.ADMIN
 
   val isVendor: Boolean
-    get() = shopId != null || serverRole == UserRole.VENDOR
+    // Trust serverRole exclusively. A stale local shopId (from an aborted
+    // vendor registration or an older account state) previously flipped this
+    // to true for real customers, routing them to VendorDashboard where the
+    // shop lookup fails and they saw a "white loading screen" after login.
+    get() = serverRole == UserRole.VENDOR
 
   val role: UserRole
     get() = when {
@@ -298,8 +302,24 @@ data class Order(
   val storeAddress: String = "Banjara Hills Rd 12, Hyderabad",
   val timeline: List<OrderTimelineItem> = emptyList(),
   val qrCodePayload: String = "",
-  val backupCode: String = "123456"
-)
+  val backupCode: String = "123456",
+  val customerName: String = "",
+  val customerMobile: String = "",
+  // ISO 8601 timestamp string from orders.created_at; used to compute the
+  // "10 mins ago" style relative label the vendor sees on order cards.
+  val createdAt: String = "",
+  // Short human-friendly per-shop counter (e.g. 4827). Assigned by the
+  // Postgres trigger on insert. Falls back to `id` for display when the
+  // orders row predates the pickup migration.
+  val orderNumber: Int? = null,
+  // Opaque secret embedded in the customer's pickup QR. Only the vendor of
+  // the matching shop can complete an order with this token.
+  val pickupToken: String? = null
+) {
+  /** Human-friendly label the customer + vendor talk about. */
+  val displayNumber: String
+    get() = orderNumber?.let { "#$it" } ?: "#$id"
+}
 
 sealed class AppScreen {
   // Shown only while a persisted Supabase session is being refreshed on cold
@@ -317,6 +337,7 @@ sealed class AppScreen {
   data object Cart : AppScreen()
   data class OrderPlaced(val orderId: String) : AppScreen()
   data class OrderDetails(val orderId: String) : AppScreen()
+  data class VendorOrderDetails(val orderId: String) : AppScreen()
   data object AdminDashboard : AppScreen()
   data object PrivacyPolicy : AppScreen()
   data object TermsOfService : AppScreen()
@@ -333,7 +354,33 @@ sealed class AppScreen {
   data class ResetPassword(val accessToken: String) : AppScreen()
   data object Notifications : AppScreen()
   data object Wishlist : AppScreen()
+  data object VendorPickup : AppScreen()
+  data object OrderHistory : AppScreen()
+  data object EditProfile : AppScreen()
+  data object SavedAddresses : AppScreen()
+  data object NotificationPreferences : AppScreen()
+  data object KiranaWallet : AppScreen()
+  data object HelpSupport : AppScreen()
+  data object AboutUs : AppScreen()
 }
+
+/** Lightweight projection returned by the vendor "find order by number" RPC. */
+data class VendorOrderLookup(
+  val orderId: String,
+  val orderNumber: Int?,
+  val status: String,
+  val customerName: String,
+  val totalAmount: Int,
+  val pickupToken: String?
+)
+
+/** UI state for the vendor pickup screen (scan QR / find by number). */
+data class PickupState(
+  val isBusy: Boolean = false,
+  val errorMessage: String? = null,
+  val lookup: VendorOrderLookup? = null,
+  val completedOrderId: String? = null
+)
 
 /**
  * An in-app notification row, mirrored from the `notifications` table (also written by
@@ -414,6 +461,5 @@ enum class MainTab(val title: String, val testTag: String) {
   HOME("Home", "tab_home"),
   CATEGORIES("Categories", "tab_categories"),
   SEARCH("Search", "tab_search"),
-  ORDERS("Orders", "tab_orders"),
   PROFILE("Profile", "tab_profile")
 }

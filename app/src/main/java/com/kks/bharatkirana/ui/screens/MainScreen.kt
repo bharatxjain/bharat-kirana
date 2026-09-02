@@ -252,16 +252,10 @@ fun MainScreen(
           onAuthSuccess = { email: String, role: UserRole, path: AuthPath ->
             viewModel.login(email, authPath = path) { user ->
               val isAdmin = user.isAdmin
-              // isVendor is `shopId != null || serverRole == VENDOR`, so an
-              // account with a stale shop_id from a prior aborted vendor
-              // registration flips this to true even for a real customer.
-              // Require the shop to actually exist in the fetched shops list
-              // before routing to the vendor dashboard, otherwise fall through
-              // to the customer view. Main/VendorDashboard re-check this on
-              // recomposition, so a real vendor whose shops list hasn't
-              // loaded yet is still forwarded once it arrives.
-              val hasRealShop = user.shopId?.let { id -> shops.any { it.id == id } } == true
-              val isConfirmedVendor = hasRealShop || user.serverRole == UserRole.VENDOR
+              // Trust serverRole exclusively. hasRealShop OR-ing with a stale
+              // shopId used to route customers to VendorDashboard where the
+              // lookup failed and they saw an infinite spinner.
+              val isConfirmedVendor = user.serverRole == UserRole.VENDOR
               when {
                 isAdmin -> viewModel.navigateTo(AppScreen.AdminDashboard)
                 !user.profileCompleted -> {
@@ -442,8 +436,7 @@ fun MainScreen(
           OrderPlacedScreen(
             order = order,
             onViewOrdersClick = {
-              viewModel.setTab(MainTab.ORDERS)
-              viewModel.navigateTo(AppScreen.Main)
+              viewModel.navigateTo(AppScreen.OrderHistory)
             },
             onTrackOrderClick = {
               viewModel.navigateTo(AppScreen.OrderDetails(order.id))
@@ -494,6 +487,54 @@ fun MainScreen(
         }
       }
 
+      is AppScreen.VendorOrderDetails -> {
+        // Same lazy-hydrate pattern as OrderDetails — pull the items list on
+        // entry if it's still empty (e.g. items_json fallback wasn't populated
+        // at fetch time).
+        val order = orders.find { it.id == screen.orderId }
+        LaunchedEffect(screen.orderId, order?.items?.size) {
+          if (order != null && order.items.isEmpty()) {
+            viewModel.hydrateOrderItems(screen.orderId)
+          }
+        }
+        if (order != null) {
+          VendorOrderDetailsScreen(
+            order = order,
+            onBackClick = { viewModel.navigateBack() },
+            onAdvanceStatus = { next -> viewModel.updateOrderStatus(order.id, next) },
+            onCancelOrder = { viewModel.cancelOrder(order.id) }
+          )
+        } else {
+          OrderNotFoundScreen(
+            orderId = screen.orderId,
+            onBackClick = { viewModel.navigateBack() },
+            onRefresh = { viewModel.loadSupabaseData() }
+          )
+        }
+      }
+
+      is AppScreen.VendorPickup -> {
+        val pickupState by viewModel.pickupState.collectAsState()
+        // Reset the pickup workflow every time we land on the screen so a
+        // previous session's success card / stale error doesn't linger.
+        LaunchedEffect(Unit) { viewModel.resetPickupState() }
+        VendorPickupScreen(
+          pickupState = pickupState,
+          onBackClick = {
+            viewModel.resetPickupState()
+            viewModel.navigateBack()
+          },
+          onScanToken = { token -> viewModel.completeOrderByPickupToken(token) },
+          onFindByNumber = { number -> viewModel.findVendorOrderByNumber(number) },
+          onConfirmLookup = { token -> viewModel.completeOrderByPickupToken(token) },
+          onOpenOrder = { orderId ->
+            viewModel.resetPickupState()
+            viewModel.navigateTo(AppScreen.VendorOrderDetails(orderId))
+          },
+          onReset = { viewModel.resetPickupState() }
+        )
+      }
+
       is AppScreen.PrivacyPolicy -> {
         PrivacyPolicyScreen(
           onBackClick = { viewModel.navigateBack() }
@@ -525,7 +566,14 @@ fun MainScreen(
           onNotificationClick = { notification ->
             viewModel.markNotificationRead(notification.id)
             if (notification.orderId != null) {
-              viewModel.navigateTo(AppScreen.OrderDetails(notification.orderId))
+              // Role-split: vendors land on the vendor-specific screen, so
+              // they see action buttons instead of Reorder/Call Shop/Rate.
+              val target = if (userProfile.serverRole == UserRole.VENDOR) {
+                AppScreen.VendorOrderDetails(notification.orderId)
+              } else {
+                AppScreen.OrderDetails(notification.orderId)
+              }
+              viewModel.navigateTo(target)
             }
           },
           onMarkAllRead = { viewModel.markAllNotificationsRead() },
@@ -550,6 +598,64 @@ fun MainScreen(
             viewModel.navigateTo(AppScreen.Main)
           }
         )
+      }
+
+      is AppScreen.OrderHistory -> {
+        OrdersScreen(
+          orders = orders,
+          onOrderClick = { order -> viewModel.navigateTo(AppScreen.OrderDetails(order.id)) },
+          onReorder = { order -> viewModel.reorder(order) },
+          onExploreClick = {
+            viewModel.setTab(MainTab.HOME)
+            viewModel.navigateTo(AppScreen.Main)
+          },
+          onBackClick = { viewModel.navigateBack() }
+        )
+      }
+
+      is AppScreen.EditProfile -> {
+        EditProfileScreen(
+          userProfile = userProfile,
+          syncPending = profileSyncPending,
+          onBackClick = { viewModel.navigateBack() },
+          onSave = { name, email, mobile, address ->
+            viewModel.updateProfile(name, email, mobile, address)
+          }
+        )
+      }
+
+      is AppScreen.SavedAddresses -> {
+        SavedAddressesScreen(
+          userProfile = userProfile,
+          onBackClick = { viewModel.navigateBack() },
+          onEditProfileClick = { viewModel.navigateTo(AppScreen.EditProfile) }
+        )
+      }
+
+      is AppScreen.NotificationPreferences -> {
+        NotificationPreferencesScreen(
+          onBackClick = { viewModel.navigateBack() }
+        )
+      }
+
+      is AppScreen.KiranaWallet -> {
+        KiranaWalletScreen(
+          userProfile = userProfile,
+          onBackClick = { viewModel.navigateBack() }
+        )
+      }
+
+      is AppScreen.HelpSupport -> {
+        HelpSupportScreen(
+          hasWhatsappSupport = supportWhatsappNumber.isNotBlank(),
+          onBackClick = { viewModel.navigateBack() },
+          onOpenWhatsapp = { viewModel.openSupportWhatsApp() },
+          onOpenOrders = { viewModel.navigateTo(AppScreen.OrderHistory) }
+        )
+      }
+
+      is AppScreen.AboutUs -> {
+        AboutUsScreen(onBackClick = { viewModel.navigateBack() })
       }
 
       is AppScreen.NearbyShops -> {
@@ -665,6 +771,9 @@ fun MainScreen(
         val currentTier = tiers.firstOrNull { it.id == vendorSub?.tierId }
         val initialTab by viewModel.vendorInitialTab.collectAsState()
         val initialEditProductId by viewModel.inventoryEditProductId.collectAsState()
+        LaunchedEffect(vendorShop.id) {
+          viewModel.hydrateAllEmptyOrderItems()
+        }
         VendorDashboardScreen(
           shop = vendorShop,
           orders = orders.filter { it.shopId == vendorShop.id },
@@ -690,6 +799,10 @@ fun MainScreen(
           onRefreshStatus = { viewModel.loadSupabaseData() },
           onManagePlan = { viewModel.navigateTo(AppScreen.Subscription) },
           onOpenProfile = { viewModel.navigateTo(AppScreen.VendorProfile) },
+          onOpenNotifications = { viewModel.navigateTo(AppScreen.Notifications) },
+          onOpenOrderDetails = { orderId -> viewModel.navigateTo(AppScreen.VendorOrderDetails(orderId)) },
+          onOpenPickup = { viewModel.navigateTo(AppScreen.VendorPickup) },
+          unreadNotificationCount = unreadNotificationCount,
           initialTab = initialTab,
           onInitialTabConsumed = { viewModel.setVendorInitialTab(0) },
           initialEditProductId = initialEditProductId,
@@ -720,7 +833,9 @@ fun MainScreen(
             onManagePlan = { viewModel.navigateTo(AppScreen.Subscription) },
             onOpenReviews = { viewModel.navigateTo(AppScreen.VendorReviews) },
             onSupportClick = { viewModel.openSupportWhatsApp() },
-            onLogout = { viewModel.logout() }
+            onLogout = { viewModel.logout() },
+            totalOrders = orders.count { it.shopId == vendorShop.id },
+            totalRevenue = orders.filter { it.shopId == vendorShop.id }.sumOf { it.totalAmount }
           )
         }
       }
@@ -904,15 +1019,23 @@ fun MainScreen(
       }
 
       is AppScreen.Main -> {
-        // Only forward to VendorDashboard when this account genuinely has a
-        // shop that exists. Historical bug: if a customer's Supabase row has a
-        // stale shop_id (e.g., from an aborted vendor registration), isVendor
-        // returns true, but VendorDashboard can't find the shop and spins
-        // forever — which is what customers see as "white loading screen
-        // after login". Requiring the shop row to actually exist means a
-        // customer with orphaned shop_id falls through to the customer view.
-        val realVendorShop = userProfile.shopId?.let { id -> shops.find { it.id == id } }
-        if (realVendorShop != null) {
+        // Only forward to VendorDashboard when the server profile actually says
+        // this is a vendor AND their shop row exists. A stale shopId alone is
+        // not enough — that was the "white loading screen after customer login"
+        // symptom (customer's row had shop_id from an aborted vendor flow, so
+        // isVendor flipped true and VendorDashboard spun forever on shop lookup).
+        val isServerVendor = userProfile.serverRole == UserRole.VENDOR
+        val realVendorShop = if (isServerVendor) userProfile.shopId?.let { id -> shops.find { it.id == id } } else null
+        // Back-fill line items for any order whose `items` list is empty. Runs
+        // once per (userId, order-count) tuple so a customer opening the app
+        // sees the full breakdown on their history without waiting for
+        // OrderDetails to hydrate one by one.
+        LaunchedEffect(userProfile.email, orders.count { it.items.isEmpty() }) {
+          if (userProfile.email.isNotBlank() && orders.any { it.items.isEmpty() }) {
+            viewModel.hydrateAllEmptyOrderItems()
+          }
+        }
+        if (isServerVendor && realVendorShop != null) {
           LaunchedEffect(Unit) {
             viewModel.navigateTo(AppScreen.VendorDashboard)
           }
@@ -962,8 +1085,8 @@ fun MainScreen(
                   },
                   onViewCartClick = { viewModel.navigateTo(AppScreen.Cart) },
                   onProfileClick = { viewModel.setTab(MainTab.PROFILE) },
-                  onStoreClick = { viewModel.navigateTo(AppScreen.StoreInfo) },
-                  onChangeStoreClick = { viewModel.selectShop(null) },
+                  onStoreClick = { viewModel.navigateTo(AppScreen.NearbyShops) },
+                  onChangeStoreClick = { viewModel.navigateTo(AppScreen.NearbyShops) },
                   onAdminClick = {
                     if (userProfile.isSuperAdmin) viewModel.navigateTo(AppScreen.AdminDashboard)
                     else if (userProfile.isVendor) viewModel.navigateTo(AppScreen.VendorDashboard)
@@ -1023,21 +1146,6 @@ fun MainScreen(
                 )
               }
 
-              MainTab.ORDERS -> {
-                OrdersScreen(
-                  orders = orders,
-                  onOrderClick = { order ->
-                    viewModel.navigateTo(AppScreen.OrderDetails(order.id))
-                  },
-                  onReorder = { order ->
-                    viewModel.reorder(order)
-                  },
-                  onExploreClick = {
-                    viewModel.setTab(MainTab.HOME)
-                  }
-                )
-              }
-
               MainTab.PROFILE -> {
                 if (userProfile.email.isBlank()) {
                   AuthScreen(
@@ -1092,45 +1200,24 @@ fun MainScreen(
                     }
                   )
                 } else {
-                  val wishlistIds by viewModel.wishlistIds.collectAsState()
                   ProfileScreen(
                     userProfile = userProfile,
                     orders = orders,
                     cartItemCount = totalCartCount,
-                    onOrderClick = { order ->
-                      viewModel.navigateTo(AppScreen.OrderDetails(order.id))
-                    },
-                    onReorder = { order ->
-                      viewModel.reorder(order)
-                    },
-                    onCartClick = {
-                      viewModel.navigateTo(AppScreen.Cart)
-                    },
-                    onUpdateProfile = { name, email, mobile, address ->
-                      viewModel.updateProfile(name, email, mobile, address)
-                    },
-                    onPrivacyPolicyClick = {
-                      viewModel.navigateTo(AppScreen.PrivacyPolicy)
-                    },
-                    onTermsClick = {
-                      viewModel.navigateTo(AppScreen.TermsOfService)
-                    },
-                    onVendorRegisterClick = {
-                      viewModel.navigateTo(AppScreen.VendorRegistration)
-                    },
-                    onMyOrdersClick = { viewModel.setTab(MainTab.ORDERS) },
-                    onWishlistClick = { viewModel.navigateTo(AppScreen.Wishlist) },
-                    wishlistCount = wishlistIds.size,
-                    onLogout = {
-                      viewModel.logout()
-                    },
-                    onDeleteAccount = {
-                      viewModel.deleteAccount()
-                    },
-                    hasSupport = supportWhatsappNumber.isNotBlank(),
-                    onSupportClick = { viewModel.openSupportWhatsApp() },
-                    profileFetchComplete = profileFetchComplete,
-                    syncPending = profileSyncPending
+                    onCartClick = { viewModel.navigateTo(AppScreen.Cart) },
+                    onMyOrdersClick = { viewModel.navigateTo(AppScreen.OrderHistory) },
+                    onEditProfileClick = { viewModel.navigateTo(AppScreen.EditProfile) },
+                    onSavedAddressesClick = { viewModel.navigateTo(AppScreen.SavedAddresses) },
+                    onNotificationPreferencesClick = { viewModel.navigateTo(AppScreen.NotificationPreferences) },
+                    onKiranaWalletClick = { viewModel.navigateTo(AppScreen.KiranaWallet) },
+                    onHelpSupportClick = { viewModel.navigateTo(AppScreen.HelpSupport) },
+                    onVendorRegisterClick = { viewModel.navigateTo(AppScreen.VendorRegistration) },
+                    onAboutUsClick = { viewModel.navigateTo(AppScreen.AboutUs) },
+                    onPrivacyPolicyClick = { viewModel.navigateTo(AppScreen.PrivacyPolicy) },
+                    onTermsClick = { viewModel.navigateTo(AppScreen.TermsOfService) },
+                    onLogout = { viewModel.logout() },
+                    onDeleteAccount = { viewModel.deleteAccount() },
+                    profileFetchComplete = profileFetchComplete
                   )
                 }
               }

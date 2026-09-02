@@ -1,7 +1,6 @@
 package com.kks.bharatkirana.ui.screens
 
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -18,35 +17,26 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.AdminPanelSettings
 import androidx.compose.material.icons.filled.ChevronRight
-import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.Email
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.LocationOn
-import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Logout
-import androidx.compose.material.icons.filled.Loyalty
+import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Person
-import androidx.compose.material.icons.filled.Description
-import androidx.compose.material.icons.filled.Policy
-import androidx.compose.material.icons.filled.QrCode
-import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.ReceiptLong
-import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Shield
-import androidx.compose.material.icons.filled.ShoppingCart
-import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Store
 import androidx.compose.material.icons.filled.Storefront
-import androidx.compose.material.icons.filled.SwapHoriz
+import androidx.compose.material.icons.filled.SupportAgent
+import androidx.compose.material.icons.filled.ShoppingCart
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -56,9 +46,6 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -72,25 +59,20 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.kks.bharatkirana.BuildConfig
 import com.kks.bharatkirana.data.model.Order
-import com.kks.bharatkirana.data.model.OrderStatus
 import com.kks.bharatkirana.data.model.UserProfile
 import com.kks.bharatkirana.data.model.UserRole
-import com.kks.bharatkirana.ui.components.CustomQrCodePattern
 import com.kks.bharatkirana.ui.theme.BharatBackground
-import com.kks.bharatkirana.ui.theme.BharatGreen
-import com.kks.bharatkirana.ui.theme.BharatGreenLight
 import com.kks.bharatkirana.ui.theme.BharatPurpleAccent
 import com.kks.bharatkirana.ui.theme.BharatPurpleContainer
 import com.kks.bharatkirana.ui.theme.BharatPurpleDark
-import com.kks.bharatkirana.ui.theme.BharatPurpleLight
 import com.kks.bharatkirana.ui.theme.BharatPurplePrimary
 import com.kks.bharatkirana.ui.theme.BharatTextMuted
 import com.kks.bharatkirana.ui.theme.BharatTextPrimary
@@ -101,35 +83,26 @@ fun ProfileScreen(
   userProfile: UserProfile,
   orders: List<Order>,
   cartItemCount: Int,
-  onOrderClick: (Order) -> Unit,
-  onReorder: (Order) -> Unit,
   onCartClick: () -> Unit,
-  onUpdateProfile: (String, String, String, String) -> Unit,
-  onPrivacyPolicyClick: () -> Unit = {},
-  onTermsClick: () -> Unit = {},
-  onVendorRegisterClick: () -> Unit = {},
-  onMyOrdersClick: () -> Unit = {},
-  onWishlistClick: () -> Unit = {},
-  wishlistCount: Int = 0,
-  onLogout: () -> Unit = {},
-  onDeleteAccount: () -> Unit = {},
-  hasSupport: Boolean = false,
-  onSupportClick: () -> Unit = {},
+  onMyOrdersClick: () -> Unit,
+  onEditProfileClick: () -> Unit,
+  onSavedAddressesClick: () -> Unit,
+  onNotificationPreferencesClick: () -> Unit,
+  onKiranaWalletClick: () -> Unit,
+  onHelpSupportClick: () -> Unit,
+  onVendorRegisterClick: () -> Unit,
+  onAboutUsClick: () -> Unit,
+  onPrivacyPolicyClick: () -> Unit,
+  onTermsClick: () -> Unit,
+  onLogout: () -> Unit,
+  onDeleteAccount: () -> Unit,
   profileFetchComplete: Boolean = true,
-  syncPending: Boolean = false,
   modifier: Modifier = Modifier
 ) {
-  var editingProfile by remember { mutableStateOf(false) }
-  var showQrDialog by remember { mutableStateOf(false) }
-  var showLogoutConfirmDialog by remember { mutableStateOf(false) }
-  var showDeleteConfirmDialog by remember { mutableStateOf(false) }
-
-  var editName by remember { mutableStateOf(userProfile.fullName) }
-  var editEmail by remember { mutableStateOf(userProfile.email) }
-  var editMobile by remember { mutableStateOf(userProfile.mobileNumber) }
-  var editAddress by remember { mutableStateOf(userProfile.address) }
-
-  val latestOrder = orders.firstOrNull()
+  var showLogoutConfirm by remember { mutableStateOf(false) }
+  // 0 = closed, 1 = first prompt, 2 = final confirmation. Two-step so
+  // account deletion never happens on a single accidental tap.
+  var deleteStep by remember { mutableStateOf(0) }
 
   Box(
     modifier = modifier
@@ -142,7 +115,7 @@ fun ProfileScreen(
         .testTag("profile_screen_content"),
       contentPadding = PaddingValues(bottom = 32.dp)
     ) {
-      // Header with Store Title, Cart & Logout Actions
+      // ---- Store title header (BreakQ + cart, no logout up here) ----------
       item {
         Row(
           modifier = Modifier
@@ -169,467 +142,142 @@ fun ProfileScreen(
               color = BharatPurplePrimary
             )
           }
-
-          Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(4.dp)
+          IconButton(
+            onClick = onCartClick,
+            modifier = Modifier.testTag("profile_cart_icon")
           ) {
-            // Cart Button
-            IconButton(
-              onClick = onCartClick,
-              modifier = Modifier.testTag("profile_cart_icon")
-            ) {
-              Box(contentAlignment = Alignment.TopEnd) {
-                Icon(
-                  imageVector = Icons.Default.ShoppingCart,
-                  contentDescription = "Cart",
-                  tint = BharatTextPrimary
-                )
-                if (cartItemCount > 0) {
-                  Box(
-                    modifier = Modifier
-                      .size(16.dp)
-                      .clip(CircleShape)
-                      .background(BharatPurplePrimary),
-                    contentAlignment = Alignment.Center
-                  ) {
-                    Text(
-                      text = "$cartItemCount",
-                      color = Color.White,
-                      fontSize = 9.sp,
-                      fontWeight = FontWeight.Bold
-                    )
-                  }
+            Box(contentAlignment = Alignment.TopEnd) {
+              Icon(
+                imageVector = Icons.Default.ShoppingCart,
+                contentDescription = "Cart",
+                tint = BharatTextPrimary
+              )
+              if (cartItemCount > 0) {
+                Box(
+                  modifier = Modifier
+                    .size(16.dp)
+                    .clip(CircleShape)
+                    .background(BharatPurplePrimary),
+                  contentAlignment = Alignment.Center
+                ) {
+                  Text(
+                    text = "$cartItemCount",
+                    color = Color.White,
+                    fontSize = 9.sp,
+                    fontWeight = FontWeight.Bold
+                  )
                 }
-              }
-            }
-
-            // Prominent Top Bar Logout Button
-            Surface(
-              onClick = { showLogoutConfirmDialog = true },
-              shape = RoundedCornerShape(8.dp),
-              color = Color(0xFFFEF2F2),
-              border = BorderStroke(1.dp, Color(0xFFFECACA)),
-              modifier = Modifier.testTag("profile_topbar_logout_button")
-            ) {
-              Row(
-                modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically
-              ) {
-                Icon(
-                  imageVector = Icons.Default.Logout,
-                  contentDescription = "Log Out",
-                  tint = Color(0xFFDC2626),
-                  modifier = Modifier.size(14.dp)
-                )
-                Spacer(modifier = Modifier.width(4.dp))
-                Text(
-                  text = "Log Out",
-                  fontSize = 11.sp,
-                  fontWeight = FontWeight.Bold,
-                  color = Color(0xFFDC2626)
-                )
               }
             }
           }
         }
       }
 
-      // User Profile Card
+      // ---- Profile header card (basic info only) --------------------------
       item {
+        Spacer(modifier = Modifier.height(12.dp))
         Card(
+          shape = RoundedCornerShape(16.dp),
+          colors = CardDefaults.cardColors(containerColor = Color.White),
+          border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
           modifier = Modifier
             .fillMaxWidth()
-            .padding(16.dp),
-          shape = RoundedCornerShape(20.dp),
-          colors = CardDefaults.cardColors(containerColor = Color.White),
-          elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+            .padding(horizontal = 16.dp)
         ) {
-          Column(modifier = Modifier.padding(18.dp)) {
-            Row(
-              modifier = Modifier.fillMaxWidth(),
-              verticalAlignment = Alignment.CenterVertically
+          Row(
+            modifier = Modifier
+              .fillMaxWidth()
+              .padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically
+          ) {
+            val isRealVendor = userProfile.serverRole == UserRole.VENDOR && userProfile.shopId != null
+            Box(
+              modifier = Modifier
+                .size(56.dp)
+                .clip(CircleShape)
+                .background(
+                  Brush.linearGradient(
+                    if (userProfile.isAdmin) listOf(BharatPurpleDark, BharatPurplePrimary)
+                    else listOf(BharatPurplePrimary, BharatPurpleAccent)
+                  )
+                ),
+              contentAlignment = Alignment.Center
             ) {
-              Box(
-                modifier = Modifier
-                  .size(60.dp)
-                  .clip(CircleShape)
-                  .background(
-                    Brush.linearGradient(
-                      if (userProfile.isAdmin) {
-                        listOf(BharatPurpleDark, BharatPurplePrimary)
-                      } else {
-                        listOf(BharatPurplePrimary, BharatPurpleAccent)
-                      }
-                    )
-                  ),
-                contentAlignment = Alignment.Center
-              ) {
+              Text(
+                text = userProfile.fullName.firstOrNull()?.uppercase() ?: "U",
+                color = Color.White,
+                style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold)
+              )
+            }
+            Spacer(modifier = Modifier.width(14.dp))
+            Column(modifier = Modifier.weight(1f)) {
+              Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                  text = userProfile.fullName.firstOrNull()?.toString() ?: "U",
-                  color = Color.White,
-                  style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.Bold)
+                  text = userProfile.fullName.ifBlank { "Your Account" },
+                  style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                  color = BharatTextPrimary
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                RoleBadge(
+                  isAdmin = userProfile.isAdmin,
+                  isRealVendor = isRealVendor
                 )
               }
-
-              Spacer(modifier = Modifier.width(14.dp))
-
-              Column(modifier = Modifier.weight(1f)) {
-                // "Shop Owner" only when the account is actually a vendor (role
-                // + real shop). Accounts that picked vendor at signup but never
-                // finished shop registration are UX-wise still customers.
-                val isRealVendor = userProfile.serverRole == UserRole.VENDOR && userProfile.shopId != null
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                  Text(
-                    text = userProfile.fullName,
-                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                    color = BharatTextPrimary
-                  )
-                  Spacer(modifier = Modifier.width(6.dp))
-
-                  // Role Badge.
-                  val roleLabel = when {
-                    userProfile.isAdmin -> "Admin"
-                    isRealVendor -> "Shop Owner"
-                    else -> "Customer"
-                  }
-                  val roleIsHighlighted = userProfile.isAdmin || isRealVendor
-                  Surface(
-                    shape = RoundedCornerShape(6.dp),
-                    color = if (roleIsHighlighted) BharatPurpleContainer else Color(0xFFF1F5F9)
-                  ) {
-                    Row(
-                      verticalAlignment = Alignment.CenterVertically,
-                      modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                    ) {
-                      Icon(
-                        imageVector = when {
-                          userProfile.isAdmin -> Icons.Default.AdminPanelSettings
-                          isRealVendor -> Icons.Default.Storefront
-                          else -> Icons.Default.Person
-                        },
-                        contentDescription = "Role",
-                        tint = if (roleIsHighlighted) BharatPurplePrimary else BharatTextSecondary,
-                        modifier = Modifier.size(11.dp)
-                      )
-                      Spacer(modifier = Modifier.width(3.dp))
-                      Text(
-                        text = roleLabel,
-                        color = if (roleIsHighlighted) BharatPurplePrimary else BharatTextSecondary,
-                        fontWeight = FontWeight.ExtraBold,
-                        fontSize = 10.sp
-                      )
-                    }
-                  }
-                }
-
-                Spacer(modifier = Modifier.height(2.dp))
-
-                // Email Display
-                Text(
-                  text = userProfile.email,
-                  style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium),
-                  color = if (userProfile.isAdmin || isRealVendor) BharatPurplePrimary else BharatTextSecondary
-                )
-
+              if (userProfile.mobileNumber.isNotBlank()) {
                 Text(
                   text = "+91 ${userProfile.mobileNumber}",
                   style = MaterialTheme.typography.bodySmall,
                   color = BharatTextMuted
                 )
               }
-
-              // Kept only for accessibility / muscle memory — the real prominent
-              // Edit button lives right below the profile row.
-              if (editingProfile) {
-                IconButton(
-                  onClick = {
-                    editName = userProfile.fullName
-                    editEmail = userProfile.email
-                    editMobile = userProfile.mobileNumber
-                    editAddress = userProfile.address
-                    editingProfile = false
-                  },
-                  modifier = Modifier.testTag("edit_profile_button")
-                ) {
-                  Icon(
-                    imageVector = Icons.Default.Close,
-                    contentDescription = "Cancel edit",
-                    tint = BharatTextSecondary,
-                    modifier = Modifier.size(20.dp)
-                  )
-                }
-              }
-            }
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            // Round 4a v2: prominent, obviously-tappable Edit Profile button.
-            // Replaces the tiny 20dp pencil icon nobody noticed.
-            if (!editingProfile) {
-              Button(
-                onClick = {
-                  editName = userProfile.fullName
-                  editEmail = userProfile.email
-                  editMobile = userProfile.mobileNumber
-                  editAddress = userProfile.address
-                  editingProfile = true
-                },
-                modifier = Modifier
-                  .fillMaxWidth()
-                  .testTag("edit_profile_button"),
-                shape = RoundedCornerShape(12.dp),
-                colors = ButtonDefaults.buttonColors(
-                  containerColor = BharatPurpleContainer,
-                  contentColor = BharatPurplePrimary
-                ),
-                elevation = ButtonDefaults.buttonElevation(defaultElevation = 0.dp)
-              ) {
-                Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(18.dp))
-                Spacer(modifier = Modifier.width(8.dp))
+              if (userProfile.email.isNotBlank()) {
                 Text(
-                  text = "Edit Profile",
-                  fontWeight = FontWeight.Bold,
-                  fontSize = 14.sp
+                  text = userProfile.email,
+                  style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium),
+                  color = BharatTextSecondary
                 )
-              }
-            }
-
-            // Inline edit form (Round 4a): appears directly under the avatar/name row
-            // when user taps the Edit icon. No modal dialog anymore.
-            if (editingProfile) {
-              Spacer(modifier = Modifier.height(14.dp))
-              HorizontalDivider(color = Color(0xFFF1F5F9))
-              Spacer(modifier = Modifier.height(14.dp))
-              Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                OutlinedTextField(
-                  value = editName,
-                  onValueChange = { editName = it },
-                  label = { Text("Full Name") },
-                  singleLine = true,
-                  modifier = Modifier.fillMaxWidth(),
-                  colors = OutlinedTextFieldDefaults.colors(
-                    focusedTextColor = BharatTextPrimary,
-                    unfocusedTextColor = BharatTextPrimary,
-                    focusedBorderColor = BharatPurplePrimary
-                  )
-                )
-                OutlinedTextField(
-                  value = editMobile,
-                  onValueChange = { input -> editMobile = input.filter { it.isDigit() }.take(10) },
-                  label = { Text("Mobile Number") },
-                  leadingIcon = { Text("+91", color = BharatTextSecondary, fontWeight = FontWeight.Bold) },
-                  singleLine = true,
-                  keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
-                    keyboardType = androidx.compose.ui.text.input.KeyboardType.Phone
-                  ),
-                  modifier = Modifier.fillMaxWidth(),
-                  colors = OutlinedTextFieldDefaults.colors(
-                    focusedTextColor = BharatTextPrimary,
-                    unfocusedTextColor = BharatTextPrimary,
-                    focusedBorderColor = BharatPurplePrimary
-                  )
-                )
-                // Email field shown but disabled — the login identity can't be changed here.
-                OutlinedTextField(
-                  value = userProfile.email,
-                  onValueChange = { },
-                  label = { Text("Email (locked)") },
-                  singleLine = true,
-                  enabled = false,
-                  trailingIcon = { Icon(Icons.Default.Lock, contentDescription = null, tint = BharatTextMuted, modifier = Modifier.size(16.dp)) },
-                  modifier = Modifier.fillMaxWidth(),
-                  colors = OutlinedTextFieldDefaults.colors(
-                    disabledTextColor = BharatTextSecondary,
-                    disabledBorderColor = Color(0xFFE5E7EB),
-                    disabledLabelColor = BharatTextMuted
-                  )
-                )
-                OutlinedTextField(
-                  value = editAddress,
-                  onValueChange = { editAddress = it },
-                  label = { Text("Delivery / Pickup Address") },
-                  minLines = 2,
-                  modifier = Modifier.fillMaxWidth(),
-                  colors = OutlinedTextFieldDefaults.colors(
-                    focusedTextColor = BharatTextPrimary,
-                    unfocusedTextColor = BharatTextPrimary,
-                    focusedBorderColor = BharatPurplePrimary
-                  )
-                )
-                Row(
-                  modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
-                  horizontalArrangement = Arrangement.End,
-                  verticalAlignment = Alignment.CenterVertically
-                ) {
-                  TextButton(onClick = {
-                    editName = userProfile.fullName
-                    editMobile = userProfile.mobileNumber
-                    editAddress = userProfile.address
-                    editingProfile = false
-                  }) {
-                    Text("Cancel", color = BharatTextSecondary, fontWeight = FontWeight.SemiBold)
-                  }
-                  Spacer(modifier = Modifier.width(8.dp))
-                  Button(
-                    onClick = {
-                      onUpdateProfile(editName.trim(), userProfile.email, editMobile.trim(), editAddress.trim())
-                      editingProfile = false
-                    },
-                    enabled = editName.isNotBlank() && editMobile.length == 10 && (
-                      // syncPending keeps Save live after a failed upload; without it
-                      // the fields match local state and the button dies forever.
-                      syncPending ||
-                      editName.trim() != userProfile.fullName ||
-                      editMobile.trim() != userProfile.mobileNumber ||
-                      editAddress.trim() != userProfile.address
-                    ),
-                    colors = ButtonDefaults.buttonColors(containerColor = BharatPurplePrimary),
-                    shape = RoundedCornerShape(10.dp)
-                  ) {
-                    Text("Save Changes", color = Color.White, fontWeight = FontWeight.Bold)
-                  }
-                }
-              }
-            }
-
-            Spacer(modifier = Modifier.height(14.dp))
-            HorizontalDivider(color = Color(0xFFF1F5F9))
-            Spacer(modifier = Modifier.height(14.dp))
-
-            // Quick Stats Row (Wallet & Loyalty Points)
-            Row(
-              modifier = Modifier.fillMaxWidth(),
-              horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-              Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier
-                  .weight(1f)
-                  .background(Color(0xFFF8FAFC), RoundedCornerShape(12.dp))
-                  .padding(10.dp)
-              ) {
-                Box(
-                  modifier = Modifier
-                    .size(36.dp)
-                    .clip(CircleShape)
-                    .background(BharatPurpleContainer),
-                  contentAlignment = Alignment.Center
-                ) {
-                  Icon(
-                    imageVector = Icons.Default.AccountBalanceWallet,
-                    contentDescription = null,
-                    tint = BharatPurplePrimary,
-                    modifier = Modifier.size(20.dp)
-                  )
-                }
-                Spacer(modifier = Modifier.width(10.dp))
-                Column {
-                  Text("Kirana Wallet", style = MaterialTheme.typography.labelSmall, color = BharatTextSecondary)
-                  Text("₹${userProfile.walletBalance}", style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold), color = BharatTextPrimary)
-                }
-              }
-
-              Spacer(modifier = Modifier.width(12.dp))
-
-              Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier
-                  .weight(1f)
-                  .background(Color(0xFFF8FAFC), RoundedCornerShape(12.dp))
-                  .padding(10.dp)
-              ) {
-                Box(
-                  modifier = Modifier
-                    .size(36.dp)
-                    .clip(CircleShape)
-                    .background(BharatGreenLight),
-                  contentAlignment = Alignment.Center
-                ) {
-                  Icon(
-                    imageVector = Icons.Default.Loyalty,
-                    contentDescription = null,
-                    tint = BharatGreen,
-                    modifier = Modifier.size(20.dp)
-                  )
-                }
-                Spacer(modifier = Modifier.width(10.dp))
-                Column {
-                  Text("Reward Points", style = MaterialTheme.typography.labelSmall, color = BharatTextSecondary)
-                  Text("${userProfile.loyaltyPoints} pts", style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold), color = BharatTextPrimary)
-                }
               }
             }
           }
         }
       }
 
-      // Scan at Counter Pickup QR Card (Show only if there's a recent order)
-      if (latestOrder != null) {
-        item {
-          Card(
-            modifier = Modifier
-              .fillMaxWidth()
-              .padding(horizontal = 16.dp)
-              .clickable { showQrDialog = true }
-              .testTag("scan_at_counter_card"),
-            shape = RoundedCornerShape(20.dp),
-            colors = CardDefaults.cardColors(containerColor = BharatPurplePrimary),
-            elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
-          ) {
-            Row(
-              modifier = Modifier
-                .fillMaxWidth()
-                .padding(18.dp),
-              verticalAlignment = Alignment.CenterVertically,
-              horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-              Column(modifier = Modifier.weight(1f)) {
-                Surface(
-                  shape = RoundedCornerShape(6.dp),
-                  color = Color.White.copy(alpha = 0.2f)
-                ) {
-                  Text(
-                    text = "Order #${latestOrder.id}",
-                    color = Color.White,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 11.sp,
-                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
-                  )
-                }
-                Spacer(modifier = Modifier.height(8.dp))
-                Text(
-                  text = "Present this code for Order Pickup",
-                  style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                  color = Color.White
-                )
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                  text = "Tap to enlarge QR for counter barcode scanner",
-                  style = MaterialTheme.typography.bodySmall,
-                  color = Color.White.copy(alpha = 0.85f)
-                )
-              }
-
-              Box(
-                modifier = Modifier
-                  .size(68.dp)
-                  .clip(RoundedCornerShape(12.dp))
-                  .background(Color.White)
-                  .padding(6.dp),
-                contentAlignment = Alignment.Center
-              ) {
-                CustomQrCodePattern(tint = BharatPurplePrimary)
-              }
-            }
-          }
-          Spacer(modifier = Modifier.height(20.dp))
-        }
-      }
-
-      // Quick access: Your Orders and Your Wishlist. Rendered before the
-      // vendor onboarding CTA so returning customers hit them first.
+      // ---- Quick Access tiles (Orders / Wallet / Help) --------------------
       item {
+        Spacer(modifier = Modifier.height(16.dp))
+        Row(
+          modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp),
+          horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+          QuickAccessTile(
+            icon = Icons.Default.ReceiptLong,
+            label = "Your Orders",
+            testTagName = "quick_your_orders",
+            onClick = onMyOrdersClick,
+            modifier = Modifier.weight(1f)
+          )
+          QuickAccessTile(
+            icon = Icons.Default.AccountBalanceWallet,
+            label = "Kirana Wallet",
+            testTagName = "quick_kirana_wallet",
+            onClick = onKiranaWalletClick,
+            modifier = Modifier.weight(1f)
+          )
+          QuickAccessTile(
+            icon = Icons.Default.SupportAgent,
+            label = "Help & Support",
+            testTagName = "quick_help_support",
+            onClick = onHelpSupportClick,
+            modifier = Modifier.weight(1f)
+          )
+        }
+      }
+
+      // ---- Account section -------------------------------------------------
+      item {
+        SectionHeader(text = "Account")
         Card(
           shape = RoundedCornerShape(16.dp),
           colors = CardDefaults.cardColors(containerColor = Color.White),
@@ -639,92 +287,59 @@ fun ProfileScreen(
             .padding(horizontal = 16.dp)
         ) {
           Column {
-            Row(
-              modifier = Modifier
-                .fillMaxWidth()
-                .clickable { onMyOrdersClick() }
-                .padding(horizontal = 16.dp, vertical = 14.dp)
-                .testTag("profile_your_orders_row"),
-              verticalAlignment = Alignment.CenterVertically
-            ) {
-              Box(
-                modifier = Modifier
-                  .size(38.dp)
-                  .clip(CircleShape)
-                  .background(BharatPurpleContainer),
-                contentAlignment = Alignment.Center
-              ) {
-                Icon(Icons.Default.ReceiptLong, null, tint = BharatPurplePrimary, modifier = Modifier.size(20.dp))
-              }
-              Spacer(modifier = Modifier.width(14.dp))
-              Column(modifier = Modifier.weight(1f)) {
-                Text(
-                  text = "Your Orders",
-                  style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
-                  color = BharatTextPrimary
-                )
-                Text(
-                  text = if (orders.isEmpty()) "See your past orders here" else "${orders.size} orders placed",
-                  style = MaterialTheme.typography.bodySmall,
-                  color = BharatTextSecondary
-                )
-              }
-              Icon(Icons.Default.ChevronRight, null, tint = BharatTextMuted)
-            }
+            SettingsRow(
+              icon = Icons.Default.Edit,
+              iconTint = BharatPurplePrimary,
+              iconBackground = BharatPurpleContainer,
+              title = "Edit Profile",
+              subtitle = "Update your name, phone and address",
+              testTagName = "profile_edit_profile_row",
+              onClick = onEditProfileClick
+            )
             HorizontalDivider(color = Color(0xFFF1F5F9))
-            Row(
-              modifier = Modifier
-                .fillMaxWidth()
-                .clickable { onWishlistClick() }
-                .padding(horizontal = 16.dp, vertical = 14.dp)
-                .testTag("profile_wishlist_row"),
-              verticalAlignment = Alignment.CenterVertically
-            ) {
-              Box(
-                modifier = Modifier
-                  .size(38.dp)
-                  .clip(CircleShape)
-                  .background(Color(0xFFFEE2E2)),
-                contentAlignment = Alignment.Center
-              ) {
-                Icon(Icons.Default.Favorite, null, tint = Color(0xFFDC2626), modifier = Modifier.size(20.dp))
-              }
-              Spacer(modifier = Modifier.width(14.dp))
-              Column(modifier = Modifier.weight(1f)) {
-                Text(
-                  text = "Your Wishlist",
-                  style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
-                  color = BharatTextPrimary
-                )
-                Text(
-                  text = if (wishlistCount == 0) "Save items to buy later" else "$wishlistCount saved items",
-                  style = MaterialTheme.typography.bodySmall,
-                  color = BharatTextSecondary
-                )
-              }
-              Icon(Icons.Default.ChevronRight, null, tint = BharatTextMuted)
-            }
+            SettingsRow(
+              icon = Icons.Default.LocationOn,
+              iconTint = BharatPurplePrimary,
+              iconBackground = BharatPurpleContainer,
+              title = "Saved Addresses",
+              subtitle = if (userProfile.address.isBlank()) "Add a delivery address" else "1 address saved",
+              testTagName = "profile_saved_addresses_row",
+              onClick = onSavedAddressesClick
+            )
+            HorizontalDivider(color = Color(0xFFF1F5F9))
+            SettingsRow(
+              icon = Icons.Default.Notifications,
+              iconTint = BharatPurplePrimary,
+              iconBackground = BharatPurpleContainer,
+              title = "Notification Preferences",
+              subtitle = "Manage order and promotional alerts",
+              testTagName = "profile_notif_prefs_row",
+              onClick = onNotificationPreferencesClick
+            )
           }
         }
-        Spacer(modifier = Modifier.height(20.dp))
       }
 
-      // Vendor Onboarding Card — only shown once the server profile has actually
-      // loaded, so we don't flicker the CTA for a returning vendor whose shopId
-      // is still null in the initial local state.
+      // ---- Register Your Shop CTA (only for non-admin, non-vendor) --------
+      // Placed after Account so accidental taps are unlikely, but before the
+      // legal/version section so it's still discoverable.
       if (profileFetchComplete && !userProfile.isAdmin && !userProfile.isVendor) {
         item {
+          Spacer(modifier = Modifier.height(16.dp))
           Card(
-            shape = RoundedCornerShape(20.dp),
+            shape = RoundedCornerShape(16.dp),
             colors = CardDefaults.cardColors(containerColor = Color(0xFFF5F3FF)),
             border = BorderStroke(1.dp, Color(0xFFDDD6FE)),
             modifier = Modifier
               .fillMaxWidth()
               .padding(horizontal = 16.dp)
               .clickable { onVendorRegisterClick() }
+              .testTag("profile_register_shop_row")
           ) {
             Row(
-              modifier = Modifier.padding(16.dp),
+              modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
               verticalAlignment = Alignment.CenterVertically
             ) {
               Box(
@@ -736,7 +351,7 @@ fun ProfileScreen(
               ) {
                 Icon(Icons.Default.Store, contentDescription = null, tint = BharatPurplePrimary)
               }
-              Spacer(modifier = Modifier.width(16.dp))
+              Spacer(modifier = Modifier.width(14.dp))
               Column(modifier = Modifier.weight(1f)) {
                 Text(
                   text = "Register Your Shop",
@@ -744,7 +359,7 @@ fun ProfileScreen(
                   color = BharatPurplePrimary
                 )
                 Text(
-                  text = "Start selling your groceries online today",
+                  text = "Start selling your groceries on BreakQ",
                   style = MaterialTheme.typography.bodySmall,
                   color = BharatTextSecondary
                 )
@@ -752,21 +367,12 @@ fun ProfileScreen(
               Icon(Icons.Default.ChevronRight, contentDescription = null, tint = BharatPurplePrimary)
             }
           }
-          Spacer(modifier = Modifier.height(20.dp))
         }
       }
 
-      // Legal & Store Policies Card
+      // ---- About BreakQ section -------------------------------------------
       item {
-        Spacer(modifier = Modifier.height(10.dp))
-        Text(
-          text = "Legal & Policies",
-          style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-          color = BharatTextPrimary,
-          modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp)
-        )
-        Spacer(modifier = Modifier.height(6.dp))
-
+        SectionHeader(text = "About BreakQ")
         Card(
           shape = RoundedCornerShape(16.dp),
           colors = CardDefaults.cardColors(containerColor = Color.White),
@@ -776,339 +382,332 @@ fun ProfileScreen(
             .padding(horizontal = 16.dp)
         ) {
           Column {
-            // Privacy Policy Item
-            Row(
-              modifier = Modifier
-                .fillMaxWidth()
-                .clickable { onPrivacyPolicyClick() }
-                .padding(horizontal = 16.dp, vertical = 14.dp)
-                .testTag("profile_privacy_policy_link"),
-              verticalAlignment = Alignment.CenterVertically,
-              horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-              Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(
-                  modifier = Modifier
-                    .size(36.dp)
-                    .clip(CircleShape)
-                    .background(Color(0xFFEDE9FE)),
-                  contentAlignment = Alignment.Center
-                ) {
-                  Icon(
-                    imageVector = Icons.Default.Shield,
-                    contentDescription = null,
-                    tint = BharatPurplePrimary,
-                    modifier = Modifier.size(20.dp)
-                  )
-                }
-                Spacer(modifier = Modifier.width(12.dp))
-                Column {
-                  Text(
-                    text = "Privacy Policy",
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 14.sp,
-                    color = BharatTextPrimary
-                  )
-                  Text(
-                    text = "Data usage, cloud security & account deletion",
-                    fontSize = 11.sp,
-                    color = BharatTextSecondary
-                  )
-                }
-              }
-              Icon(
-                imageVector = Icons.Default.ChevronRight,
-                contentDescription = null,
-                tint = BharatTextMuted
-              )
-            }
-
+            SettingsRow(
+              icon = Icons.Default.Info,
+              iconTint = BharatPurplePrimary,
+              iconBackground = BharatPurpleContainer,
+              title = "About Us",
+              subtitle = "Learn about BreakQ",
+              testTagName = "profile_about_us_row",
+              onClick = onAboutUsClick
+            )
             HorizontalDivider(color = Color(0xFFF1F5F9))
-
-            // Terms of Service Item
-            Row(
-              modifier = Modifier
-                .fillMaxWidth()
-                .clickable { onTermsClick() }
-                .padding(horizontal = 16.dp, vertical = 14.dp)
-                .testTag("profile_terms_of_service_link"),
-              verticalAlignment = Alignment.CenterVertically,
-              horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-              Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(
-                  modifier = Modifier
-                    .size(36.dp)
-                    .clip(CircleShape)
-                    .background(Color(0xFFEDE9FE)),
-                  contentAlignment = Alignment.Center
-                ) {
-                  Icon(
-                    imageVector = Icons.Default.Description,
-                    contentDescription = null,
-                    tint = BharatPurplePrimary,
-                    modifier = Modifier.size(20.dp)
-                  )
-                }
-                Spacer(modifier = Modifier.width(12.dp))
-                Column {
-                  Text(
-                    text = "Terms of Service",
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 14.sp,
-                    color = BharatTextPrimary
-                  )
-                  Text(
-                    text = "Store pickup agreement, retail pricing & terms",
-                    fontSize = 11.sp,
-                    color = BharatTextSecondary
-                  )
-                }
-              }
-              Icon(
-                imageVector = Icons.Default.ChevronRight,
-                contentDescription = null,
-                tint = BharatTextMuted
-              )
-            }
+            SettingsRow(
+              icon = Icons.Default.Shield,
+              iconTint = BharatPurplePrimary,
+              iconBackground = BharatPurpleContainer,
+              title = "Privacy Policy",
+              subtitle = "How we handle your data",
+              testTagName = "profile_privacy_policy_row",
+              onClick = onPrivacyPolicyClick
+            )
+            HorizontalDivider(color = Color(0xFFF1F5F9))
+            SettingsRow(
+              icon = Icons.Default.Description,
+              iconTint = BharatPurplePrimary,
+              iconBackground = BharatPurpleContainer,
+              title = "Terms & Conditions",
+              subtitle = "Rules of using the app",
+              testTagName = "profile_terms_row",
+              onClick = onTermsClick
+            )
+            HorizontalDivider(color = Color(0xFFF1F5F9))
+            AppVersionRow()
           }
         }
       }
 
-      // Contact Support (WhatsApp) — rendered only when Remote Config has a number.
-      if (hasSupport) {
-        item {
-          Spacer(modifier = Modifier.height(14.dp))
-          Surface(
-            onClick = onSupportClick,
-            shape = RoundedCornerShape(16.dp),
-            color = Color(0xFFECFDF5),
-            border = BorderStroke(1.dp, Color(0xFF10B981)),
-            modifier = Modifier
-              .fillMaxWidth()
-              .padding(horizontal = 16.dp)
-              .testTag("support_whatsapp_button")
-          ) {
-            Row(
-              modifier = Modifier
-                .fillMaxWidth()
-                .padding(14.dp),
-              horizontalArrangement = Arrangement.Center,
-              verticalAlignment = Alignment.CenterVertically
-            ) {
-              Icon(
-                imageVector = Icons.Default.Info,
-                contentDescription = null,
-                tint = Color(0xFF059669),
-                modifier = Modifier.size(18.dp)
-              )
-              Spacer(modifier = Modifier.width(8.dp))
-              Text(
-                text = "Contact Support on WhatsApp",
-                color = Color(0xFF059669),
-                fontWeight = FontWeight.Bold,
-                fontSize = 14.sp
-              )
-            }
-          }
-        }
-      }
-
-      // Customer Logout Action
+      // ---- Account Actions -------------------------------------------------
       item {
-        Spacer(modifier = Modifier.height(14.dp))
-        Surface(
-          onClick = { showLogoutConfirmDialog = true },
+        SectionHeader(text = "Account Actions")
+        Card(
           shape = RoundedCornerShape(16.dp),
-          color = Color(0xFFFEF2F2),
-          border = BorderStroke(1.dp, Color(0xFFFECACA)),
+          colors = CardDefaults.cardColors(containerColor = Color.White),
+          border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
           modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 16.dp)
-            .testTag("customer_logout_button")
         ) {
-          Row(
-            modifier = Modifier
-              .fillMaxWidth()
-              .padding(14.dp),
-            horizontalArrangement = Arrangement.Center,
-            verticalAlignment = Alignment.CenterVertically
-          ) {
-            Icon(
-              imageVector = Icons.Default.Logout,
-              contentDescription = "Log Out",
-              tint = Color(0xFFDC2626),
-              modifier = Modifier.size(18.dp)
+          Column {
+            SettingsRow(
+              icon = Icons.Default.Logout,
+              iconTint = Color(0xFFDC2626),
+              iconBackground = Color(0xFFFEE2E2),
+              title = "Log Out",
+              subtitle = "Sign out of this account",
+              testTagName = "profile_logout_row",
+              onClick = { showLogoutConfirm = true }
             )
-            Spacer(modifier = Modifier.width(8.dp))
-            Text(
-              text = "Log Out of Account",
-              color = Color(0xFFDC2626),
-              fontWeight = FontWeight.Bold,
-              fontSize = 14.sp
+            HorizontalDivider(color = Color(0xFFF1F5F9))
+            SettingsRow(
+              icon = Icons.Default.Delete,
+              iconTint = Color(0xFFDC2626),
+              iconBackground = Color(0xFFFEE2E2),
+              title = "Delete Account",
+              subtitle = "Permanently remove your account",
+              titleColor = Color(0xFFDC2626),
+              testTagName = "profile_delete_account_row",
+              onClick = { deleteStep = 1 }
             )
           }
         }
-
-        Spacer(modifier = Modifier.height(14.dp))
-        
-        TextButton(
-          onClick = { showDeleteConfirmDialog = true },
-          modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp)
-            .testTag("delete_account_button")
-        ) {
-          Text(
-            text = "Delete Account & Data",
-            color = Color(0xFF94A3B8),
-            fontSize = 12.sp,
-            fontWeight = FontWeight.Medium
-          )
-        }
-
-        Spacer(modifier = Modifier.height(12.dp))
-
-        Column(
-          modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp),
-          horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-          Text(
-            text = "Made in India with ❤️",
-            fontSize = 11.sp,
-            color = BharatTextMuted,
-            textAlign = TextAlign.Center
-          )
-        }
-
-        Spacer(modifier = Modifier.height(16.dp))
+        Spacer(modifier = Modifier.height(18.dp))
+        Text(
+          text = "Made in India with ❤\uFE0F",
+          fontSize = 11.sp,
+          color = BharatTextMuted,
+          textAlign = TextAlign.Center,
+          modifier = Modifier.fillMaxWidth()
+        )
       }
     }
   }
 
-  // Logout Confirmation Dialog
-  if (showLogoutConfirmDialog) {
+  // ---- Logout confirmation ---------------------------------------------
+  if (showLogoutConfirm) {
     AlertDialog(
-      onDismissRequest = { showLogoutConfirmDialog = false },
-      title = {
-        Text("Confirm Log Out", fontWeight = FontWeight.Bold)
-      },
+      onDismissRequest = { showLogoutConfirm = false },
+      title = { Text("Log out?", fontWeight = FontWeight.Bold) },
       text = {
         Text(
-          text = "Are you sure you want to log out of ${userProfile.email}? You can sign back in at any time.",
-          style = MaterialTheme.typography.bodyMedium,
+          "You'll need to sign in again to access your account.",
           color = BharatTextSecondary
         )
       },
       confirmButton = {
         Button(
           onClick = {
-            showLogoutConfirmDialog = false
+            showLogoutConfirm = false
             onLogout()
           },
-          colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626))
+          colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626)),
+          modifier = Modifier.testTag("logout_confirm_button")
         ) {
           Text("Log Out", color = Color.White, fontWeight = FontWeight.Bold)
         }
       },
       dismissButton = {
-        TextButton(onClick = { showLogoutConfirmDialog = false }) {
+        TextButton(onClick = { showLogoutConfirm = false }) {
           Text("Cancel", color = BharatTextSecondary)
         }
       }
     )
   }
 
-  // Account Deletion Confirmation Dialog
-  if (showDeleteConfirmDialog) {
+  // ---- Delete account: step 1 of 2 -------------------------------------
+  if (deleteStep == 1) {
     AlertDialog(
-      onDismissRequest = { showDeleteConfirmDialog = false },
-      title = {
-        Text("Delete Account Permanently?", fontWeight = FontWeight.Bold)
-      },
+      onDismissRequest = { deleteStep = 0 },
+      title = { Text("Delete your account?", fontWeight = FontWeight.Bold) },
       text = {
         Text(
-          text = "This action cannot be undone. All your orders, wallet balance, and profile data will be permanently deleted from our servers.",
-          style = MaterialTheme.typography.bodyMedium,
+          "This action may permanently remove your account data.",
+          color = BharatTextSecondary
+        )
+      },
+      confirmButton = {
+        Button(
+          onClick = { deleteStep = 2 },
+          colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626)),
+          modifier = Modifier.testTag("delete_account_step1_continue")
+        ) {
+          Text("Continue", color = Color.White, fontWeight = FontWeight.Bold)
+        }
+      },
+      dismissButton = {
+        TextButton(onClick = { deleteStep = 0 }) {
+          Text("Cancel", color = BharatTextSecondary)
+        }
+      }
+    )
+  }
+
+  // ---- Delete account: final confirmation ------------------------------
+  if (deleteStep == 2) {
+    AlertDialog(
+      onDismissRequest = { deleteStep = 0 },
+      title = { Text("Are you absolutely sure?", fontWeight = FontWeight.Bold) },
+      text = {
+        Text(
+          "This action cannot be undone. All your profile data will be permanently deleted.",
           color = BharatTextSecondary
         )
       },
       confirmButton = {
         Button(
           onClick = {
-            showDeleteConfirmDialog = false
+            deleteStep = 0
             onDeleteAccount()
           },
-          colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626))
+          colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626)),
+          modifier = Modifier.testTag("delete_account_final_confirm")
         ) {
-          Text("Delete My Data", color = Color.White, fontWeight = FontWeight.Bold)
+          Text("Delete Account", color = Color.White, fontWeight = FontWeight.Bold)
         }
       },
       dismissButton = {
-        TextButton(onClick = { showDeleteConfirmDialog = false }) {
-          Text("Go Back", color = BharatTextSecondary)
+        TextButton(onClick = { deleteStep = 0 }) {
+          Text("Cancel", color = BharatTextSecondary)
         }
       }
     )
   }
+}
 
-  // Edit Profile Dialog — REMOVED (Round 4a): replaced with inline editing under the profile row above.
+@Composable
+private fun RoleBadge(isAdmin: Boolean, isRealVendor: Boolean) {
+  val label = when {
+    isAdmin -> "Admin"
+    isRealVendor -> "Shop Owner"
+    else -> "Customer"
+  }
+  val highlighted = isAdmin || isRealVendor
+  Surface(
+    shape = RoundedCornerShape(6.dp),
+    color = if (highlighted) BharatPurpleContainer else Color(0xFFF1F5F9)
+  ) {
+    Row(
+      verticalAlignment = Alignment.CenterVertically,
+      modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+    ) {
+      Icon(
+        imageVector = when {
+          isAdmin -> Icons.Default.AdminPanelSettings
+          isRealVendor -> Icons.Default.Storefront
+          else -> Icons.Default.Person
+        },
+        contentDescription = null,
+        tint = if (highlighted) BharatPurplePrimary else BharatTextSecondary,
+        modifier = Modifier.size(11.dp)
+      )
+      Spacer(modifier = Modifier.width(3.dp))
+      Text(
+        text = label,
+        color = if (highlighted) BharatPurplePrimary else BharatTextSecondary,
+        fontWeight = FontWeight.ExtraBold,
+        fontSize = 10.sp
+      )
+    }
+  }
+}
 
-  // Large QR Code Dialog for Counter Pickup
-  if (showQrDialog) {
-    AlertDialog(
-      onDismissRequest = { showQrDialog = false },
-      title = {
-        Text("Store Pickup QR Code", fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
-      },
-      text = {
-        Column(
-          horizontalAlignment = Alignment.CenterHorizontally,
-          modifier = Modifier.fillMaxWidth()
-        ) {
-          Text(
-            text = "Show this QR code at BreakQ checkout counter to verify and collect your order.",
-            style = MaterialTheme.typography.bodySmall,
-            color = BharatTextSecondary,
-            textAlign = TextAlign.Center
-          )
-          Spacer(modifier = Modifier.height(16.dp))
-          Box(
-            modifier = Modifier
-              .size(220.dp)
-              .clip(RoundedCornerShape(16.dp))
-              .background(Color.White)
-              .padding(16.dp),
-            contentAlignment = Alignment.Center
-          ) {
-            CustomQrCodePattern(tint = BharatPurplePrimary)
-          }
-          Spacer(modifier = Modifier.height(12.dp))
-          Text(
-            text = latestOrder?.id ?: "---",
-            style = MaterialTheme.typography.headlineMedium.copy(
-              fontWeight = FontWeight.ExtraBold,
-              letterSpacing = 2.sp
-            ),
-            color = BharatPurplePrimary
-          )
-          Text(
-            text = "Pickup Code",
-            style = MaterialTheme.typography.labelSmall,
-            color = BharatTextSecondary
-          )
-        }
-      },
-      confirmButton = {
-        Button(
-          onClick = { showQrDialog = false },
-          colors = ButtonDefaults.buttonColors(containerColor = BharatPurplePrimary)
-        ) {
-          Text("Close")
-        }
+@Composable
+private fun SectionHeader(text: String) {
+  Spacer(modifier = Modifier.height(20.dp))
+  Text(
+    text = text,
+    style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+    color = BharatTextPrimary,
+    modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp)
+  )
+}
+
+@Composable
+private fun QuickAccessTile(
+  icon: ImageVector,
+  label: String,
+  testTagName: String,
+  onClick: () -> Unit,
+  modifier: Modifier = Modifier
+) {
+  Card(
+    shape = RoundedCornerShape(14.dp),
+    colors = CardDefaults.cardColors(containerColor = Color.White),
+    border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
+    modifier = modifier
+      .clickable { onClick() }
+      .testTag(testTagName)
+  ) {
+    Column(
+      modifier = Modifier
+        .fillMaxWidth()
+        .padding(vertical = 14.dp, horizontal = 8.dp),
+      horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+      Box(
+        modifier = Modifier
+          .size(40.dp)
+          .clip(CircleShape)
+          .background(BharatPurpleContainer),
+        contentAlignment = Alignment.Center
+      ) {
+        Icon(icon, contentDescription = null, tint = BharatPurplePrimary, modifier = Modifier.size(22.dp))
       }
-    )
+      Spacer(modifier = Modifier.height(8.dp))
+      Text(
+        text = label,
+        fontSize = 12.sp,
+        fontWeight = FontWeight.SemiBold,
+        color = BharatTextPrimary,
+        textAlign = TextAlign.Center,
+        maxLines = 2
+      )
+    }
+  }
+}
+
+@Composable
+private fun SettingsRow(
+  icon: ImageVector,
+  iconTint: Color,
+  iconBackground: Color,
+  title: String,
+  subtitle: String,
+  testTagName: String,
+  onClick: () -> Unit,
+  titleColor: Color = BharatTextPrimary
+) {
+  Row(
+    modifier = Modifier
+      .fillMaxWidth()
+      .clickable { onClick() }
+      .padding(horizontal = 16.dp, vertical = 14.dp)
+      .testTag(testTagName),
+    verticalAlignment = Alignment.CenterVertically
+  ) {
+    Box(
+      modifier = Modifier
+        .size(36.dp)
+        .clip(CircleShape)
+        .background(iconBackground),
+      contentAlignment = Alignment.Center
+    ) {
+      Icon(icon, contentDescription = null, tint = iconTint, modifier = Modifier.size(20.dp))
+    }
+    Spacer(modifier = Modifier.width(12.dp))
+    Column(modifier = Modifier.weight(1f)) {
+      Text(text = title, fontWeight = FontWeight.SemiBold, color = titleColor, fontSize = 14.sp)
+      Text(text = subtitle, color = BharatTextSecondary, fontSize = 11.sp)
+    }
+    Icon(Icons.Default.ChevronRight, contentDescription = null, tint = BharatTextMuted)
+  }
+}
+
+@Composable
+private fun AppVersionRow() {
+  Row(
+    modifier = Modifier
+      .fillMaxWidth()
+      .padding(horizontal = 16.dp, vertical = 14.dp),
+    verticalAlignment = Alignment.CenterVertically
+  ) {
+    Box(
+      modifier = Modifier
+        .size(36.dp)
+        .clip(CircleShape)
+        .background(Color(0xFFF1F5F9)),
+      contentAlignment = Alignment.Center
+    ) {
+      Icon(Icons.Default.Info, contentDescription = null, tint = BharatTextSecondary, modifier = Modifier.size(20.dp))
+    }
+    Spacer(modifier = Modifier.width(12.dp))
+    Column(modifier = Modifier.weight(1f)) {
+      Text(text = "App Version", fontWeight = FontWeight.SemiBold, color = BharatTextPrimary, fontSize = 14.sp)
+      Text(
+        text = "Build ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})",
+        color = BharatTextSecondary,
+        fontSize = 11.sp
+      )
+    }
   }
 }

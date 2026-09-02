@@ -98,7 +98,7 @@ fun StoreLocationHeader(
       Column {
         Row(verticalAlignment = Alignment.CenterVertically) {
           Text(
-            text = "Shopping at",
+            text = "Delivering to",
             style = MaterialTheme.typography.labelSmall,
             color = BharatTextSecondary
           )
@@ -112,7 +112,7 @@ fun StoreLocationHeader(
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
           Text(
-            text = storeName,
+            text = storeName.ifBlank { "Pick a delivery location" },
             style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
             color = BharatTextPrimary,
             maxLines = 1,
@@ -966,13 +966,15 @@ fun BharatBottomNavigationBar(
       .navigationBarsPadding()
       .testTag("bottom_nav_bar")
   ) {
-    MainTab.entries.forEach { tab ->
+    // SEARCH is intentionally hidden from the bottom nav. The Home top-bar
+    // search pill navigates to the Search tab, so the tab is still reachable —
+    // just not duplicated as a bottom-nav item alongside the search pill.
+    MainTab.entries.filter { it != MainTab.SEARCH }.forEach { tab ->
       val isSelected = currentTab == tab
       val (icon, selectedIcon) = when (tab) {
         MainTab.HOME -> Icons.Outlined.Home to Icons.Default.Home
         MainTab.CATEGORIES -> Icons.Outlined.GridView to Icons.Default.GridView
         MainTab.SEARCH -> Icons.Outlined.Search to Icons.Default.Search
-        MainTab.ORDERS -> Icons.Outlined.ReceiptLong to Icons.Default.ReceiptLong
         MainTab.PROFILE -> Icons.Outlined.Person to Icons.Default.Person
       }
 

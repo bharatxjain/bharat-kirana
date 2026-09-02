@@ -12,6 +12,7 @@ import com.kks.bharatkirana.data.model.SubscriptionTier
 import com.kks.bharatkirana.data.model.UserProfile
 import com.kks.bharatkirana.data.model.UserRole
 import com.kks.bharatkirana.data.model.VendorAnalytics
+import com.kks.bharatkirana.data.model.VendorOrderLookup
 import com.kks.bharatkirana.data.model.VendorStatus
 import com.kks.bharatkirana.data.model.VendorSubscription
 import com.kks.bharatkirana.data.model.WeightOption
@@ -294,6 +295,40 @@ class SupabaseGroceryRepo(
       }
     }
 
+  /**
+   * Insert a notification row for a specific user. Called client-side (e.g. by
+   * the vendor when their Realtime INSERT handler observes a new order) so the
+   * Notifications inbox stays in sync with the events the app already surfaced
+   * via a local system notification.
+   */
+  suspend fun insertNotification(
+    userId: String,
+    title: String,
+    message: String,
+    orderId: String? = null,
+    accessToken: String? = null
+  ): Result<Unit> =
+    withContext(Dispatchers.IO) {
+      runCatching {
+        val url = "${SupabaseConfig.restUrl}/notifications"
+        val payload = JSONObject().apply {
+          put("user_id", userId)
+          put("title", title)
+          put("message", message)
+          put("is_read", false)
+          if (!orderId.isNullOrBlank()) put("order_id", orderId)
+        }
+        val request = baseRequestBuilder(url, accessToken)
+          .addHeader("Prefer", "return=minimal")
+          .post(payload.toString().toRequestBody(jsonMediaType))
+          .build()
+        val response = client.newCall(request).execute()
+        if (!response.isSuccessful) {
+          throw Exception("Failed to insert notification: HTTP ${response.code}")
+        }
+      }
+    }
+
   suspend fun markAllNotificationsRead(userId: String, accessToken: String? = null): Result<Unit> =
     withContext(Dispatchers.IO) {
       runCatching {
@@ -507,6 +542,11 @@ class SupabaseGroceryRepo(
           val statusStr = obj.optString("status", "Order Placed")
           val qrCodePayload = obj.optString("qr_code_payload", "ORDER:$id")
           val shopIdField = obj.optString("shop_id").takeIf { it.isNotBlank() } ?: "default_shop"
+          val customerName = obj.optString("customer_name", "")
+          val customerMobile = obj.optString("customer_mobile", "")
+          val createdAt = obj.optString("created_at", "")
+          val orderNumber = obj.optInt("order_number", -1).takeIf { it > 0 }
+          val pickupToken = obj.optString("pickup_token", "").takeIf { it.isNotBlank() }
 
           val status = when (statusStr) {
             OrderStatus.CONFIRMED.label -> OrderStatus.CONFIRMED
@@ -523,8 +563,17 @@ class SupabaseGroceryRepo(
             nowLabel = orderDate
           )
 
-          val itemsArray = obj.optJSONArray("order_items")
-          val items = if (itemsArray != null) parseOrderItems(itemsArray) else emptyList()
+          // Prefer the relational embed; fall back to the JSONB snapshot on
+          // orders.items_json if the relational rows are missing (e.g. an
+          // insert failed silently, or the migration hasn't been applied).
+          val embeddedItems = obj.optJSONArray("order_items")
+          val items = when {
+            embeddedItems != null && embeddedItems.length() > 0 -> parseOrderItems(embeddedItems)
+            else -> {
+              val jsonSnapshot = obj.optJSONArray("items_json")
+              if (jsonSnapshot != null) parseOrderItems(jsonSnapshot) else emptyList()
+            }
+          }
 
           orderList.add(
             Order(
@@ -536,7 +585,12 @@ class SupabaseGroceryRepo(
               status = status,
               expectedPickupTime = "Today by 5:30 PM",
               qrCodePayload = qrCodePayload,
-              timeline = timeline
+              timeline = timeline,
+              customerName = customerName,
+              customerMobile = customerMobile,
+              createdAt = createdAt,
+              orderNumber = orderNumber,
+              pickupToken = pickupToken
             )
           )
         }
@@ -590,14 +644,28 @@ class SupabaseGroceryRepo(
   suspend fun fetchOrderItems(orderId: String, accessToken: String? = null): Result<List<com.kks.bharatkirana.data.model.CartItem>> =
     withContext(Dispatchers.IO) {
       runCatching {
-        val url = "${SupabaseConfig.restUrl}/order_items?order_id=eq.$orderId&select=*&order=id"
-        val request = baseRequestBuilder(url, accessToken).get().build()
-        val response = client.newCall(request).execute()
-        val body = response.body?.string() ?: ""
-        if (!response.isSuccessful) {
-          throw Exception("Failed to fetch order items: HTTP ${response.code}")
+        val relationalUrl = "${SupabaseConfig.restUrl}/order_items?order_id=eq.$orderId&select=*&order=id"
+        val relationalRequest = baseRequestBuilder(relationalUrl, accessToken).get().build()
+        val relationalResponse = client.newCall(relationalRequest).execute()
+        val relationalBody = relationalResponse.body?.string() ?: ""
+
+        if (relationalResponse.isSuccessful) {
+          val parsed = parseOrderItems(JSONArray(relationalBody))
+          if (parsed.isNotEmpty()) return@runCatching parsed
         }
-        parseOrderItems(JSONArray(body))
+
+        // No relational rows (or the table is inaccessible): fall back to the
+        // JSONB snapshot on the parent orders row.
+        val snapshotUrl = "${SupabaseConfig.restUrl}/orders?id=eq.$orderId&select=items_json"
+        val snapshotRequest = baseRequestBuilder(snapshotUrl, accessToken).get().build()
+        val snapshotResponse = client.newCall(snapshotRequest).execute()
+        val snapshotBody = snapshotResponse.body?.string() ?: ""
+        if (!snapshotResponse.isSuccessful) return@runCatching emptyList()
+
+        val arr = JSONArray(snapshotBody)
+        if (arr.length() == 0) return@runCatching emptyList()
+        val itemsJson = arr.getJSONObject(0).optJSONArray("items_json") ?: return@runCatching emptyList()
+        parseOrderItems(itemsJson)
       }
     }
 
@@ -617,6 +685,29 @@ class SupabaseGroceryRepo(
     withContext(Dispatchers.IO) {
       runCatching {
         val url = "${SupabaseConfig.restUrl}/orders"
+
+        // Snapshot the cart as a JSONB payload so vendors/customers can still
+        // render the breakdown even if the relational order_items write below
+        // is blocked by RLS / network / an unapplied migration.
+        val itemsJsonArray = JSONArray().apply {
+          order.items.forEach { ci ->
+            val imageUrl = ci.product.imageUrls.firstOrNull { it.isNotBlank() }
+              ?: ci.product.imageUrl
+            put(
+              JSONObject().apply {
+                put("product_id", ci.product.id)
+                put("product_name", ci.product.name)
+                put("brand", ci.product.brand)
+                put("image_url", imageUrl)
+                put("weight_label", ci.selectedWeight.label)
+                put("unit_price", ci.selectedWeight.price)
+                put("quantity", ci.quantity)
+                put("line_total", ci.selectedWeight.price * ci.quantity)
+              }
+            )
+          }
+        }
+
         val payload = JSONObject().apply {
           put("id", order.id)
           put("customer_name", customerName)
@@ -626,6 +717,7 @@ class SupabaseGroceryRepo(
           put("status", order.status.label)
           put("order_date", order.orderDate)
           put("qr_code_payload", order.qrCodePayload)
+          put("items_json", itemsJsonArray)
           if (!userId.isNullOrBlank()) put("user_id", userId)
           if (order.shopId.isNotBlank() && order.shopId != "default_shop") put("shop_id", order.shopId)
           if (!promoCode.isNullOrBlank()) {
@@ -644,10 +736,10 @@ class SupabaseGroceryRepo(
           throw Exception("Failed to create order: HTTP ${response.code}")
         }
 
-        // Persist line items in a single batch POST so vendors see the full
-        // product breakdown. Denormalised snapshot fields (name, brand, image,
-        // weight, unit_price) keep old orders readable even if the underlying
-        // product later changes or is deleted. See ORDER_ITEMS_MIGRATION.sql.
+        // Best-effort relational persistence. The parent row already carries a
+        // JSONB snapshot so a failure here doesn't lose the order data — the
+        // reader can fall back to items_json. Common cause of failure: the
+        // ORDER_ITEMS_MIGRATION.sql hasn't been applied on this project yet.
         if (order.items.isNotEmpty()) {
           val itemsUrl = "${SupabaseConfig.restUrl}/order_items"
           val itemsArray = JSONArray().apply {
@@ -675,7 +767,12 @@ class SupabaseGroceryRepo(
             .build()
           val itemsResponse = client.newCall(itemsRequest).execute()
           if (!itemsResponse.isSuccessful) {
-            throw Exception("Failed to create order items: HTTP ${itemsResponse.code}")
+            // Log & continue — the JSONB snapshot on orders.items_json is our
+            // fallback so the customer/vendor still see the breakdown.
+            android.util.Log.w(
+              "SupabaseGroceryRepo",
+              "order_items insert failed (HTTP ${itemsResponse.code}); relying on orders.items_json fallback for order ${order.id}"
+            )
           }
         }
       }
@@ -703,6 +800,77 @@ class SupabaseGroceryRepo(
         }
       }
     }
+
+  /**
+   * Complete an order using the customer's pickup QR token. Delegates to the
+   * Postgres RPC which enforces "vendor owns the shop" + valid status checks
+   * atomically. Returns the order id so the caller can navigate to it.
+   */
+  suspend fun completeOrderByPickupToken(token: String, accessToken: String? = null): Result<String> =
+    withContext(Dispatchers.IO) {
+      runCatching {
+        val url = "${SupabaseConfig.restUrl}/rpc/complete_order_by_pickup_token"
+        val payload = JSONObject().apply { put("p_token", token) }
+        val request = baseRequestBuilder(url, accessToken)
+          .post(payload.toString().toRequestBody(jsonMediaType))
+          .build()
+        val response = client.newCall(request).execute()
+        val body = response.body?.string() ?: ""
+        if (!response.isSuccessful) {
+          throw Exception(pickupErrorMessage(body, response.code))
+        }
+        // RPC returns an array of one row.
+        val arr = JSONArray(body)
+        if (arr.length() == 0) throw Exception("Order not found")
+        arr.getJSONObject(0).optString("order_id")
+      }
+    }
+
+  /**
+   * Look up an order for the calling vendor's shop by its short order_number.
+   * Delegates to a Postgres RPC that filters by `shops.owner_id = auth.uid()`
+   * so a vendor can only ever see orders for a shop they own.
+   */
+  suspend fun findShopOrderByNumber(orderNumber: Int, accessToken: String? = null): Result<VendorOrderLookup?> =
+    withContext(Dispatchers.IO) {
+      runCatching {
+        val url = "${SupabaseConfig.restUrl}/rpc/find_shop_order_by_number"
+        val payload = JSONObject().apply { put("p_order_number", orderNumber) }
+        val request = baseRequestBuilder(url, accessToken)
+          .post(payload.toString().toRequestBody(jsonMediaType))
+          .build()
+        val response = client.newCall(request).execute()
+        val body = response.body?.string() ?: ""
+        if (!response.isSuccessful) {
+          throw Exception(pickupErrorMessage(body, response.code))
+        }
+        val arr = JSONArray(body)
+        if (arr.length() == 0) return@runCatching null
+        val obj = arr.getJSONObject(0)
+        VendorOrderLookup(
+          orderId = obj.optString("order_id"),
+          orderNumber = obj.optInt("order_number", -1).takeIf { it > 0 },
+          status = obj.optString("status"),
+          customerName = obj.optString("customer_name"),
+          totalAmount = obj.optInt("total_amount", 0),
+          pickupToken = obj.optString("pickup_token").takeIf { it.isNotBlank() }
+        )
+      }
+    }
+
+  private fun pickupErrorMessage(body: String, httpCode: Int): String {
+    val code = runCatching { JSONObject(body).optString("message") }.getOrNull().orEmpty()
+    return when {
+      code.contains("INVALID_TOKEN") -> "This QR is not a valid pickup code."
+      code.contains("NOT_YOUR_SHOP") -> "This order isn't for your shop."
+      code.contains("ORDER_CANCELLED") -> "This order was cancelled."
+      code.contains("ALREADY_COMPLETED") -> "This order was already picked up."
+      code.contains("NOT_READY_FOR_PICKUP") -> "This order isn't marked ready yet."
+      code.contains("NO_SHOP_FOR_CALLER") -> "Your vendor account has no shop set up."
+      code.isNotBlank() -> code
+      else -> "Pickup failed: HTTP $httpCode"
+    }
+  }
 
   /**
    * Register a new Shop and link it to the user
