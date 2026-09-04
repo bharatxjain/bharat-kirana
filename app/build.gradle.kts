@@ -11,14 +11,14 @@ plugins {
 
 android {
   namespace = "com.kks.bharatkirana"
-  compileSdk = 36
+  compileSdk = 37
 
   defaultConfig {
     applicationId = "com.kks.bharatkirana"
     minSdk = 24
-    targetSdk = 36
-    versionCode = 10
-    versionName = "1.10"
+    targetSdk = 37
+    versionCode = 11
+    versionName = "1.11"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
