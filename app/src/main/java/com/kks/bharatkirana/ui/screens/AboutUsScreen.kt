@@ -32,6 +32,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.clickable
+import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.foundation.layout.navigationBarsPadding
 import com.kks.bharatkirana.BuildConfig
 import com.kks.bharatkirana.ui.theme.BharatBackground
 import com.kks.bharatkirana.ui.theme.BharatPurpleContainer
@@ -43,6 +47,8 @@ import com.kks.bharatkirana.ui.theme.BharatTextSecondary
 @Composable
 fun AboutUsScreen(
   onBackClick: () -> Unit,
+  onPrivacyPolicyClick: () -> Unit = {},
+  onTermsClick: () -> Unit = {},
   modifier: Modifier = Modifier
 ) {
   Box(
@@ -51,9 +57,7 @@ fun AboutUsScreen(
       .background(BharatBackground)
   ) {
     Column(
-      modifier = Modifier
-        .fillMaxSize()
-        .verticalScroll(rememberScrollState())
+      modifier = Modifier.fillMaxSize()
     ) {
       Surface(color = Color.White, shadowElevation = 1.dp) {
         Row(
@@ -77,6 +81,8 @@ fun AboutUsScreen(
       Column(
         modifier = Modifier
           .fillMaxWidth()
+          .weight(1f)
+          .verticalScroll(rememberScrollState())
           .padding(20.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
       ) {
@@ -132,6 +138,39 @@ fun AboutUsScreen(
           fontSize = 12.sp
         )
       }
+
+      // Docked to the bottom edge, full-bleed, matching the reference design.
+      Surface(color = Color.White) {
+        Column(modifier = Modifier.navigationBarsPadding()) {
+          HorizontalDivider()
+          LegalRow(title = "Privacy Policy", onClick = onPrivacyPolicyClick)
+          HorizontalDivider()
+          LegalRow(title = "Terms & Conditions", onClick = onTermsClick)
+        }
+      }
     }
+  }
+}
+
+@Composable
+private fun LegalRow(title: String, onClick: () -> Unit) {
+  Row(
+    modifier = Modifier
+      .fillMaxWidth()
+      .clickable(onClick = onClick)
+      .padding(horizontal = 20.dp, vertical = 18.dp),
+    verticalAlignment = Alignment.CenterVertically
+  ) {
+    Text(
+      text = title,
+      style = MaterialTheme.typography.bodyLarge,
+      color = BharatTextPrimary,
+      modifier = Modifier.weight(1f)
+    )
+    Icon(
+      imageVector = Icons.Default.ChevronRight,
+      contentDescription = null,
+      tint = BharatTextMuted
+    )
   }
 }

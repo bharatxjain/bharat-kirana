@@ -37,9 +37,13 @@ fun OrdersScreen(
   onReorder: (Order) -> Unit,
   onExploreClick: () -> Unit,
   onBackClick: (() -> Unit)? = null,
+  isLoading: Boolean = false,
+  errorMessage: String? = null,
+  onRetry: () -> Unit = {},
   modifier: Modifier = Modifier
 ) {
-  val last10Orders = orders.take(10)
+  // Full history. A previous take(10) silently hid older orders.
+  val visibleOrders = orders
 
   Scaffold(
     topBar = {
@@ -63,7 +67,45 @@ fun OrdersScreen(
     },
     modifier = modifier.fillMaxSize()
   ) { paddingValues ->
-    if (last10Orders.isEmpty()) {
+    if (isLoading && visibleOrders.isEmpty()) {
+      Box(
+        modifier = Modifier
+          .fillMaxSize()
+          .background(BharatBackground)
+          .padding(paddingValues),
+        contentAlignment = Alignment.Center
+      ) {
+        CircularProgressIndicator(color = BharatPurplePrimary, strokeWidth = 3.dp)
+      }
+    } else if (errorMessage != null && visibleOrders.isEmpty()) {
+      Box(
+        modifier = Modifier
+          .fillMaxSize()
+          .background(BharatBackground)
+          .padding(paddingValues),
+        contentAlignment = Alignment.Center
+      ) {
+        Column(
+          horizontalAlignment = Alignment.CenterHorizontally,
+          modifier = Modifier.padding(24.dp)
+        ) {
+          Text(
+            text = "Couldn't load your orders",
+            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+            color = BharatTextPrimary
+          )
+          Text(
+            text = errorMessage,
+            color = BharatTextSecondary,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.padding(top = 6.dp)
+          )
+          TextButton(onClick = onRetry) {
+            Text("Retry", color = BharatPurplePrimary, fontWeight = FontWeight.Bold)
+          }
+        }
+      }
+    } else if (visibleOrders.isEmpty()) {
       Box(
         modifier = Modifier
           .fillMaxSize()
@@ -122,7 +164,7 @@ fun OrdersScreen(
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
       ) {
-        items(last10Orders) { order ->
+        items(visibleOrders) { order ->
           OrderCard(
             order = order,
             onClick = { onOrderClick(order) },

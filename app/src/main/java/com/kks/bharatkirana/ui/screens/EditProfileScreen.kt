@@ -1,5 +1,6 @@
 package com.kks.bharatkirana.ui.screens
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -20,7 +21,9 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Place
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
@@ -54,18 +57,18 @@ import com.kks.bharatkirana.ui.theme.BharatTextSecondary
 fun EditProfileScreen(
   userProfile: UserProfile,
   syncPending: Boolean,
+  deliveryAddressLine: String,
   onBackClick: () -> Unit,
-  onSave: (name: String, email: String, mobile: String, address: String) -> Unit,
+  onManageAddresses: () -> Unit,
+  onSave: (name: String, email: String, mobile: String) -> Unit,
   modifier: Modifier = Modifier
 ) {
   var name by remember { mutableStateOf(userProfile.fullName) }
   var mobile by remember { mutableStateOf(userProfile.mobileNumber) }
-  var address by remember { mutableStateOf(userProfile.address) }
 
   val nameChanged = name.trim() != userProfile.fullName
   val mobileChanged = mobile.trim() != userProfile.mobileNumber
-  val addressChanged = address.trim() != userProfile.address
-  val hasChanges = nameChanged || mobileChanged || addressChanged
+  val hasChanges = nameChanged || mobileChanged
   val canSave = name.isNotBlank() && mobile.length == 10 && (hasChanges || syncPending)
 
   Box(
@@ -145,18 +148,38 @@ fun EditProfileScreen(
             disabledLabelColor = BharatTextMuted
           )
         )
-        OutlinedTextField(
-          value = address,
-          onValueChange = { address = it },
-          label = { Text("Address") },
-          minLines = 2,
-          modifier = Modifier.fillMaxWidth(),
-          colors = OutlinedTextFieldDefaults.colors(
-            focusedTextColor = BharatTextPrimary,
-            unfocusedTextColor = BharatTextPrimary,
-            focusedBorderColor = BharatPurplePrimary
-          )
-        )
+        // Delivery addresses live in customer_addresses now — profiles.address is
+        // deliberately no longer written from this screen.
+        Surface(
+          onClick = onManageAddresses,
+          shape = RoundedCornerShape(12.dp),
+          color = Color.White,
+          border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
+          modifier = Modifier.fillMaxWidth()
+        ) {
+          Row(
+            modifier = Modifier.padding(14.dp),
+            verticalAlignment = Alignment.CenterVertically
+          ) {
+            Icon(Icons.Default.Place, contentDescription = null, tint = BharatPurplePrimary)
+            Spacer(modifier = Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+              Text(
+                text = "Delivery addresses",
+                fontWeight = FontWeight.Bold,
+                color = BharatTextPrimary,
+                fontSize = 14.sp
+              )
+              Text(
+                text = deliveryAddressLine.ifBlank { "No address saved yet" },
+                color = BharatTextSecondary,
+                fontSize = 12.sp,
+                maxLines = 2
+              )
+            }
+            Icon(Icons.Default.ChevronRight, contentDescription = null, tint = BharatTextMuted)
+          }
+        }
         Spacer(modifier = Modifier.height(4.dp))
         Row(
           modifier = Modifier.fillMaxWidth(),
@@ -168,7 +191,7 @@ fun EditProfileScreen(
           Spacer(modifier = Modifier.width(8.dp))
           Button(
             onClick = {
-              onSave(name.trim(), userProfile.email, mobile.trim(), address.trim())
+              onSave(name.trim(), userProfile.email, mobile.trim())
               onBackClick()
             },
             enabled = canSave,

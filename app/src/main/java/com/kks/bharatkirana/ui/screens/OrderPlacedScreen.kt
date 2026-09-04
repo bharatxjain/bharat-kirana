@@ -48,6 +48,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.kks.bharatkirana.data.model.Order
 import com.kks.bharatkirana.ui.components.CustomQrCodePattern
+import com.kks.bharatkirana.ui.components.QrCode
 import com.kks.bharatkirana.ui.components.OrderTimelineView
 import com.kks.bharatkirana.ui.theme.BharatBackground
 import com.kks.bharatkirana.ui.theme.BharatGreen
@@ -179,13 +180,20 @@ fun OrderPlacedScreen(
                 .padding(14.dp),
               contentAlignment = Alignment.Center
             ) {
-              CustomQrCodePattern(tint = BharatPurpleDark)
+              // Encode the server-issued pickup token. The decorative pattern is
+              // only a placeholder for the brief window before the insert returns.
+              val token = order.pickupToken
+              if (!token.isNullOrBlank()) {
+                QrCode(content = token, size = 160.dp, darkColor = BharatPurpleDark)
+              } else {
+                CustomQrCodePattern(tint = BharatPurpleDark)
+              }
             }
 
             Spacer(modifier = Modifier.height(12.dp))
 
             Text(
-              text = order.backupCode,
+              text = order.displayNumber,
               style = MaterialTheme.typography.titleLarge.copy(
                 fontWeight = FontWeight.ExtraBold,
                 letterSpacing = 4.sp
@@ -194,7 +202,7 @@ fun OrderPlacedScreen(
             )
             
             Text(
-              text = "6-Digit Backup Verification Code",
+              text = "Show this number if the QR won't scan",
               style = MaterialTheme.typography.labelSmall,
               color = BharatTextSecondary
             )

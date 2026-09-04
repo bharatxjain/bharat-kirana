@@ -28,6 +28,7 @@ import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.LocationOn
+import androidx.compose.material.icons.filled.ManageAccounts
 import androidx.compose.material.icons.filled.Logout
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Person
@@ -92,18 +93,11 @@ fun ProfileScreen(
   onHelpSupportClick: () -> Unit,
   onVendorRegisterClick: () -> Unit,
   onAboutUsClick: () -> Unit,
-  onPrivacyPolicyClick: () -> Unit,
-  onTermsClick: () -> Unit,
-  onLogout: () -> Unit,
-  onDeleteAccount: () -> Unit,
+  onAccountActionsClick: () -> Unit,
+  savedAddressCount: Int = 0,
   profileFetchComplete: Boolean = true,
   modifier: Modifier = Modifier
 ) {
-  var showLogoutConfirm by remember { mutableStateOf(false) }
-  // 0 = closed, 1 = first prompt, 2 = final confirmation. Two-step so
-  // account deletion never happens on a single accidental tap.
-  var deleteStep by remember { mutableStateOf(0) }
-
   Box(
     modifier = modifier
       .fillMaxSize()
@@ -292,7 +286,7 @@ fun ProfileScreen(
               iconTint = BharatPurplePrimary,
               iconBackground = BharatPurpleContainer,
               title = "Edit Profile",
-              subtitle = "Update your name, phone and address",
+              subtitle = "Update your name and phone",
               testTagName = "profile_edit_profile_row",
               onClick = onEditProfileClick
             )
@@ -302,7 +296,11 @@ fun ProfileScreen(
               iconTint = BharatPurplePrimary,
               iconBackground = BharatPurpleContainer,
               title = "Saved Addresses",
-              subtitle = if (userProfile.address.isBlank()) "Add a delivery address" else "1 address saved",
+              subtitle = when (savedAddressCount) {
+                0 -> "Add a delivery address"
+                1 -> "1 address saved"
+                else -> "$savedAddressCount addresses saved"
+              },
               testTagName = "profile_saved_addresses_row",
               onClick = onSavedAddressesClick
             )
@@ -370,9 +368,9 @@ fun ProfileScreen(
         }
       }
 
-      // ---- About BreakQ section -------------------------------------------
+      // ---- More: About + Account Actions -----------------------------------
       item {
-        SectionHeader(text = "About BreakQ")
+        SectionHeader(text = "More")
         Card(
           shape = RoundedCornerShape(16.dp),
           colors = CardDefaults.cardColors(containerColor = Color.White),
@@ -386,68 +384,20 @@ fun ProfileScreen(
               icon = Icons.Default.Info,
               iconTint = BharatPurplePrimary,
               iconBackground = BharatPurpleContainer,
-              title = "About Us",
-              subtitle = "Learn about BreakQ",
+              title = "About BreakQ",
+              subtitle = "About us, privacy policy, terms & app version",
               testTagName = "profile_about_us_row",
               onClick = onAboutUsClick
             )
             HorizontalDivider(color = Color(0xFFF1F5F9))
             SettingsRow(
-              icon = Icons.Default.Shield,
+              icon = Icons.Default.ManageAccounts,
               iconTint = BharatPurplePrimary,
               iconBackground = BharatPurpleContainer,
-              title = "Privacy Policy",
-              subtitle = "How we handle your data",
-              testTagName = "profile_privacy_policy_row",
-              onClick = onPrivacyPolicyClick
-            )
-            HorizontalDivider(color = Color(0xFFF1F5F9))
-            SettingsRow(
-              icon = Icons.Default.Description,
-              iconTint = BharatPurplePrimary,
-              iconBackground = BharatPurpleContainer,
-              title = "Terms & Conditions",
-              subtitle = "Rules of using the app",
-              testTagName = "profile_terms_row",
-              onClick = onTermsClick
-            )
-            HorizontalDivider(color = Color(0xFFF1F5F9))
-            AppVersionRow()
-          }
-        }
-      }
-
-      // ---- Account Actions -------------------------------------------------
-      item {
-        SectionHeader(text = "Account Actions")
-        Card(
-          shape = RoundedCornerShape(16.dp),
-          colors = CardDefaults.cardColors(containerColor = Color.White),
-          border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
-          modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp)
-        ) {
-          Column {
-            SettingsRow(
-              icon = Icons.Default.Logout,
-              iconTint = Color(0xFFDC2626),
-              iconBackground = Color(0xFFFEE2E2),
-              title = "Log Out",
-              subtitle = "Sign out of this account",
-              testTagName = "profile_logout_row",
-              onClick = { showLogoutConfirm = true }
-            )
-            HorizontalDivider(color = Color(0xFFF1F5F9))
-            SettingsRow(
-              icon = Icons.Default.Delete,
-              iconTint = Color(0xFFDC2626),
-              iconBackground = Color(0xFFFEE2E2),
-              title = "Delete Account",
-              subtitle = "Permanently remove your account",
-              titleColor = Color(0xFFDC2626),
-              testTagName = "profile_delete_account_row",
-              onClick = { deleteStep = 1 }
+              title = "Account Actions",
+              subtitle = "Log out or delete your account",
+              testTagName = "profile_account_actions_row",
+              onClick = onAccountActionsClick
             )
           }
         }
@@ -463,95 +413,6 @@ fun ProfileScreen(
     }
   }
 
-  // ---- Logout confirmation ---------------------------------------------
-  if (showLogoutConfirm) {
-    AlertDialog(
-      onDismissRequest = { showLogoutConfirm = false },
-      title = { Text("Log out?", fontWeight = FontWeight.Bold) },
-      text = {
-        Text(
-          "You'll need to sign in again to access your account.",
-          color = BharatTextSecondary
-        )
-      },
-      confirmButton = {
-        Button(
-          onClick = {
-            showLogoutConfirm = false
-            onLogout()
-          },
-          colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626)),
-          modifier = Modifier.testTag("logout_confirm_button")
-        ) {
-          Text("Log Out", color = Color.White, fontWeight = FontWeight.Bold)
-        }
-      },
-      dismissButton = {
-        TextButton(onClick = { showLogoutConfirm = false }) {
-          Text("Cancel", color = BharatTextSecondary)
-        }
-      }
-    )
-  }
-
-  // ---- Delete account: step 1 of 2 -------------------------------------
-  if (deleteStep == 1) {
-    AlertDialog(
-      onDismissRequest = { deleteStep = 0 },
-      title = { Text("Delete your account?", fontWeight = FontWeight.Bold) },
-      text = {
-        Text(
-          "This action may permanently remove your account data.",
-          color = BharatTextSecondary
-        )
-      },
-      confirmButton = {
-        Button(
-          onClick = { deleteStep = 2 },
-          colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626)),
-          modifier = Modifier.testTag("delete_account_step1_continue")
-        ) {
-          Text("Continue", color = Color.White, fontWeight = FontWeight.Bold)
-        }
-      },
-      dismissButton = {
-        TextButton(onClick = { deleteStep = 0 }) {
-          Text("Cancel", color = BharatTextSecondary)
-        }
-      }
-    )
-  }
-
-  // ---- Delete account: final confirmation ------------------------------
-  if (deleteStep == 2) {
-    AlertDialog(
-      onDismissRequest = { deleteStep = 0 },
-      title = { Text("Are you absolutely sure?", fontWeight = FontWeight.Bold) },
-      text = {
-        Text(
-          "This action cannot be undone. All your profile data will be permanently deleted.",
-          color = BharatTextSecondary
-        )
-      },
-      confirmButton = {
-        Button(
-          onClick = {
-            deleteStep = 0
-            onDeleteAccount()
-          },
-          colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626)),
-          modifier = Modifier.testTag("delete_account_final_confirm")
-        ) {
-          Text("Delete Account", color = Color.White, fontWeight = FontWeight.Bold)
-        }
-      },
-      dismissButton = {
-        TextButton(onClick = { deleteStep = 0 }) {
-          Text("Cancel", color = BharatTextSecondary)
-        }
-      }
-    )
-  }
 }
 
 @Composable
@@ -647,7 +508,7 @@ private fun QuickAccessTile(
 }
 
 @Composable
-private fun SettingsRow(
+internal fun SettingsRow(
   icon: ImageVector,
   iconTint: Color,
   iconBackground: Color,

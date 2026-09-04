@@ -1,5 +1,6 @@
 package com.kks.bharatkirana.ui.screens
 
+import android.location.Location
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -29,6 +30,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -40,14 +42,17 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Campaign
 import androidx.compose.material.icons.filled.ShoppingBag
 import androidx.compose.ui.unit.sp
+import com.kks.bharatkirana.data.maps.MapplsConfig
 import com.kks.bharatkirana.data.model.CartItem
 import com.kks.bharatkirana.data.model.Category
 import com.kks.bharatkirana.data.model.Product
 import com.kks.bharatkirana.data.model.UserProfile
+import com.kks.bharatkirana.data.model.VendorStatus
 import com.kks.bharatkirana.ui.components.CartFloatingBanner
 import com.kks.bharatkirana.ui.components.CategoryItemCard
 import com.kks.bharatkirana.ui.components.DailyEssentialCard
 import com.kks.bharatkirana.ui.components.GrocerySearchBar
+import com.kks.bharatkirana.ui.components.NearbyShopsMap
 import com.kks.bharatkirana.ui.components.ProductGridCard
 import com.kks.bharatkirana.ui.components.ShimmerCategoriesGrid
 import com.kks.bharatkirana.ui.components.ShimmerDailyEssentialCard
@@ -82,12 +87,20 @@ fun HomeScreen(
   isLoading: Boolean = false,
   activeShopId: String? = null,
   shops: List<com.kks.bharatkirana.data.model.Shop> = emptyList(),
+  userLocation: Location? = null,
+  deliveryAddressLine: String = "",
   onShopClick: (com.kks.bharatkirana.data.model.Shop) -> Unit = {},
   onViewAllShopsClick: () -> Unit = {},
   modifier: Modifier = Modifier
 ) {
   val cartItemCount = cartItems.sumOf { it.quantity }
   val cartTotal = cartItems.sumOf { it.totalPrice }
+
+  // Only approved shops that actually carry coordinates can be plotted. Computed
+  // here because LazyListScope is not a composable scope and cannot call remember.
+  val mappableShops = remember(shops) {
+    shops.filter { it.status == VendorStatus.APPROVED && (it.lat != 0.0 || it.lng != 0.0) }
+  }
 
   Box(
     modifier = modifier
@@ -103,11 +116,10 @@ fun HomeScreen(
       // Store Location Header
       item {
         StoreLocationHeader(
-          // Prefer the user's saved delivery address over the legacy
-          // "activeStore" concept (which the new shop-scoped architecture no
-          // longer uses). Blank falls through to the "Pick a delivery
-          // location" placeholder inside the header component.
-          storeName = userProfile.address.ifBlank { userProfile.activeStore },
+          // The selected delivery address from customer_addresses. Falls back to
+          // the legacy profiles.address string, then to the header's own
+          // "Add a delivery address" placeholder.
+          storeName = deliveryAddressLine.ifBlank { userProfile.address },
           userInitial = userProfile.fullName.firstOrNull()?.toString() ?: "R",
           isAdmin = userProfile.isAdmin,
           unreadNotificationCount = unreadNotificationCount,
@@ -117,6 +129,60 @@ fun HomeScreen(
           onAdminClick = onAdminClick,
           onNotificationsClick = onNotificationsClick
         )
+      }
+
+      // Nearby-shops map preview. Reuses the exact Mappls component that powers
+      // NearbyShopsScreen. Hidden when keys are missing or no approved shop has
+      // coordinates, so the customer never sees an empty grey box.
+      if (MapplsConfig.isConfigured && mappableShops.isNotEmpty()) {
+        item(key = "home_nearby_shops_map") {
+          Box(
+            modifier = Modifier
+              .fillMaxWidth()
+              .padding(horizontal = 12.dp)
+              .height(170.dp)
+              .clip(RoundedCornerShape(16.dp))
+          ) {
+            NearbyShopsMap(
+              shops = mappableShops,
+              userLocation = userLocation,
+              onShopMarkerClick = onShopClick,
+              modifier = Modifier.fillMaxSize()
+            )
+            Surface(
+              color = Color.Black.copy(alpha = 0.75f),
+              shape = RoundedCornerShape(20.dp),
+              modifier = Modifier
+                .align(Alignment.TopStart)
+                .padding(10.dp)
+            ) {
+              Text(
+                text = "Tap a pin to open a shop",
+                color = Color.White,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Medium,
+                modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+              )
+            }
+            Surface(
+              onClick = onViewAllShopsClick,
+              color = Color.White,
+              shape = RoundedCornerShape(20.dp),
+              modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(10.dp)
+            ) {
+              Text(
+                text = "View all",
+                color = BharatPurplePrimary,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp)
+              )
+            }
+          }
+          Spacer(modifier = Modifier.height(10.dp))
+        }
       }
 
       // Search Bar — tap navigates to the Search tab (which owns the real

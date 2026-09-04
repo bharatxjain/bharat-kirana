@@ -15,6 +15,7 @@ import com.kks.bharatkirana.data.supabase.SupabaseAuthService
 import com.kks.bharatkirana.data.supabase.SupabaseGroceryRepo
 import com.kks.bharatkirana.data.supabase.SupabaseRealtimeClient
 import com.kks.bharatkirana.data.supabase.DuplicateProductException
+import com.kks.bharatkirana.data.model.CustomerAddress
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -161,6 +162,26 @@ class GroceryViewModel(
 
   private val _userLocation = MutableStateFlow<Location?>(null)
   val userLocation: StateFlow<Location?> = _userLocation.asStateFlow()
+
+  // ---- Customer delivery addresses (public.customer_addresses) -------------
+  private val _addresses = MutableStateFlow<List<CustomerAddress>>(emptyList())
+  val addresses: StateFlow<List<CustomerAddress>> = _addresses.asStateFlow()
+
+  private val _addressesLoading = MutableStateFlow(false)
+  val addressesLoading: StateFlow<Boolean> = _addressesLoading.asStateFlow()
+
+  private val _addressSaving = MutableStateFlow(false)
+  val addressSaving: StateFlow<Boolean> = _addressSaving.asStateFlow()
+
+  private val _addressError = MutableStateFlow<String?>(null)
+  val addressError: StateFlow<String?> = _addressError.asStateFlow()
+
+  // ---- Order history load state --------------------------------------------
+  private val _ordersLoading = MutableStateFlow(false)
+  val ordersLoading: StateFlow<Boolean> = _ordersLoading.asStateFlow()
+
+  private val _ordersError = MutableStateFlow<String?>(null)
+  val ordersError: StateFlow<String?> = _ordersError.asStateFlow()
 
   // ---- Round 3: Firebase Remote Config-driven state ----
   private val _handlingFee = MutableStateFlow(5)
@@ -536,7 +557,13 @@ class GroceryViewModel(
         // "Your order has been accepted" signal they expect.
         val myShopId = _userProfile.value.shopId?.takeIf { it.isNotBlank() }
         val recordShopId = record.optString("shop_id").takeIf { it.isNotBlank() }
-        val isCustomerForThisOrder = existing != null && myShopId != recordShopId
+        // Positive ownership check, mirroring the INSERT branch. The old test
+        // ("my shop id differs from the order's") was also true for admins and
+        // for any signed-in user with no shop, so it could fire on a device that
+        // does not belong to this order's customer.
+        val recordUserId = record.optString("user_id").takeIf { it.isNotBlank() }
+        val isCustomerForThisOrder =
+          existing != null && recordUserId != null && recordUserId == supabaseAuthService.currentUserId
         if (status == OrderStatus.CONFIRMED && isCustomerForThisOrder) {
           showSystemNotification(
             title = "Your order has been accepted",
@@ -607,17 +634,29 @@ class GroceryViewModel(
     if (explicitToken != null) {
       viewModelScope.launch {
         supabaseGroceryRepo.updateFcmToken(userId, explicitToken, accessToken)
+          .onFailure { android.util.Log.w("BreakQ", "FCM token sync failed: ${it.message}") }
       }
       return
     }
     FirebaseMessaging.getInstance().token.addOnCompleteListener { task ->
-      if (!task.isSuccessful) return@addOnCompleteListener
+      if (!task.isSuccessful) {
+        android.util.Log.w("BreakQ", "FCM token unavailable; pushes will not reach this device", task.exception)
+        return@addOnCompleteListener
+      }
       val token = task.result ?: return@addOnCompleteListener
       _userProfile.update { it.copy(fcmToken = token) }
       viewModelScope.launch {
         supabaseGroceryRepo.updateFcmToken(userId, token, accessToken)
+          .onFailure { android.util.Log.w("BreakQ", "FCM token sync failed: ${it.message}") }
       }
     }
+  }
+
+  /** Blanks this device's token on the signed-in profile so pushes stop following it. */
+  private suspend fun clearFcmTokenForCurrentUser() {
+    val userId = supabaseAuthService.currentUserId ?: return
+    supabaseGroceryRepo.updateFcmToken(userId, "", supabaseAuthService.currentAccessToken)
+      .onFailure { android.util.Log.w("BreakQ", "Could not clear FCM token on sign-out: ${it.message}") }
   }
 
   // Round 4b: when the user taps a push notification, MainActivity routes here.
@@ -791,23 +830,64 @@ class GroceryViewModel(
       // Sync orders. Skip entirely if we don't know who the user is yet — a
       // transient empty response during session restore would otherwise wipe
       // the customer's own just-placed local order from the UI.
-      val email = _userProfile.value.email
-      val isAdmin = _userProfile.value.isAdmin
-      val vendorShopId = _userProfile.value.shopId?.takeIf { it.isNotBlank() }
-      if (isAdmin || !vendorShopId.isNullOrBlank() || email.isNotBlank()) {
-        supabaseGroceryRepo.fetchOrders(
-          customerEmail = email,
-          isAdmin = isAdmin,
-          vendorShopId = vendorShopId,
-          accessToken = supabaseAuthService.currentAccessToken
-        ).onSuccess { liveOrders ->
-          // Preserve any locally-inserted orders (just-placed by the customer)
-          // whose ids the server hasn't returned yet.
-          val serverIds = liveOrders.map { it.id }.toSet()
-          val localOnly = _orders.value.filter { it.id !in serverIds }
-          _orders.value = localOnly + liveOrders
-        }
+      fetchOrdersInto(_userProfile.value.email, replace = false)
+    }
+  }
+
+  /**
+   * Single entry point for loading orders for whoever is signed in. [replace]
+   * wipes the list first (fresh login / pull-to-refresh); otherwise orders placed
+   * locally that the server hasn't returned yet are kept.
+   *
+   * Admin/vendor branching is unchanged — vendors still filter on shop_id.
+   */
+  private suspend fun fetchOrdersInto(customerEmail: String, replace: Boolean) {
+    val isAdmin = _userProfile.value.isAdmin
+    val vendorShopId = _userProfile.value.shopId?.takeIf { it.isNotBlank() }
+    val customerUserId = supabaseAuthService.currentUserId?.takeIf { it.isNotBlank() }
+    // Used to `return` here without a word, so a blank email produced an empty
+    // list that rendered as "No orders yet".
+    if (!isAdmin && vendorShopId.isNullOrBlank() && customerEmail.isBlank() && customerUserId == null) {
+      _ordersError.value = "Session not ready yet. Tap Retry."
+      return
+    }
+
+    // Without a JWT, PostgREST runs the query as `anon`, RLS matches nothing and
+    // we get a successful-but-empty list — indistinguishable from "no orders".
+    val token = supabaseAuthService.currentAccessToken
+    if (token.isNullOrBlank()) {
+      _ordersError.value = "Session not ready yet. Tap Retry."
+      return
+    }
+
+    _ordersLoading.value = true
+    supabaseGroceryRepo.fetchOrders(
+      customerEmail = customerEmail.takeIf { it.isNotBlank() },
+      customerUserId = customerUserId,
+      isAdmin = isAdmin,
+      vendorShopId = vendorShopId,
+      accessToken = token
+    ).onSuccess { liveOrders ->
+      _ordersError.value = null
+      _orders.value = if (replace) {
+        liveOrders
+      } else {
+        val serverIds = liveOrders.map { it.id }.toSet()
+        _orders.value.filter { it.id !in serverIds } + liveOrders
       }
+    }.onFailure { err ->
+      // Previously swallowed: a failed fetch left _orders empty and the history
+      // screen rendered "no orders yet", which is why past orders looked deleted.
+      android.util.Log.e("BreakQ", "fetchOrders failed", err)
+      _ordersError.value = err.localizedMessage ?: "Couldn't load your orders."
+    }
+    _ordersLoading.value = false
+  }
+
+  /** Re-reads order history from Supabase. Safe to call on screen open. */
+  fun refreshOrders() {
+    viewModelScope.launch {
+      fetchOrdersInto(_userProfile.value.email, replace = false)
     }
   }
 
@@ -1129,7 +1209,21 @@ class GroceryViewModel(
         promoCode = appliedCode,
         promoDiscount = promoDiscount,
         accessToken = supabaseAuthService.currentAccessToken
-      ).onFailure { err ->
+      ).onSuccess { serverFields ->
+        // The DB trigger owns order_number / pickup_token. Fold them into the
+        // optimistic local row so the confirmation screen shows the same
+        // number the vendor sees, and the QR carries the real token.
+        if (serverFields.orderNumber != null || serverFields.pickupToken != null) {
+          _orders.update { list ->
+            list.map { existing ->
+              if (existing.id == newOrder.id) existing.copy(
+                orderNumber = serverFields.orderNumber ?: existing.orderNumber,
+                pickupToken = serverFields.pickupToken ?: existing.pickupToken
+              ) else existing
+            }
+          }
+        }
+      }.onFailure { err ->
         android.util.Log.e("GroceryViewModel", "insertOrder failed for ${newOrder.id}: ${err.message}", err)
         _authStatusMessage.value = "Order saved locally — sync failed: ${err.localizedMessage ?: "network error"}. Please refresh."
       }
@@ -1413,6 +1507,11 @@ class GroceryViewModel(
 
   fun logout() {
     viewModelScope.launch {
+      // Detach this device from the outgoing account while the session is still
+      // valid. Otherwise their profiles.fcm_token keeps pointing at this phone
+      // and notify-order-status would push their order updates to whoever logs
+      // in next.
+      clearFcmTokenForCurrentUser()
       supabaseAuthService.signOut()
     }
     supabaseRealtime.disconnect()
@@ -1433,6 +1532,7 @@ class GroceryViewModel(
         // since the account must not remain accessible either way.
         supabaseGroceryRepo.deleteUserProfile(userId, supabaseAuthService.currentAccessToken)
       }
+      clearFcmTokenForCurrentUser()
       supabaseAuthService.signOut()
       supabaseRealtime.disconnect()
       clearSavedSession()
@@ -1614,21 +1714,15 @@ class GroceryViewModel(
       if (!currentUserId.isNullOrBlank()) {
         supabaseGroceryRepo.fetchRatedOrderIds(currentUserId, supabaseAuthService.currentAccessToken)
           .onSuccess { ids -> _ratedOrderIds.value = ids }
+        // Delivery address book — drives the Home "Delivering to" pill, so it has
+        // to be warm before Home renders.
+        refreshAddresses(currentUserId)
       }
 
       // Load orders using the (possibly updated) admin flag. Unconditionally
       // overwrite so the newly-authenticated user never sees stale rows from
       // the previous account — even if their own list is genuinely empty.
-      val effectiveIsAdmin = _userProfile.value.isAdmin
-      val effectiveVendorShopId = _userProfile.value.shopId?.takeIf { it.isNotBlank() }
-      supabaseGroceryRepo.fetchOrders(
-        customerEmail = cleanEmail,
-        isAdmin = effectiveIsAdmin,
-        vendorShopId = effectiveVendorShopId,
-        accessToken = supabaseAuthService.currentAccessToken
-      ).onSuccess { liveOrders ->
-        _orders.value = liveOrders
-      }
+      fetchOrdersInto(cleanEmail, replace = true)
 
       loadNotifications()
     }
@@ -1826,6 +1920,84 @@ class GroceryViewModel(
       // Email app not available
     }
   }
+
+  // ---- Delivery addresses ---------------------------------------------------
+
+  private suspend fun refreshAddresses(userId: String) {
+    supabaseGroceryRepo.fetchAddresses(userId, supabaseAuthService.currentAccessToken)
+      .onSuccess { _addresses.value = it }
+  }
+
+  fun loadAddresses() {
+    val userId = supabaseAuthService.currentUserId ?: return
+    viewModelScope.launch {
+      _addressesLoading.value = true
+      supabaseGroceryRepo.fetchAddresses(userId, supabaseAuthService.currentAccessToken)
+        .onSuccess {
+          _addresses.value = it
+          _addressError.value = null
+        }
+        .onFailure { err ->
+          _addressError.value = "Couldn't load your addresses. ${err.localizedMessage.orEmpty()}".trim()
+        }
+      _addressesLoading.value = false
+    }
+  }
+
+  /** Insert or update, then promote to default unless the user has one already. */
+  fun saveAddress(
+    address: CustomerAddress,
+    makeDefault: Boolean = true,
+    onSaved: () -> Unit = {}
+  ) {
+    val userId = supabaseAuthService.currentUserId ?: run {
+      _addressError.value = "Session expired. Please log in again."
+      return
+    }
+    viewModelScope.launch {
+      _addressSaving.value = true
+      _addressError.value = null
+      supabaseGroceryRepo.upsertAddress(address, userId, supabaseAuthService.currentAccessToken)
+        .onSuccess { saved ->
+          val promote = makeDefault || _addresses.value.none { it.isDefault }
+          if (promote && saved.id.isNotBlank()) {
+            supabaseGroceryRepo.setDefaultAddress(saved.id, supabaseAuthService.currentAccessToken)
+          }
+          refreshAddresses(userId)
+          onSaved()
+        }
+        .onFailure { err ->
+          _addressError.value = "Couldn't save the address. ${err.localizedMessage.orEmpty()}".trim()
+        }
+      _addressSaving.value = false
+    }
+  }
+
+  fun deleteAddress(addressId: String) {
+    val userId = supabaseAuthService.currentUserId ?: return
+    viewModelScope.launch {
+      supabaseGroceryRepo.deleteAddress(addressId, userId, supabaseAuthService.currentAccessToken)
+        .onSuccess { refreshAddresses(userId) }
+        .onFailure { err ->
+          _addressError.value = "Couldn't delete the address. ${err.localizedMessage.orEmpty()}".trim()
+        }
+    }
+  }
+
+  /** Pick the delivery address. Optimistic locally, authoritative via RPC. */
+  fun selectAddress(addressId: String) {
+    val userId = supabaseAuthService.currentUserId ?: return
+    _addresses.update { list -> list.map { it.copy(isDefault = it.id == addressId) } }
+    viewModelScope.launch {
+      supabaseGroceryRepo.setDefaultAddress(addressId, supabaseAuthService.currentAccessToken)
+        .onFailure { err ->
+          _addressError.value = "Couldn't switch address. ${err.localizedMessage.orEmpty()}".trim()
+        }
+      refreshAddresses(userId)
+    }
+  }
+
+  fun clearAddressError() { _addressError.value = null }
 
   fun updateProfile(fullName: String, email: String, mobileNumber: String, address: String) {
     val cleanEmail = email.trim()

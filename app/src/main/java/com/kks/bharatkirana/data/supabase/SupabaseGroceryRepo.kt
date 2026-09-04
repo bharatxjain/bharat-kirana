@@ -329,6 +329,139 @@ class SupabaseGroceryRepo(
       }
     }
 
+  // ---------------------------------------------------------------------------
+  // Customer delivery addresses — public.customer_addresses
+  // See CUSTOMER_ADDRESSES_MIGRATION.sql. RLS scopes every row to auth.uid(),
+  // so user_id is sent on insert only to satisfy the WITH CHECK predicate.
+  // ---------------------------------------------------------------------------
+
+  private fun parseAddress(obj: JSONObject): com.kks.bharatkirana.data.model.CustomerAddress =
+    com.kks.bharatkirana.data.model.CustomerAddress(
+      id = obj.optString("id"),
+      label = obj.optString("label", "Home").ifBlank { "Home" },
+      houseNo = obj.optString("house_no"),
+      building = obj.optString("building"),
+      floor = obj.optString("floor"),
+      areaStreet = obj.optString("area_street"),
+      landmark = obj.optString("landmark"),
+      city = obj.optString("city"),
+      state = obj.optString("state"),
+      pincode = obj.optString("pincode"),
+      lat = if (obj.isNull("lat")) null else obj.optDouble("lat"),
+      lng = if (obj.isNull("lng")) null else obj.optDouble("lng"),
+      isForSelf = obj.optBoolean("is_for_self", true),
+      recipientName = obj.optString("recipient_name"),
+      recipientPhone = obj.optString("recipient_phone"),
+      isDefault = obj.optBoolean("is_default", false)
+    )
+
+  private fun addressPayload(
+    address: com.kks.bharatkirana.data.model.CustomerAddress
+  ): JSONObject = JSONObject().apply {
+    put("label", address.label)
+    put("house_no", address.houseNo.trim())
+    put("building", address.building.trim())
+    put("floor", address.floor.trim())
+    put("area_street", address.areaStreet.trim())
+    put("landmark", address.landmark.trim())
+    put("city", address.city.trim())
+    put("state", address.state.trim())
+    put("pincode", address.pincode.trim())
+    if (address.lat != null) put("lat", address.lat) else put("lat", JSONObject.NULL)
+    if (address.lng != null) put("lng", address.lng) else put("lng", JSONObject.NULL)
+    put("is_for_self", address.isForSelf)
+    put("recipient_name", if (address.isForSelf) "" else address.recipientName.trim())
+    put("recipient_phone", if (address.isForSelf) "" else address.recipientPhone.trim())
+  }
+
+  suspend fun fetchAddresses(
+    userId: String,
+    accessToken: String? = null
+  ): Result<List<com.kks.bharatkirana.data.model.CustomerAddress>> =
+    withContext(Dispatchers.IO) {
+      runCatching {
+        val url = "${SupabaseConfig.restUrl}/customer_addresses" +
+          "?user_id=eq.$userId&select=*&order=is_default.desc,created_at.desc"
+        val request = baseRequestBuilder(url, accessToken).get().build()
+        val response = client.newCall(request).execute()
+        val body = response.body?.string() ?: ""
+        if (!response.isSuccessful) throw Exception("Failed to fetch addresses: HTTP ${response.code}")
+
+        val array = JSONArray(body)
+        val list = mutableListOf<com.kks.bharatkirana.data.model.CustomerAddress>()
+        for (i in 0 until array.length()) list.add(parseAddress(array.getJSONObject(i)))
+        list
+      }
+    }
+
+  /** Insert when [address].id is blank, otherwise patch that row. Returns the saved row. */
+  suspend fun upsertAddress(
+    address: com.kks.bharatkirana.data.model.CustomerAddress,
+    userId: String,
+    accessToken: String? = null
+  ): Result<com.kks.bharatkirana.data.model.CustomerAddress> =
+    withContext(Dispatchers.IO) {
+      runCatching {
+        val isNew = address.id.isBlank()
+        val payload = addressPayload(address)
+        val builder = if (isNew) {
+          payload.put("user_id", userId)
+          baseRequestBuilder("${SupabaseConfig.restUrl}/customer_addresses", accessToken)
+            .post(payload.toString().toRequestBody(jsonMediaType))
+        } else {
+          baseRequestBuilder(
+            "${SupabaseConfig.restUrl}/customer_addresses?id=eq.${address.id}&user_id=eq.$userId",
+            accessToken
+          ).patch(payload.toString().toRequestBody(jsonMediaType))
+        }
+        val request = builder.addHeader("Prefer", "return=representation").build()
+        val response = client.newCall(request).execute()
+        val body = response.body?.string() ?: ""
+        // Surface PostgREST's message — "HTTP 400" alone hides whether it's a
+        // missing column, a failed CHECK, or a bad payload.
+        if (!response.isSuccessful) {
+          throw Exception("Failed to save address: HTTP ${response.code} — ${body.take(300)}")
+        }
+
+        val array = JSONArray(body)
+        if (array.length() == 0) throw Exception("Address saved but no row was returned.")
+        parseAddress(array.getJSONObject(0))
+      }
+    }
+
+  suspend fun deleteAddress(
+    addressId: String,
+    userId: String,
+    accessToken: String? = null
+  ): Result<Unit> =
+    withContext(Dispatchers.IO) {
+      runCatching {
+        val url = "${SupabaseConfig.restUrl}/customer_addresses?id=eq.$addressId&user_id=eq.$userId"
+        val request = baseRequestBuilder(url, accessToken)
+          .addHeader("Prefer", "return=minimal")
+          .delete()
+          .build()
+        val response = client.newCall(request).execute()
+        if (!response.isSuccessful) throw Exception("Failed to delete address: HTTP ${response.code}")
+      }
+    }
+
+  /** Atomic demote-then-promote via RPC so two addresses can never both be default. */
+  suspend fun setDefaultAddress(addressId: String, accessToken: String? = null): Result<Unit> =
+    withContext(Dispatchers.IO) {
+      runCatching {
+        val rpcUrl = "${SupabaseConfig.restUrl}/rpc/set_default_customer_address"
+        val payload = JSONObject().apply { put("p_address_id", addressId) }
+        val request = baseRequestBuilder(rpcUrl, accessToken)
+          .post(payload.toString().toRequestBody(jsonMediaType))
+          .build()
+        val response = client.newCall(request).execute()
+        if (!response.isSuccessful) {
+          throw Exception("Failed to set default address: HTTP ${response.code}")
+        }
+      }
+    }
+
   suspend fun markAllNotificationsRead(userId: String, accessToken: String? = null): Result<Unit> =
     withContext(Dispatchers.IO) {
       runCatching {
@@ -503,7 +636,13 @@ class SupabaseGroceryRepo(
   /**
    * Fetch Orders from Supabase
    */
-  suspend fun fetchOrders(customerEmail: String? = null, isAdmin: Boolean = false, vendorShopId: String? = null, accessToken: String? = null): Result<List<Order>> =
+  suspend fun fetchOrders(
+    customerEmail: String? = null,
+    customerUserId: String? = null,
+    isAdmin: Boolean = false,
+    vendorShopId: String? = null,
+    accessToken: String? = null
+  ): Result<List<Order>> =
     withContext(Dispatchers.IO) {
       runCatching {
         // Try embedding order_items first for a single-round-trip fetch; if the
@@ -512,7 +651,17 @@ class SupabaseGroceryRepo(
         fun buildUrl(select: String): String = when {
           isAdmin -> "${SupabaseConfig.restUrl}/orders?$select&order=created_at.desc"
           !vendorShopId.isNullOrBlank() -> "${SupabaseConfig.restUrl}/orders?shop_id=eq.$vendorShopId&$select&order=created_at.desc"
-          customerEmail != null -> "${SupabaseConfig.restUrl}/orders?customer_email=eq.${customerEmail.trim().lowercase()}&$select&order=created_at.desc"
+          // Match on the auth user id OR the email. user_id is what RLS keys on
+          // and is always written at insert; customer_email alone was fragile
+          // because it can be blank immediately after a session restore, which
+          // silently produced an empty — but successful — result.
+          customerUserId != null || customerEmail != null -> {
+            val clauses = buildList {
+              if (!customerUserId.isNullOrBlank()) add("user_id.eq.$customerUserId")
+              if (!customerEmail.isNullOrBlank()) add("customer_email.eq.${customerEmail.trim().lowercase()}")
+            }
+            "${SupabaseConfig.restUrl}/orders?or=(${clauses.joinToString(",")})&$select&order=created_at.desc"
+          }
           else -> "${SupabaseConfig.restUrl}/orders?$select&order=created_at.desc"
         }
 
@@ -669,6 +818,9 @@ class SupabaseGroceryRepo(
       }
     }
 
+  /** Values the BEFORE INSERT trigger assigns, which the client cannot know up front. */
+  data class OrderServerFields(val orderNumber: Int?, val pickupToken: String?)
+
   /**
    * Create New Order in Supabase
    */
@@ -681,7 +833,7 @@ class SupabaseGroceryRepo(
     promoCode: String? = null,
     promoDiscount: Int = 0,
     accessToken: String? = null
-  ): Result<Unit> =
+  ): Result<OrderServerFields> =
     withContext(Dispatchers.IO) {
       runCatching {
         val url = "${SupabaseConfig.restUrl}/orders"
@@ -727,14 +879,31 @@ class SupabaseGroceryRepo(
         }
 
         val request = baseRequestBuilder(url, accessToken)
-          .addHeader("Prefer", "return=minimal")
+          .addHeader("Prefer", "return=representation")
           .post(payload.toString().toRequestBody(jsonMediaType))
           .build()
 
         val response = client.newCall(request).execute()
+        val orderBody = response.body?.string() ?: ""
         if (!response.isSuccessful) {
-          throw Exception("Failed to create order: HTTP ${response.code}")
+          throw Exception("Failed to create order: HTTP ${response.code} — ${orderBody.take(200)}")
         }
+
+        // order_number and pickup_token are produced by the BEFORE INSERT
+        // trigger, so the returned row is the only place the client can learn
+        // them. Without this the customer sees the raw id while the vendor,
+        // reading from the DB, sees the short number.
+        val serverFields = runCatching {
+          val arr = JSONArray(orderBody)
+          if (arr.length() == 0) OrderServerFields(null, null)
+          else {
+            val row = arr.getJSONObject(0)
+            OrderServerFields(
+              orderNumber = row.optInt("order_number", -1).takeIf { it > 0 },
+              pickupToken = row.optString("pickup_token", "").takeIf { it.isNotBlank() }
+            )
+          }
+        }.getOrElse { OrderServerFields(null, null) }
 
         // Best-effort relational persistence. The parent row already carries a
         // JSONB snapshot so a failure here doesn't lose the order data — the
@@ -775,6 +944,8 @@ class SupabaseGroceryRepo(
             )
           }
         }
+
+        serverFields
       }
     }
 

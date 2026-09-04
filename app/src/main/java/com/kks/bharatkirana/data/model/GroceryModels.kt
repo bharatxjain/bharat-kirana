@@ -229,6 +229,41 @@ data class UserProfile(
     }
 }
 
+/**
+ * A structured delivery address from `public.customer_addresses`. Replaces the
+ * legacy single-string [UserProfile.address], which is left in place so the
+ * existing profile-sync and vendor flows keep working.
+ */
+data class CustomerAddress(
+  val id: String = "",
+  val label: String = "Home",
+  val houseNo: String = "",
+  val building: String = "",
+  val floor: String = "",
+  val areaStreet: String = "",
+  val landmark: String = "",
+  val city: String = "",
+  val state: String = "",
+  val pincode: String = "",
+  val lat: Double? = null,
+  val lng: Double? = null,
+  val isForSelf: Boolean = true,
+  val recipientName: String = "",
+  val recipientPhone: String = "",
+  val isDefault: Boolean = false
+) {
+  val formatted: String
+    get() = listOf(houseNo, building, floor, areaStreet, landmark, city, state, pincode)
+      .filter { it.isNotBlank() }
+      .joinToString(", ")
+
+  val shortLine: String
+    get() = listOf(areaStreet, city, pincode).filter { it.isNotBlank() }.joinToString(", ")
+
+  val isComplete: Boolean
+    get() = houseNo.isNotBlank() && areaStreet.isNotBlank() && city.isNotBlank()
+}
+
 enum class OrderStatus(val label: String, val stepIndex: Int) {
   PLACED("Order Placed", 0),
   CONFIRMED("Order Confirmed", 1),
@@ -358,10 +393,13 @@ sealed class AppScreen {
   data object OrderHistory : AppScreen()
   data object EditProfile : AppScreen()
   data object SavedAddresses : AppScreen()
+  data object SelectLocation : AppScreen()
+  data class AddEditAddress(val addressId: String? = null) : AppScreen()
   data object NotificationPreferences : AppScreen()
   data object KiranaWallet : AppScreen()
   data object HelpSupport : AppScreen()
   data object AboutUs : AppScreen()
+  data object AccountActions : AppScreen()
 }
 
 /** Lightweight projection returned by the vendor "find order by number" RPC. */

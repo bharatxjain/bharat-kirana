@@ -37,6 +37,7 @@ import androidx.compose.ui.unit.sp
 import com.kks.bharatkirana.data.model.Category
 import com.kks.bharatkirana.data.model.Product
 import com.kks.bharatkirana.data.model.Shop
+import com.kks.bharatkirana.ui.components.CartFloatingBanner
 import com.kks.bharatkirana.ui.components.ProductGridCard
 import com.kks.bharatkirana.ui.theme.*
 
@@ -52,6 +53,9 @@ fun ShopDetailScreen(
   onAddToCart: (Product) -> Unit,
   onIncreaseQty: (Product) -> Unit,
   onDecreaseQty: (Product) -> Unit,
+  cartItemCount: Int = 0,
+  cartTotal: Int = 0,
+  onViewCartClick: () -> Unit = {},
   modifier: Modifier = Modifier
 ) {
   var query by remember { mutableStateOf("") }
@@ -88,6 +92,14 @@ fun ShopDetailScreen(
           }
         },
         colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface)
+      )
+    },
+    bottomBar = {
+      CartFloatingBanner(
+        itemCount = cartItemCount,
+        totalAmount = cartTotal,
+        discountApplied = if (cartTotal > 200) 15 else 0,
+        onViewCartClick = onViewCartClick
       )
     },
     modifier = modifier.fillMaxSize()

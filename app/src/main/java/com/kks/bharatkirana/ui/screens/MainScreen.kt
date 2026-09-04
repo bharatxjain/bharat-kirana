@@ -67,6 +67,13 @@ fun MainScreen(
   val cartItems by viewModel.cartItems.collectAsState()
   val orders by viewModel.orders.collectAsState()
   val userLocation by viewModel.userLocation.collectAsState()
+  val addresses by viewModel.addresses.collectAsState()
+  val addressesLoading by viewModel.addressesLoading.collectAsState()
+  val addressSaving by viewModel.addressSaving.collectAsState()
+  val addressError by viewModel.addressError.collectAsState()
+  val ordersLoading by viewModel.ordersLoading.collectAsState()
+  val ordersError by viewModel.ordersError.collectAsState()
+  val selectedAddress = addresses.firstOrNull { it.isDefault } ?: addresses.firstOrNull()
   val selectedProduct by viewModel.selectedProduct.collectAsState()
   val selectedCategory by viewModel.selectedCategory.collectAsState()
   val searchQuery by viewModel.searchQuery.collectAsState()
@@ -601,8 +608,14 @@ fun MainScreen(
       }
 
       is AppScreen.OrderHistory -> {
+        // Orders were previously fetched only once at login; a single failed
+        // fetch left the history empty for the whole session.
+        LaunchedEffect(Unit) { viewModel.refreshOrders() }
         OrdersScreen(
           orders = orders,
+          isLoading = ordersLoading,
+          errorMessage = ordersError,
+          onRetry = { viewModel.refreshOrders() },
           onOrderClick = { order -> viewModel.navigateTo(AppScreen.OrderDetails(order.id)) },
           onReorder = { order -> viewModel.reorder(order) },
           onExploreClick = {
@@ -617,18 +630,69 @@ fun MainScreen(
         EditProfileScreen(
           userProfile = userProfile,
           syncPending = profileSyncPending,
+          deliveryAddressLine = selectedAddress?.formatted.orEmpty(),
           onBackClick = { viewModel.navigateBack() },
-          onSave = { name, email, mobile, address ->
-            viewModel.updateProfile(name, email, mobile, address)
+          onManageAddresses = { viewModel.navigateTo(AppScreen.SelectLocation) },
+          onSave = { name, email, mobile ->
+            // profiles.address is passed through untouched so legacy data and the
+            // vendor/profile sync path are unaffected by the new address book.
+            viewModel.updateProfile(name, email, mobile, userProfile.address)
           }
         )
       }
 
       is AppScreen.SavedAddresses -> {
-        SavedAddressesScreen(
-          userProfile = userProfile,
+        SelectLocationScreen(
+          addresses = addresses,
+          isLoading = addressesLoading,
           onBackClick = { viewModel.navigateBack() },
-          onEditProfileClick = { viewModel.navigateTo(AppScreen.EditProfile) }
+          onUseCurrentLocation = {
+            viewModel.fetchUserLocation()
+            viewModel.navigateTo(
+              AppScreen.AddEditAddress(null)
+            )
+          },
+          onAddNewAddress = { _, _ -> viewModel.navigateTo(AppScreen.AddEditAddress(null)) },
+          onSelectAddress = { address ->
+            viewModel.selectAddress(address.id)
+            viewModel.navigateBack()
+          },
+          onEditAddress = { address -> viewModel.navigateTo(AppScreen.AddEditAddress(address.id)) }
+        )
+      }
+
+      is AppScreen.SelectLocation -> {
+        SelectLocationScreen(
+          addresses = addresses,
+          isLoading = addressesLoading,
+          onBackClick = { viewModel.navigateBack() },
+          onUseCurrentLocation = {
+            viewModel.fetchUserLocation()
+            viewModel.navigateTo(AppScreen.AddEditAddress(null))
+          },
+          onAddNewAddress = { _, _ -> viewModel.navigateTo(AppScreen.AddEditAddress(null)) },
+          onSelectAddress = { address ->
+            viewModel.selectAddress(address.id)
+            viewModel.navigateBack()
+          },
+          onEditAddress = { address -> viewModel.navigateTo(AppScreen.AddEditAddress(address.id)) }
+        )
+      }
+
+      is AppScreen.AddEditAddress -> {
+        val editing = screen.addressId?.let { id -> addresses.find { it.id == id } }
+        AddEditAddressScreen(
+          existing = editing,
+          userProfile = userProfile,
+          userLocation = userLocation,
+          isSaving = addressSaving,
+          errorMessage = addressError,
+          onRequestCurrentLocation = { viewModel.fetchUserLocation() },
+          onDismissError = { viewModel.clearAddressError() },
+          onBackClick = { viewModel.navigateBack() },
+          onSave = { address ->
+            viewModel.saveAddress(address) { viewModel.navigateBack() }
+          }
         )
       }
 
@@ -655,7 +719,20 @@ fun MainScreen(
       }
 
       is AppScreen.AboutUs -> {
-        AboutUsScreen(onBackClick = { viewModel.navigateBack() })
+        AboutUsScreen(
+          onBackClick = { viewModel.navigateBack() },
+          onPrivacyPolicyClick = { viewModel.navigateTo(AppScreen.PrivacyPolicy) },
+          onTermsClick = { viewModel.navigateTo(AppScreen.TermsOfService) }
+        )
+      }
+
+      is AppScreen.AccountActions -> {
+        AccountActionsScreen(
+          userEmail = userProfile.email,
+          onBackClick = { viewModel.navigateBack() },
+          onLogout = { viewModel.logout() },
+          onDeleteAccount = { viewModel.deleteAccount() }
+        )
       }
 
       is AppScreen.NearbyShops -> {
@@ -687,6 +764,9 @@ fun MainScreen(
           ShopDetailScreen(
             shop = shop,
             products = shopProducts,
+            cartItemCount = totalCartCount,
+            cartTotal = cartItems.sumOf { it.totalPrice },
+            onViewCartClick = { viewModel.navigateTo(AppScreen.Cart) },
             categories = categories,
             cartQuantityFor = { product ->
               cartItems.filter { it.product.id == product.id }.sumOf { it.quantity }
@@ -1085,8 +1165,8 @@ fun MainScreen(
                   },
                   onViewCartClick = { viewModel.navigateTo(AppScreen.Cart) },
                   onProfileClick = { viewModel.setTab(MainTab.PROFILE) },
-                  onStoreClick = { viewModel.navigateTo(AppScreen.NearbyShops) },
-                  onChangeStoreClick = { viewModel.navigateTo(AppScreen.NearbyShops) },
+                  onStoreClick = { viewModel.navigateTo(AppScreen.SelectLocation) },
+                  onChangeStoreClick = { viewModel.navigateTo(AppScreen.SelectLocation) },
                   onAdminClick = {
                     if (userProfile.isSuperAdmin) viewModel.navigateTo(AppScreen.AdminDashboard)
                     else if (userProfile.isVendor) viewModel.navigateTo(AppScreen.VendorDashboard)
@@ -1097,6 +1177,8 @@ fun MainScreen(
                   isLoading = isLoading,
                   activeShopId = activeShopId,
                   shops = shops,
+                  userLocation = userLocation,
+                  deliveryAddressLine = selectedAddress?.formatted.orEmpty(),
                   onShopClick = { shop -> viewModel.navigateTo(AppScreen.ShopDetail(shop.id)) },
                   onViewAllShopsClick = { viewModel.navigateTo(AppScreen.NearbyShops) }
                 )
@@ -1213,10 +1295,8 @@ fun MainScreen(
                     onHelpSupportClick = { viewModel.navigateTo(AppScreen.HelpSupport) },
                     onVendorRegisterClick = { viewModel.navigateTo(AppScreen.VendorRegistration) },
                     onAboutUsClick = { viewModel.navigateTo(AppScreen.AboutUs) },
-                    onPrivacyPolicyClick = { viewModel.navigateTo(AppScreen.PrivacyPolicy) },
-                    onTermsClick = { viewModel.navigateTo(AppScreen.TermsOfService) },
-                    onLogout = { viewModel.logout() },
-                    onDeleteAccount = { viewModel.deleteAccount() },
+                    onAccountActionsClick = { viewModel.navigateTo(AppScreen.AccountActions) },
+                    savedAddressCount = addresses.size,
                     profileFetchComplete = profileFetchComplete
                   )
                 }
