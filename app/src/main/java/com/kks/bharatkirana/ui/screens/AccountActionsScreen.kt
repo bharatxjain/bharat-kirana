@@ -2,6 +2,7 @@ package com.kks.bharatkirana.ui.screens
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -97,28 +98,15 @@ fun AccountActionsScreen(
         .fillMaxWidth()
         .padding(horizontal = 16.dp)
     ) {
-      Column {
-        SettingsRow(
-          icon = Icons.Default.Logout,
-          iconTint = Color(0xFFDC2626),
-          iconBackground = Color(0xFFFEE2E2),
-          title = "Log Out",
-          subtitle = "Sign out of this account",
-          testTagName = "profile_logout_row",
-          onClick = { showLogoutConfirm = true }
-        )
-        HorizontalDivider(color = Color(0xFFF1F5F9))
-        SettingsRow(
-          icon = Icons.Default.Delete,
-          iconTint = Color(0xFFDC2626),
-          iconBackground = Color(0xFFFEE2E2),
-          title = "Delete Account",
-          subtitle = "Permanently remove your account",
-          titleColor = Color(0xFFDC2626),
-          testTagName = "profile_delete_account_row",
-          onClick = { deleteStep = 1 }
-        )
-      }
+      SettingsRow(
+        icon = Icons.Default.Logout,
+        iconTint = Color(0xFFDC2626),
+        iconBackground = Color(0xFFFEE2E2),
+        title = "Log Out",
+        subtitle = "Sign out of this account",
+        testTagName = "profile_logout_row",
+        onClick = { showLogoutConfirm = true }
+      )
     }
 
     if (userEmail.isNotBlank()) {
@@ -130,6 +118,22 @@ fun AccountActionsScreen(
         modifier = Modifier.padding(horizontal = 20.dp)
       )
     }
+
+    // Delete account is intentionally styled as a subtle centered text \u2014 the
+    // destructive action must remain reachable but never look like the primary
+    // choice. The two-step confirmation flow below is unchanged.
+    Spacer(modifier = Modifier.weight(1f))
+    Text(
+      text = "Delete account permanently",
+      fontSize = 12.sp,
+      color = BharatTextMuted,
+      textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+      modifier = Modifier
+        .fillMaxWidth()
+        .padding(horizontal = 24.dp, vertical = 20.dp)
+        .testTag("profile_delete_account_row")
+        .clickable { deleteStep = 1 }
+    )
   }
 
   if (showLogoutConfirm) {

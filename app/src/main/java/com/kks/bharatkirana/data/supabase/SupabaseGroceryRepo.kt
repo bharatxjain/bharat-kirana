@@ -822,7 +822,11 @@ class SupabaseGroceryRepo(
   data class OrderServerFields(val orderNumber: Int?, val pickupToken: String?)
 
   /**
-   * Create New Order in Supabase
+   * Create the order and its line items in one Postgres transaction via the
+   * `create_order_with_items` RPC. If the items INSERT fails for any reason,
+   * the parent orders row is rolled back — no more partial persistence.
+   *
+   * See ORDER_ATOMICITY_AND_RLS_CLEANUP.sql.
    */
   suspend fun insertOrder(
     order: Order,
@@ -836,11 +840,6 @@ class SupabaseGroceryRepo(
   ): Result<OrderServerFields> =
     withContext(Dispatchers.IO) {
       runCatching {
-        val url = "${SupabaseConfig.restUrl}/orders"
-
-        // Snapshot the cart as a JSONB payload so vendors/customers can still
-        // render the breakdown even if the relational order_items write below
-        // is blocked by RLS / network / an unapplied migration.
         val itemsJsonArray = JSONArray().apply {
           order.items.forEach { ci ->
             val imageUrl = ci.product.imageUrls.firstOrNull { it.isNotBlank() }
@@ -860,7 +859,7 @@ class SupabaseGroceryRepo(
           }
         }
 
-        val payload = JSONObject().apply {
+        val orderPayload = JSONObject().apply {
           put("id", order.id)
           put("customer_name", customerName)
           put("customer_email", customerEmail.trim().lowercase())
@@ -878,74 +877,34 @@ class SupabaseGroceryRepo(
           }
         }
 
-        val request = baseRequestBuilder(url, accessToken)
-          .addHeader("Prefer", "return=representation")
-          .post(payload.toString().toRequestBody(jsonMediaType))
+        val rpcPayload = JSONObject().apply {
+          put("p_order", orderPayload)
+          put("p_items", itemsJsonArray)
+        }
+
+        val request = baseRequestBuilder(
+          "${SupabaseConfig.restUrl}/rpc/create_order_with_items",
+          accessToken
+        )
+          .post(rpcPayload.toString().toRequestBody(jsonMediaType))
           .build()
 
         val response = client.newCall(request).execute()
-        val orderBody = response.body?.string() ?: ""
+        val body = response.body?.string() ?: ""
         if (!response.isSuccessful) {
-          throw Exception("Failed to create order: HTTP ${response.code} — ${orderBody.take(200)}")
+          throw Exception("Failed to create order: HTTP ${response.code} — ${body.take(300)}")
         }
 
-        // order_number and pickup_token are produced by the BEFORE INSERT
-        // trigger, so the returned row is the only place the client can learn
-        // them. Without this the customer sees the raw id while the vendor,
-        // reading from the DB, sees the short number.
-        val serverFields = runCatching {
-          val arr = JSONArray(orderBody)
-          if (arr.length() == 0) OrderServerFields(null, null)
-          else {
-            val row = arr.getJSONObject(0)
-            OrderServerFields(
-              orderNumber = row.optInt("order_number", -1).takeIf { it > 0 },
-              pickupToken = row.optString("pickup_token", "").takeIf { it.isNotBlank() }
-            )
-          }
-        }.getOrElse { OrderServerFields(null, null) }
-
-        // Best-effort relational persistence. The parent row already carries a
-        // JSONB snapshot so a failure here doesn't lose the order data — the
-        // reader can fall back to items_json. Common cause of failure: the
-        // ORDER_ITEMS_MIGRATION.sql hasn't been applied on this project yet.
-        if (order.items.isNotEmpty()) {
-          val itemsUrl = "${SupabaseConfig.restUrl}/order_items"
-          val itemsArray = JSONArray().apply {
-            order.items.forEach { ci ->
-              val imageUrl = ci.product.imageUrls.firstOrNull { it.isNotBlank() }
-                ?: ci.product.imageUrl
-              put(
-                JSONObject().apply {
-                  put("order_id", order.id)
-                  put("product_id", ci.product.id)
-                  put("product_name", ci.product.name)
-                  put("brand", ci.product.brand)
-                  put("image_url", imageUrl)
-                  put("weight_label", ci.selectedWeight.label)
-                  put("unit_price", ci.selectedWeight.price)
-                  put("quantity", ci.quantity)
-                  put("line_total", ci.selectedWeight.price * ci.quantity)
-                }
-              )
-            }
-          }
-          val itemsRequest = baseRequestBuilder(itemsUrl, accessToken)
-            .addHeader("Prefer", "return=minimal")
-            .post(itemsArray.toString().toRequestBody(jsonMediaType))
-            .build()
-          val itemsResponse = client.newCall(itemsRequest).execute()
-          if (!itemsResponse.isSuccessful) {
-            // Log & continue — the JSONB snapshot on orders.items_json is our
-            // fallback so the customer/vendor still see the breakdown.
-            android.util.Log.w(
-              "SupabaseGroceryRepo",
-              "order_items insert failed (HTTP ${itemsResponse.code}); relying on orders.items_json fallback for order ${order.id}"
-            )
-          }
+        // RPC returns a rowset; PostgREST wraps it as a JSON array.
+        val arr = JSONArray(body)
+        if (arr.length() == 0) {
+          throw Exception("Order created but the server returned no fields to fold into local state.")
         }
-
-        serverFields
+        val row = arr.getJSONObject(0)
+        OrderServerFields(
+          orderNumber = row.optInt("order_number", -1).takeIf { it > 0 },
+          pickupToken = row.optString("pickup_token", "").takeIf { it.isNotBlank() }
+        )
       }
     }
 
@@ -960,14 +919,22 @@ class SupabaseGroceryRepo(
           put("status", newStatus.label)
         }
 
+        // return=representation so we can distinguish a real update from a
+        // silent no-op — RLS rejects the row invisibly with return=minimal,
+        // which used to leave the client thinking cancel/confirm succeeded.
         val request = baseRequestBuilder(url, accessToken)
-          .addHeader("Prefer", "return=minimal")
+          .addHeader("Prefer", "return=representation")
           .patch(payload.toString().toRequestBody(jsonMediaType))
           .build()
 
         val response = client.newCall(request).execute()
+        val body = response.body?.string() ?: ""
         if (!response.isSuccessful) {
-          throw Exception("Failed to update order status: HTTP ${response.code}")
+          throw Exception("Failed to update order status: HTTP ${response.code} — ${body.take(200)}")
+        }
+        val updatedCount = try { JSONArray(body).length() } catch (_: Exception) { 0 }
+        if (updatedCount == 0) {
+          throw Exception("Order not updated — server refused the change (row not visible or status transition blocked).")
         }
       }
     }
@@ -1251,7 +1218,10 @@ class SupabaseGroceryRepo(
           address = obj.optString("address", ""),
           loyaltyPoints = obj.optInt("loyalty_points", 0),
           walletBalance = obj.optInt("wallet_balance", 0),
-          shopId = obj.optString("shop_id").takeIf { it.isNotBlank() },
+          // Android's JSONObject.optString returns the string "null" (4 chars) when
+          // the JSON value is null — a non-blank string that fooled the vendor
+          // branch of fetchOrders into filtering by shop_id=eq.null for customers.
+          shopId = if (obj.isNull("shop_id")) null else obj.optString("shop_id").takeIf { it.isNotBlank() },
           profileCompleted = obj.optBoolean("profile_completed", false),
           phoneVerified = obj.optBoolean("phone_verified", false),
           serverRole = serverRole

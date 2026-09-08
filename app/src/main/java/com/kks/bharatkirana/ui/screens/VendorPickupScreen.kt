@@ -1,10 +1,9 @@
-package com.kks.bharatkirana.ui.screens
+﻿package com.kks.bharatkirana.ui.screens
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
@@ -16,14 +15,11 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Numbers
-import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -39,7 +35,6 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
-import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -61,23 +56,24 @@ import com.kks.bharatkirana.ui.theme.BharatPurplePrimary
 import com.kks.bharatkirana.ui.theme.BharatTextPrimary
 import com.kks.bharatkirana.ui.theme.BharatTextSecondary
 
+/**
+ * Vendor "Verify Pickup" screen â€” order-number lookup only.
+ * The QR scanner lives in its own screen so the two entry points on Vendor Home
+ * are independent (see [VendorScanPickupScreen]).
+ */
 @Composable
 fun VendorPickupScreen(
   pickupState: PickupState,
   onBackClick: () -> Unit,
-  onScanToken: (String) -> Unit,
   onFindByNumber: (Int) -> Unit,
   onConfirmLookup: (String) -> Unit,
   onOpenOrder: (String) -> Unit,
   onReset: () -> Unit,
   modifier: Modifier = Modifier
 ) {
-  var mode by remember { mutableStateOf(PickupMode.Scan) }
   var manualInput by remember { mutableStateOf("") }
   val snackbarHostState = remember { SnackbarHostState() }
 
-  // Surface RPC errors in a snackbar and clear them once shown so the user
-  // can retry without a stale banner sticking around.
   LaunchedEffect(pickupState.errorMessage) {
     val msg = pickupState.errorMessage ?: return@LaunchedEffect
     snackbarHostState.showSnackbar(msg)
@@ -88,34 +84,7 @@ fun VendorPickupScreen(
     containerColor = BharatBackground,
     contentWindowInsets = WindowInsets(0),
     snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
-    topBar = {
-      Surface(color = Color.White, shadowElevation = 1.dp) {
-        Row(
-          modifier = Modifier
-            .fillMaxWidth()
-            .statusBarsPadding()
-            .padding(horizontal = 8.dp, vertical = 8.dp),
-          verticalAlignment = Alignment.CenterVertically
-        ) {
-          IconButton(onClick = onBackClick) {
-            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = BharatTextPrimary)
-          }
-          Spacer(modifier = Modifier.width(4.dp))
-          Column(modifier = Modifier.weight(1f)) {
-            Text(
-              text = "Verify Pickup",
-              style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-              color = BharatTextPrimary
-            )
-            Text(
-              text = "Scan customer QR or look up by order number",
-              fontSize = 12.sp,
-              color = BharatTextSecondary
-            )
-          }
-        }
-      }
-    }
+    topBar = { PickupTopBar(subtitle = "Search by customer order number", onBackClick = onBackClick) }
   ) { padding ->
     Column(
       modifier = Modifier
@@ -123,80 +92,100 @@ fun VendorPickupScreen(
         .padding(padding)
         .navigationBarsPadding()
     ) {
-      TabRow(
-        selectedTabIndex = mode.ordinal,
-        containerColor = Color.White,
-        contentColor = BharatPurplePrimary
-      ) {
-        androidx.compose.material3.Tab(
-          selected = mode == PickupMode.Scan,
-          onClick = { mode = PickupMode.Scan; onReset(); manualInput = "" },
-          text = { Text("Scan QR", fontWeight = if (mode == PickupMode.Scan) FontWeight.Bold else FontWeight.Medium) },
-          icon = { Icon(Icons.Default.QrCodeScanner, contentDescription = null) },
-          selectedContentColor = BharatPurplePrimary,
-          unselectedContentColor = BharatTextSecondary
-        )
-        androidx.compose.material3.Tab(
-          selected = mode == PickupMode.Number,
-          onClick = { mode = PickupMode.Number; onReset() },
-          text = { Text("Enter Number", fontWeight = if (mode == PickupMode.Number) FontWeight.Bold else FontWeight.Medium) },
-          icon = { Icon(Icons.Default.Numbers, contentDescription = null) },
-          selectedContentColor = BharatPurplePrimary,
-          unselectedContentColor = BharatTextSecondary
-        )
-      }
+      NumberPane(
+        pickupState = pickupState,
+        input = manualInput,
+        onInputChange = { manualInput = it.filter { c -> c.isDigit() }.take(9) },
+        onFindByNumber = onFindByNumber,
+        onConfirmLookup = onConfirmLookup,
+        onOpenOrder = onOpenOrder,
+        onReset = { manualInput = ""; onReset() }
+      )
+    }
+  }
+}
 
-      Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
-        when (mode) {
-          PickupMode.Scan -> ScanPane(
-            pickupState = pickupState,
-            onScanToken = onScanToken,
+/**
+ * Dedicated pickup-QR scanner. Reuses the same completeOrderByPickupToken RPC
+ * as [VendorPickupScreen] â€” only the entry point and UI differ.
+ */
+@Composable
+fun VendorScanPickupScreen(
+  pickupState: PickupState,
+  onBackClick: () -> Unit,
+  onScanToken: (String) -> Unit,
+  onOpenOrder: (String) -> Unit,
+  onReset: () -> Unit,
+  modifier: Modifier = Modifier
+) {
+  val snackbarHostState = remember { SnackbarHostState() }
+
+  LaunchedEffect(pickupState.errorMessage) {
+    val msg = pickupState.errorMessage ?: return@LaunchedEffect
+    snackbarHostState.showSnackbar(msg)
+  }
+
+  Scaffold(
+    modifier = modifier.fillMaxSize(),
+    containerColor = Color.Black,
+    contentWindowInsets = WindowInsets(0),
+    snackbarHost = { SnackbarHost(hostState = snackbarHostState) }
+  ) { padding ->
+    Box(
+      modifier = Modifier
+        .fillMaxSize()
+        .padding(padding)
+    ) {
+      when {
+        pickupState.completedOrderId != null -> Surface(color = BharatBackground, modifier = Modifier.fillMaxSize()) {
+          PickupSuccessCard(
+            orderId = pickupState.completedOrderId,
             onOpenOrder = onOpenOrder,
-            onScanAnother = onReset
-          )
-          PickupMode.Number -> NumberPane(
-            pickupState = pickupState,
-            input = manualInput,
-            onInputChange = { manualInput = it.filter { c -> c.isDigit() }.take(9) },
-            onFindByNumber = onFindByNumber,
-            onConfirmLookup = onConfirmLookup,
-            onOpenOrder = onOpenOrder,
-            onReset = { manualInput = ""; onReset() }
+            onDone = onReset
           )
         }
+        pickupState.isBusy -> Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+          CircularProgressIndicator(color = Color.White)
+        }
+        else -> BarcodeScannerScreen(
+          onBarcodeScanned = { raw ->
+            // Pickup tokens are URL-safe base64, no spaces.
+            val trimmed = raw.trim()
+            if (trimmed.isNotEmpty()) onScanToken(trimmed)
+          },
+          onCancel = onBackClick,
+          title = "Scan Customer QR",
+          hint = "Point at the pickup QR on the customer's screen",
+          subHint = "The QR is generated when the customer places an order"
+        )
       }
     }
   }
 }
 
-private enum class PickupMode { Scan, Number }
-
 @Composable
-private fun ScanPane(
-  pickupState: PickupState,
-  onScanToken: (String) -> Unit,
-  onOpenOrder: (String) -> Unit,
-  onScanAnother: () -> Unit
-) {
-  // While waiting on the RPC or after a success, stop feeding new frames to
-  // the barcode scanner so we don't double-fire completes.
-  when {
-    pickupState.completedOrderId != null -> PickupSuccessCard(
-      orderId = pickupState.completedOrderId,
-      onOpenOrder = onOpenOrder,
-      onDone = onScanAnother
-    )
-    pickupState.isBusy -> Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-      CircularProgressIndicator(color = BharatPurplePrimary)
+private fun PickupTopBar(subtitle: String, onBackClick: () -> Unit) {
+  Surface(color = Color.White, shadowElevation = 1.dp) {
+    Row(
+      modifier = Modifier
+        .fillMaxWidth()
+        .statusBarsPadding()
+        .padding(horizontal = 8.dp, vertical = 8.dp),
+      verticalAlignment = Alignment.CenterVertically
+    ) {
+      IconButton(onClick = onBackClick) {
+        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = BharatTextPrimary)
+      }
+      Spacer(modifier = Modifier.width(4.dp))
+      Column(modifier = Modifier.weight(1f)) {
+        Text(
+          text = "Verify Pickup",
+          style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+          color = BharatTextPrimary
+        )
+        Text(text = subtitle, fontSize = 12.sp, color = BharatTextSecondary)
+      }
     }
-    else -> BarcodeScannerScreen(
-      onBarcodeScanned = { raw ->
-        // Filter obvious junk: pickup tokens are URL-safe base64, no spaces.
-        val trimmed = raw.trim()
-        if (trimmed.isNotEmpty()) onScanToken(trimmed)
-      },
-      onCancel = onScanAnother
-    )
   }
 }
 
@@ -322,7 +311,7 @@ private fun LookupCard(
         Text(
           text = when {
             !canConfirm -> "Not ready to complete"
-            isBusy -> "Completing…"
+            isBusy -> "Completingâ€¦"
             else -> "Confirm pickup"
           },
           color = Color.White,

@@ -160,6 +160,12 @@ class GroceryViewModel(
   private val _isOrderPlacing = MutableStateFlow(false)
   val isOrderPlacing: StateFlow<Boolean> = _isOrderPlacing.asStateFlow()
 
+  // Guards vendor status transitions against rapid double taps, screen
+  // recomposition storms and Realtime replays. Order id in the set == a
+  // status PATCH is currently in flight for that order.
+  private val _updatingOrderIds = MutableStateFlow<Set<String>>(emptySet())
+  val updatingOrderIds: StateFlow<Set<String>> = _updatingOrderIds.asStateFlow()
+
   private val _userLocation = MutableStateFlow<Location?>(null)
   val userLocation: StateFlow<Location?> = _userLocation.asStateFlow()
 
@@ -501,28 +507,11 @@ class GroceryViewModel(
         )
         _orders.update { listOf(newOrder) + it }
 
-        if (isVendorForShop) {
-          showSystemNotification(
-            title = "New order received!",
-            message = "Order #$orderId for ₹${newOrder.totalAmount}. Open the app to confirm.",
-            channelId = "vendor_notifications",
-            channelName = "Vendor Alerts"
-          )
-          // Persist to the notifications inbox so it also shows up in the
-          // Notifications screen — the local system push is transient.
-          val vendorUserId = supabaseAuthService.currentUserId
-          if (!vendorUserId.isNullOrBlank()) {
-            viewModelScope.launch {
-              supabaseGroceryRepo.insertNotification(
-                userId = vendorUserId,
-                title = "New order received",
-                message = "Order #$orderId for ₹${newOrder.totalAmount}. Tap to view details.",
-                orderId = orderId,
-                accessToken = supabaseAuthService.currentAccessToken
-              )
-            }
-          }
-        }
+        // Vendor "New order received" push + notifications row are owned by
+        // the notify-order-status Edge Function so the vendor is reached even
+        // when the app is closed. Firing a local notification here as well
+        // would double-notify on foreground.
+
         // The Realtime payload only carries the parent row; fetch the line
         // items so the UI shows the full product breakdown right away.
         viewModelScope.launch {
@@ -540,7 +529,6 @@ class GroceryViewModel(
         if (status == null) return
         val timeFormat = SimpleDateFormat("h:mm a", Locale.getDefault())
         val now = timeFormat.format(Date())
-        val existing = _orders.value.firstOrNull { it.id == orderId }
         _orders.update { list ->
           list.map { order ->
             if (order.id != orderId) return@map order
@@ -552,26 +540,10 @@ class GroceryViewModel(
             order.copy(status = status, timeline = rebuilt)
           }
         }
-        // "Confirmed" is the one status the server-side notify-order-status
-        // function doesn't emit. Ping the customer locally so they get the
-        // "Your order has been accepted" signal they expect.
-        val myShopId = _userProfile.value.shopId?.takeIf { it.isNotBlank() }
-        val recordShopId = record.optString("shop_id").takeIf { it.isNotBlank() }
-        // Positive ownership check, mirroring the INSERT branch. The old test
-        // ("my shop id differs from the order's") was also true for admins and
-        // for any signed-in user with no shop, so it could fire on a device that
-        // does not belong to this order's customer.
-        val recordUserId = record.optString("user_id").takeIf { it.isNotBlank() }
-        val isCustomerForThisOrder =
-          existing != null && recordUserId != null && recordUserId == supabaseAuthService.currentUserId
-        if (status == OrderStatus.CONFIRMED && isCustomerForThisOrder) {
-          showSystemNotification(
-            title = "Your order has been accepted",
-            message = "Order #$orderId is being prepared. We'll notify you when it's ready.",
-            channelId = "customer_notifications",
-            channelName = "Order Updates"
-          )
-        }
+        // Customer status pushes (Confirmed, Preparing, Ready, Completed,
+        // Cancelled) are all owned by the notify-order-status Edge Function.
+        // Realtime here only refreshes the UI state — the notification arrives
+        // via FCM so it reaches the customer whether the app is open or not.
       }
       "DELETE" -> {
         _orders.update { list -> list.filter { it.id != orderId } }
@@ -1138,6 +1110,7 @@ class GroceryViewModel(
   }
 
   fun placeOrder(): Order? {
+    if (_isOrderPlacing.value) return null
     val items = _cartItems.value
     if (items.isEmpty()) return null
 
@@ -1177,28 +1150,9 @@ class GroceryViewModel(
       qrCodePayload = buildCustomerQrPayload(_userProfile.value.email, orderId)
     )
 
-    _orders.update { listOf(newOrder) + it }
-    _latestPlacedOrderId.value = orderId
-    _cartItems.value = emptyList()
-    // Clear the persisted copy too, otherwise reopening the app would resurrect
-    // the cart the user just checked out with and risk a duplicate order.
-    persistCart()
     val appliedCode = promo?.code
-    _appliedPromo.value = null
-    _promoStatusMessage.value = null
-    navigateTo(AppScreen.OrderPlaced(orderId))
+    _isOrderPlacing.value = true
 
-    // Confirmation for the customer. Not "New Order Received" — that goes to
-    // the vendor via realtime / server push.
-    showSystemNotification(
-      title = "Order placed successfully",
-      message = "Order #${newOrder.id} for ₹${newOrder.totalAmount}. We'll notify you when ${newOrder.storeName.ifBlank { "the shop" }} accepts it.",
-      channelId = "customer_notifications",
-      channelName = "Order Updates"
-    )
-
-    // Asynchronously sync order to Supabase. Failures are surfaced via
-    // _authStatusMessage so we never silently drop an order server-side.
     viewModelScope.launch {
       supabaseGroceryRepo.insertOrder(
         order = newOrder,
@@ -1210,23 +1164,33 @@ class GroceryViewModel(
         promoDiscount = promoDiscount,
         accessToken = supabaseAuthService.currentAccessToken
       ).onSuccess { serverFields ->
-        // The DB trigger owns order_number / pickup_token. Fold them into the
-        // optimistic local row so the confirmation screen shows the same
-        // number the vendor sees, and the QR carries the real token.
-        if (serverFields.orderNumber != null || serverFields.pickupToken != null) {
-          _orders.update { list ->
-            list.map { existing ->
-              if (existing.id == newOrder.id) existing.copy(
-                orderNumber = serverFields.orderNumber ?: existing.orderNumber,
-                pickupToken = serverFields.pickupToken ?: existing.pickupToken
-              ) else existing
-            }
-          }
-        }
+        // Server confirmed. Now — and only now — we commit local state:
+        // add the order, clear cart, clear promo, notify, navigate.
+        val confirmed = newOrder.copy(
+          orderNumber = serverFields.orderNumber ?: newOrder.orderNumber,
+          pickupToken = serverFields.pickupToken ?: newOrder.pickupToken
+        )
+        _orders.update { listOf(confirmed) + it }
+        _latestPlacedOrderId.value = confirmed.id
+        _cartItems.value = emptyList()
+        persistCart()
+        _appliedPromo.value = null
+        _promoStatusMessage.value = null
+
+        showSystemNotification(
+          title = "Order placed successfully",
+          message = "Order ${confirmed.displayNumber} for ₹${confirmed.totalAmount}. We'll notify you when ${confirmed.storeName.ifBlank { "the shop" }} accepts it.",
+          channelId = "customer_notifications",
+          channelName = "Order Updates"
+        )
+        navigateTo(AppScreen.OrderPlaced(confirmed.id))
       }.onFailure { err ->
         android.util.Log.e("GroceryViewModel", "insertOrder failed for ${newOrder.id}: ${err.message}", err)
-        _authStatusMessage.value = "Order saved locally — sync failed: ${err.localizedMessage ?: "network error"}. Please refresh."
+        // Cart is intentionally NOT cleared — the user can retry the same
+        // checkout without re-adding items.
+        _authStatusMessage.value = "Couldn't place order: ${err.localizedMessage ?: "network error"}. Your cart is still here — please try again."
       }
+      _isOrderPlacing.value = false
     }
 
     return newOrder
@@ -2371,6 +2335,17 @@ class GroceryViewModel(
   }
 
   fun updateOrderStatus(orderId: String, newStatus: OrderStatus) {
+    // In-flight guard: the button was tapped, then tapped again before the
+    // first PATCH resolved (or Realtime pushed a stale event that
+    // recomposition re-fired the button for).
+    if (orderId in _updatingOrderIds.value) return
+    val existing = _orders.value.firstOrNull { it.id == orderId }
+    // Nothing to do if the local status already matches (the transition
+    // already happened via Realtime or a prior tap).
+    if (existing != null && existing.status == newStatus) return
+
+    val previousStatus = existing?.status
+
     val timeFormat = SimpleDateFormat("h:mm a", Locale.getDefault())
     val currentTime = timeFormat.format(Date())
 
@@ -2399,9 +2374,33 @@ class GroceryViewModel(
       }
     }
 
-    // Sync to Supabase
+    _updatingOrderIds.update { it + orderId }
     viewModelScope.launch {
       supabaseGroceryRepo.updateOrderStatus(orderId, newStatus, supabaseAuthService.currentAccessToken)
+        .onFailure { err ->
+          // Roll the optimistic status back so the vendor sees the real state
+          // instead of a lie. Realtime would eventually correct this, but only
+          // if the app stayed open and connected.
+          if (previousStatus != null) {
+            _orders.update { list ->
+              list.map { order ->
+                if (order.id == orderId && order.status == newStatus) {
+                  order.copy(
+                    status = previousStatus,
+                    timeline = buildOrderTimeline(
+                      currentStatus = previousStatus,
+                      orderDate = order.orderDate,
+                      nowLabel = "Today, $currentTime"
+                    )
+                  )
+                } else order
+              }
+            }
+          }
+          _authStatusMessage.value = "Couldn't update order: ${err.localizedMessage ?: "server refused"}."
+          android.util.Log.w("BreakQ", "updateOrderStatus failed for $orderId -> ${newStatus.label}", err)
+        }
+      _updatingOrderIds.update { it - orderId }
     }
   }
 

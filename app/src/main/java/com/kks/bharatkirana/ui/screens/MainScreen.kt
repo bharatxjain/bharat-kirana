@@ -460,6 +460,11 @@ fun MainScreen(
       is AppScreen.OrderDetails -> {
         val order = orders.find { it.id == screen.orderId }
         val ratedIds by viewModel.ratedOrderIds.collectAsState()
+        // Realtime is best-effort — if a status UPDATE arrived while this
+        // screen wasn't mounted, the local _orders snapshot is stale. Refresh
+        // on entry so the tracker always opens with server truth, then
+        // Realtime handles live updates from that point on.
+        LaunchedEffect(screen.orderId) { viewModel.refreshOrders() }
         // Populate order.items lazily so the tracker shows product images and
         // per-line totals even when the initial fetch returned only the parent
         // row (e.g. order_items embed was declined by RLS or predates the
@@ -500,6 +505,9 @@ fun MainScreen(
         // at fetch time).
         val order = orders.find { it.id == screen.orderId }
         LaunchedEffect(screen.orderId, order?.items?.size) {
+          // Refresh first so a stale status (e.g. customer just cancelled)
+          // gets corrected before the vendor sees action buttons.
+          viewModel.refreshOrders()
           if (order != null && order.items.isEmpty()) {
             viewModel.hydrateOrderItems(screen.orderId)
           }
@@ -531,9 +539,26 @@ fun MainScreen(
             viewModel.resetPickupState()
             viewModel.navigateBack()
           },
-          onScanToken = { token -> viewModel.completeOrderByPickupToken(token) },
           onFindByNumber = { number -> viewModel.findVendorOrderByNumber(number) },
           onConfirmLookup = { token -> viewModel.completeOrderByPickupToken(token) },
+          onOpenOrder = { orderId ->
+            viewModel.resetPickupState()
+            viewModel.navigateTo(AppScreen.VendorOrderDetails(orderId))
+          },
+          onReset = { viewModel.resetPickupState() }
+        )
+      }
+
+      is AppScreen.VendorScanPickup -> {
+        val pickupState by viewModel.pickupState.collectAsState()
+        LaunchedEffect(Unit) { viewModel.resetPickupState() }
+        VendorScanPickupScreen(
+          pickupState = pickupState,
+          onBackClick = {
+            viewModel.resetPickupState()
+            viewModel.navigateBack()
+          },
+          onScanToken = { token -> viewModel.completeOrderByPickupToken(token) },
           onOpenOrder = { orderId ->
             viewModel.resetPickupState()
             viewModel.navigateTo(AppScreen.VendorOrderDetails(orderId))
@@ -853,6 +878,11 @@ fun MainScreen(
         val initialEditProductId by viewModel.inventoryEditProductId.collectAsState()
         LaunchedEffect(vendorShop.id) {
           viewModel.hydrateAllEmptyOrderItems()
+          // Defensive refresh on entry: mirrors the customer OrderDetails
+          // Task 3 pattern. A vendor coming back after a Realtime drop must
+          // not be left staring at a cancelled/preparing order that server
+          // already moved on from.
+          viewModel.refreshOrders()
         }
         VendorDashboardScreen(
           shop = vendorShop,
@@ -882,6 +912,7 @@ fun MainScreen(
           onOpenNotifications = { viewModel.navigateTo(AppScreen.Notifications) },
           onOpenOrderDetails = { orderId -> viewModel.navigateTo(AppScreen.VendorOrderDetails(orderId)) },
           onOpenPickup = { viewModel.navigateTo(AppScreen.VendorPickup) },
+          onOpenScanPickup = { viewModel.navigateTo(AppScreen.VendorScanPickup) },
           unreadNotificationCount = unreadNotificationCount,
           initialTab = initialTab,
           onInitialTabConsumed = { viewModel.setVendorInitialTab(0) },
@@ -1144,6 +1175,13 @@ fun MainScreen(
           ) {
             when (currentTab) {
               MainTab.HOME -> {
+                // Active = anything not in a terminal state, matching the vendor
+                // dashboard's definition. Newest first so the customer sees the
+                // most recent one they're waiting on.
+                val activeOrder = orders
+                  .filter { it.status != com.kks.bharatkirana.data.model.OrderStatus.COMPLETED &&
+                            it.status != com.kks.bharatkirana.data.model.OrderStatus.CANCELLED }
+                  .maxByOrNull { it.createdAt.ifBlank { it.orderDate } }
                 HomeScreen(
                   userProfile = userProfile,
                   categories = categories,
@@ -1179,6 +1217,8 @@ fun MainScreen(
                   shops = shops,
                   userLocation = userLocation,
                   deliveryAddressLine = selectedAddress?.formatted.orEmpty(),
+                  activeOrder = activeOrder,
+                  onTrackOrderClick = { orderId -> viewModel.navigateTo(AppScreen.OrderDetails(orderId)) },
                   onShopClick = { shop -> viewModel.navigateTo(AppScreen.ShopDetail(shop.id)) },
                   onViewAllShopsClick = { viewModel.navigateTo(AppScreen.NearbyShops) }
                 )

@@ -48,7 +48,10 @@ import java.util.concurrent.Executors
 fun BarcodeScannerScreen(
   onBarcodeScanned: (String) -> Unit,
   onCancel: () -> Unit,
-  modifier: Modifier = Modifier
+  modifier: Modifier = Modifier,
+  title: String = "Scan Product Barcode",
+  hint: String = "Point at the barcode on the product packet",
+  subHint: String = "Hold steady \u2014 works with EAN, UPC, QR codes"
 ) {
   val context = LocalContext.current
   var hasPermission by remember {
@@ -98,7 +101,7 @@ fun BarcodeScannerScreen(
           Icon(Icons.Default.Close, contentDescription = "Close", tint = Color.White)
         }
         Text(
-          text = "Scan Product Barcode",
+          text = title,
           color = Color.White,
           fontWeight = FontWeight.Bold,
           fontSize = 16.sp,
@@ -132,13 +135,13 @@ fun BarcodeScannerScreen(
         )
         Spacer(modifier = Modifier.height(8.dp))
         Text(
-          text = "Point at the barcode on the product packet",
+          text = hint,
           color = Color.White,
           fontSize = 14.sp,
           textAlign = TextAlign.Center
         )
         Text(
-          text = "Hold steady \u2014 works with EAN, UPC, QR codes",
+          text = subHint,
           color = Color.White.copy(alpha = 0.7f),
           fontSize = 12.sp,
           textAlign = TextAlign.Center,

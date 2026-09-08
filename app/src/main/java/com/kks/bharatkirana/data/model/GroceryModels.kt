@@ -390,6 +390,7 @@ sealed class AppScreen {
   data object Notifications : AppScreen()
   data object Wishlist : AppScreen()
   data object VendorPickup : AppScreen()
+  data object VendorScanPickup : AppScreen()
   data object OrderHistory : AppScreen()
   data object EditProfile : AppScreen()
   data object SavedAddresses : AppScreen()

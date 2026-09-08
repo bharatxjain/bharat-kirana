@@ -65,6 +65,7 @@ fun VendorDashboardScreen(
   onOpenNotifications: () -> Unit = {},
   onOpenOrderDetails: (String) -> Unit = {},
   onOpenPickup: () -> Unit = {},
+  onOpenScanPickup: () -> Unit = {},
   unreadNotificationCount: Int = 0,
   currentTierName: String? = null,
   currentTierItemCap: Int = 10,
@@ -133,7 +134,23 @@ fun VendorDashboardScreen(
                 .background(MaterialTheme.colorScheme.primaryContainer),
               contentAlignment = Alignment.Center
             ) {
-              Icon(Icons.Default.QrCodeScanner, contentDescription = "Verify pickup", tint = BharatPurplePrimary, modifier = Modifier.size(20.dp))
+              Icon(
+                imageVector = Icons.Default.Numbers,
+                contentDescription = "Verify pickup by order number",
+                tint = BharatPurplePrimary,
+                modifier = Modifier.size(20.dp)
+              )
+            }
+          }
+          IconButton(onClick = onOpenScanPickup) {
+            Box(
+              modifier = Modifier
+                .size(36.dp)
+                .clip(CircleShape)
+                .background(MaterialTheme.colorScheme.primaryContainer),
+              contentAlignment = Alignment.Center
+            ) {
+              Icon(Icons.Default.QrCodeScanner, contentDescription = "Scan customer QR", tint = BharatPurplePrimary, modifier = Modifier.size(20.dp))
             }
           }
           IconButton(onClick = onOpenNotifications) {

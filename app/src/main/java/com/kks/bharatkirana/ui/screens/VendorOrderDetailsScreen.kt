@@ -336,7 +336,10 @@ private fun OrderMetaCard(order: Order) {
       Spacer(modifier = Modifier.height(6.dp))
       MetaRow(
         label = "Placed",
-        value = if (order.createdAt.isNotBlank()) order.createdAt.take(19).replace("T", " ") else order.orderDate
+        value = com.kks.bharatkirana.ui.util.formatOrderTimeLocal(
+          createdAt = order.createdAt,
+          fallback = order.orderDate
+        )
       )
       Spacer(modifier = Modifier.height(6.dp))
       MetaRow(label = "Status", value = order.status.label)

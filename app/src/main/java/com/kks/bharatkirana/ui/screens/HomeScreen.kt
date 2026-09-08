@@ -22,6 +22,7 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -45,6 +46,8 @@ import androidx.compose.ui.unit.sp
 import com.kks.bharatkirana.data.maps.MapplsConfig
 import com.kks.bharatkirana.data.model.CartItem
 import com.kks.bharatkirana.data.model.Category
+import com.kks.bharatkirana.data.model.Order
+import com.kks.bharatkirana.data.model.OrderStatus
 import com.kks.bharatkirana.data.model.Product
 import com.kks.bharatkirana.data.model.UserProfile
 import com.kks.bharatkirana.data.model.VendorStatus
@@ -89,6 +92,8 @@ fun HomeScreen(
   shops: List<com.kks.bharatkirana.data.model.Shop> = emptyList(),
   userLocation: Location? = null,
   deliveryAddressLine: String = "",
+  activeOrder: Order? = null,
+  onTrackOrderClick: (String) -> Unit = {},
   onShopClick: (com.kks.bharatkirana.data.model.Shop) -> Unit = {},
   onViewAllShopsClick: () -> Unit = {},
   modifier: Modifier = Modifier
@@ -129,6 +134,19 @@ fun HomeScreen(
           onAdminClick = onAdminClick,
           onNotificationsClick = onNotificationsClick
         )
+      }
+
+      // Active-order tracker. Reactive: driven by the customer-scoped _orders
+      // StateFlow which is already kept fresh by the existing Realtime collector,
+      // so vendor status changes propagate here without a second listener.
+      if (activeOrder != null) {
+        item(key = "home_active_order_${activeOrder.id}") {
+          ActiveOrderCard(
+            order = activeOrder,
+            onTrackClick = { onTrackOrderClick(activeOrder.id) }
+          )
+          Spacer(modifier = Modifier.height(10.dp))
+        }
       }
 
       // Nearby-shops map preview. Reuses the exact Mappls component that powers
@@ -379,6 +397,74 @@ private fun NearbyShopRowCard(
           )
         }
       }
+    }
+  }
+}
+
+@Composable
+private fun ActiveOrderCard(
+  order: Order,
+  onTrackClick: () -> Unit,
+  modifier: Modifier = Modifier
+) {
+  val (headline, subline) = when (order.status) {
+    OrderStatus.PLACED -> "Order placed" to "Waiting for the shop to confirm"
+    OrderStatus.CONFIRMED -> "Order confirmed" to "The shop will start preparing shortly"
+    OrderStatus.PREPARING -> "Preparing your order" to "The shop is packing it up"
+    OrderStatus.READY_FOR_PICKUP -> "Ready for pickup" to "Show your QR at the counter"
+    OrderStatus.COMPLETED, OrderStatus.CANCELLED -> return
+  }
+
+  Card(
+    onClick = onTrackClick,
+    shape = RoundedCornerShape(14.dp),
+    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
+    modifier = modifier
+      .fillMaxWidth()
+      .padding(horizontal = 12.dp)
+      .testTag("home_active_order_card")
+  ) {
+    Row(
+      modifier = Modifier
+        .fillMaxWidth()
+        .padding(horizontal = 14.dp, vertical = 12.dp),
+      verticalAlignment = Alignment.CenterVertically
+    ) {
+      Box(
+        modifier = Modifier
+          .size(40.dp)
+          .clip(CircleShape)
+          .background(Color.White),
+        contentAlignment = Alignment.Center
+      ) {
+        Icon(
+          imageVector = Icons.Default.ShoppingBag,
+          contentDescription = null,
+          tint = BharatPurplePrimary,
+          modifier = Modifier.size(22.dp)
+        )
+      }
+      Spacer(modifier = Modifier.width(12.dp))
+      Column(modifier = Modifier.weight(1f)) {
+        Text(
+          text = "$headline \u00b7 ${order.displayNumber}",
+          fontWeight = FontWeight.Bold,
+          fontSize = 14.sp,
+          color = BharatTextPrimary
+        )
+        Text(
+          text = subline,
+          fontSize = 12.sp,
+          color = BharatTextSecondary
+        )
+      }
+      Spacer(modifier = Modifier.width(8.dp))
+      Text(
+        text = "TRACK",
+        fontWeight = FontWeight.ExtraBold,
+        fontSize = 12.sp,
+        color = BharatPurplePrimary
+      )
     }
   }
 }
