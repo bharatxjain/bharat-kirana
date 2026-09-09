@@ -1,5 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
-<resources>
+<resources xmlns:tools="http://schemas.android.com/tools">
 
-    <style name="Theme.MyApplication" parent="android:Theme.DeviceDefault.NoActionBar" />
+    <!-- windowBackground kills the pre-Compose white flash before the first
+         frame. windowSplashScreenBackground makes the Android 12+ system
+         splash paint on the same purple so the transition is seamless. -->
+    <style name="Theme.MyApplication" parent="android:Theme.DeviceDefault.NoActionBar">
+        <item name="android:windowBackground">@color/bharat_purple</item>
+        <item name="android:windowSplashScreenBackground" tools:targetApi="s">@color/bharat_purple</item>
+    </style>
 </resources>

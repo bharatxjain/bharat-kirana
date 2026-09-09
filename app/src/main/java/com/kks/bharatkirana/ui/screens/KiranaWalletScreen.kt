@@ -76,7 +76,7 @@ fun KiranaWalletScreen(
           }
           Spacer(modifier = Modifier.width(4.dp))
           Text(
-            text = "Kirana Wallet",
+            text = "Flexi Wallet",
             style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
             color = BharatTextPrimary
           )

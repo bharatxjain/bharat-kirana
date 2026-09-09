@@ -145,14 +145,10 @@ fun SearchScreen(
         .fillMaxSize()
         .padding(horizontal = 16.dp)
     ) {
-      Spacer(modifier = Modifier.height(12.dp))
+      Spacer(modifier = Modifier.height(4.dp))
 
-      GrocerySearchBar(
-        query = searchQuery,
-        onQueryChange = onSearchQueryChange,
-        placeholder = "Search across 1000+ items...",
-        autoFocus = true
-      )
+      // Search field moved to the shared CustomerShellHeader; the header owns
+      // both the readonly variant on other tabs and the editable field here.
 
       // Autosuggestions dropdown: mixes matching products and shops.
       // Appears only while the user is actively typing.

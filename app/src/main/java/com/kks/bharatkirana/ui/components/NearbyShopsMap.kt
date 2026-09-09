@@ -32,7 +32,8 @@ fun NearbyShopsMap(
   shops: List<Shop>,
   userLocation: Location?,
   onShopMarkerClick: (Shop) -> Unit,
-  modifier: Modifier = Modifier
+  modifier: Modifier = Modifier,
+  focusedShopId: String? = null
 ) {
   val context = LocalContext.current
   val lifecycleOwner = LocalLifecycleOwner.current
@@ -112,30 +113,40 @@ fun NearbyShopsMap(
             }
           }
 
-          // Camera: center on the average of every plotted point (customer + shops)
-          // and pick a zoom that (roughly) fits them all. Mappls' newLatLngBounds
-          // isn't consistent across SDK versions, so we compute manually.
-          val allPoints = buildList {
-            plottable.forEach { add(LatLng(it.lat, it.lng)) }
-            if (userLocation != null) add(LatLng(userLocation.latitude, userLocation.longitude))
-          }
-          if (allPoints.isNotEmpty()) {
-            val centerLat = allPoints.sumOf { it.latitude } / allPoints.size
-            val centerLng = allPoints.sumOf { it.longitude } / allPoints.size
-            val spanLat = (allPoints.maxOf { it.latitude } - allPoints.minOf { it.latitude })
-            val spanLng = (allPoints.maxOf { it.longitude } - allPoints.minOf { it.longitude })
-            val span = max(spanLat, spanLng)
-            val zoom = when {
-              span > 0.5 -> 9.0
-              span > 0.2 -> 11.0
-              span > 0.05 -> 13.0
-              span > 0.01 -> 14.5
-              else -> 15.5
-            }
+          // Camera: if a specific shop is focused, center on it at a close zoom.
+          // Otherwise fit-all: center on the average of every plotted point
+          // (customer + shops) and pick a zoom that (roughly) fits them all.
+          // Mappls' newLatLngBounds isn't consistent across SDK versions, so we
+          // compute manually.
+          val focus = focusedShopId?.let { id -> plottable.firstOrNull { it.id == id } }
+          if (focus != null) {
             mapplsMap.cameraPosition = CameraPosition.Builder()
-              .target(LatLng(centerLat, centerLng))
-              .zoom(zoom)
+              .target(LatLng(focus.lat, focus.lng))
+              .zoom(15.5)
               .build()
+          } else {
+            val allPoints = buildList {
+              plottable.forEach { add(LatLng(it.lat, it.lng)) }
+              if (userLocation != null) add(LatLng(userLocation.latitude, userLocation.longitude))
+            }
+            if (allPoints.isNotEmpty()) {
+              val centerLat = allPoints.sumOf { it.latitude } / allPoints.size
+              val centerLng = allPoints.sumOf { it.longitude } / allPoints.size
+              val spanLat = (allPoints.maxOf { it.latitude } - allPoints.minOf { it.latitude })
+              val spanLng = (allPoints.maxOf { it.longitude } - allPoints.minOf { it.longitude })
+              val span = max(spanLat, spanLng)
+              val zoom = when {
+                span > 0.5 -> 9.0
+                span > 0.2 -> 11.0
+                span > 0.05 -> 13.0
+                span > 0.01 -> 14.5
+                else -> 15.5
+              }
+              mapplsMap.cameraPosition = CameraPosition.Builder()
+                .target(LatLng(centerLat, centerLng))
+                .zoom(zoom)
+                .build()
+            }
           }
         }
 

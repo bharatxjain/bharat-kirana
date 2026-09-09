@@ -22,6 +22,9 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.filled.ReceiptLong
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Rule
+import androidx.compose.material.icons.filled.MenuBook
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.SupportAgent
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -53,6 +56,9 @@ fun HelpSupportScreen(
   onBackClick: () -> Unit,
   onOpenWhatsapp: () -> Unit,
   onOpenOrders: () -> Unit,
+  onOpenHowItWorks: () -> Unit = {},
+  onOpenCustomerGuidelines: () -> Unit = {},
+  onOpenCancellationPolicy: () -> Unit = {},
   modifier: Modifier = Modifier
 ) {
   Box(
@@ -114,6 +120,36 @@ fun HelpSupportScreen(
               subtitle = "Open your order to raise it directly with the shop",
               enabled = true,
               onClick = onOpenOrders
+            )
+            HorizontalDivider(color = Color(0xFFF1F5F9))
+            SupportOptionRow(
+              icon = Icons.Default.Info,
+              iconTint = BharatPurplePrimary,
+              iconBackground = BharatPurpleContainer,
+              title = "How BreakQ Works",
+              subtitle = "Order, pickup, and everything in between",
+              enabled = true,
+              onClick = onOpenHowItWorks
+            )
+            HorizontalDivider(color = Color(0xFFF1F5F9))
+            SupportOptionRow(
+              icon = Icons.Default.MenuBook,
+              iconTint = BharatPurplePrimary,
+              iconBackground = BharatPurpleContainer,
+              title = "Customer Guidelines",
+              subtitle = "Ground rules for using BreakQ",
+              enabled = true,
+              onClick = onOpenCustomerGuidelines
+            )
+            HorizontalDivider(color = Color(0xFFF1F5F9))
+            SupportOptionRow(
+              icon = Icons.Default.Rule,
+              iconTint = BharatPurplePrimary,
+              iconBackground = BharatPurpleContainer,
+              title = "Cancellation Policy",
+              subtitle = "When you can cancel and when you can't",
+              enabled = true,
+              onClick = onOpenCancellationPolicy
             )
           }
         }

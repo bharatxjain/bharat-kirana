@@ -217,7 +217,10 @@ fun VendorProfileScreen(
         ProfileActionCard(
           icon = Icons.Default.Star,
           title = "Ratings & Reviews",
-          subtitle = "See what customers are saying",
+          subtitle = if (shop.ratingCount > 0)
+            "★ %.1f · %d review%s".format(shop.rating, shop.ratingCount, if (shop.ratingCount == 1) "" else "s")
+          else
+            "See what customers are saying",
           onClick = onOpenReviews,
           accentColor = Color(0xFFF59E0B)
         )

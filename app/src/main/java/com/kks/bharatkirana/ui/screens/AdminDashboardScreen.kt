@@ -1252,7 +1252,7 @@ fun AdminOverviewView(
             horizontalArrangement = Arrangement.SpaceBetween
           ) {
             PaymentModeItem("UPI (PhonePe/GPay)", "68%", "₹${(totalRevenue * 0.68).toInt()}", BharatPurplePrimary)
-            PaymentModeItem("Kirana Wallet", "20%", "₹${(totalRevenue * 0.20).toInt()}", BharatGreen)
+            PaymentModeItem("Flexi Wallet", "20%", "₹${(totalRevenue * 0.20).toInt()}", BharatGreen)
             PaymentModeItem("Pay at Counter", "12%", "₹${(totalRevenue * 0.12).toInt()}", Color(0xFFF59E0B))
           }
         }

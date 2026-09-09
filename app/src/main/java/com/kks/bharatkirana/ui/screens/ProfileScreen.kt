@@ -26,6 +26,7 @@ import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.ManageAccounts
@@ -94,6 +95,7 @@ fun ProfileScreen(
   onVendorRegisterClick: () -> Unit,
   onAboutUsClick: () -> Unit,
   onAccountActionsClick: () -> Unit,
+  onWishlistClick: () -> Unit = {},
   savedAddressCount: Int = 0,
   profileFetchComplete: Boolean = true,
   modifier: Modifier = Modifier
@@ -254,7 +256,7 @@ fun ProfileScreen(
           )
           QuickAccessTile(
             icon = Icons.Default.AccountBalanceWallet,
-            label = "Kirana Wallet",
+            label = "Flexi Wallet",
             testTagName = "quick_kirana_wallet",
             onClick = onKiranaWalletClick,
             modifier = Modifier.weight(1f)
@@ -289,6 +291,16 @@ fun ProfileScreen(
               subtitle = "Update your name and phone",
               testTagName = "profile_edit_profile_row",
               onClick = onEditProfileClick
+            )
+            HorizontalDivider(color = Color(0xFFF1F5F9))
+            SettingsRow(
+              icon = Icons.Default.FavoriteBorder,
+              iconTint = BharatPurplePrimary,
+              iconBackground = BharatPurpleContainer,
+              title = "Wishlist",
+              subtitle = "Items you saved for later",
+              testTagName = "profile_wishlist_row",
+              onClick = onWishlistClick
             )
             HorizontalDivider(color = Color(0xFFF1F5F9))
             SettingsRow(

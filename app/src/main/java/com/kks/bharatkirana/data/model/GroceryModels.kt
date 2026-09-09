@@ -289,6 +289,15 @@ data class OrderTimelineItem(
   val isCurrent: Boolean = false
 )
 
+// Task 3: turn shop.packingTime into a customer-facing pickup ETA once the
+// vendor confirms the order. Clamped to a 5-180 minute band so a misconfigured
+// shop can't produce "Today by 11:47 PM" or "Today by 12:03 AM" tomorrow.
+fun computePickupEta(packingMinutes: Int, now: Date = Date()): String {
+  val clamped = packingMinutes.coerceIn(5, 180)
+  val eta = Date(now.time + clamped * 60_000L)
+  return "Today by ${SimpleDateFormat("h:mm a", Locale.getDefault()).format(eta)}"
+}
+
 // Round 6: single source of truth for how the 5-step customer timeline looks
 // at any given backend status. Called both when the customer inserts an order
 // (initial = PLACED) and when the Realtime UPDATE arrives after a vendor action.
@@ -400,6 +409,9 @@ sealed class AppScreen {
   data object KiranaWallet : AppScreen()
   data object HelpSupport : AppScreen()
   data object AboutUs : AppScreen()
+  data object HowBreakQWorks : AppScreen()
+  data object CustomerGuidelines : AppScreen()
+  data object CancellationPolicy : AppScreen()
   data object AccountActions : AppScreen()
 }
 
@@ -431,7 +443,26 @@ data class AppNotification(
   val message: String,
   val isRead: Boolean = false,
   val orderId: String? = null,
-  val createdAt: String = ""
+  val createdAt: String = "",
+  // Admin-panel notification campaigns set this on both the FCM push and the
+  // notifications row. "notifications" opens the in-app inbox; extend this
+  // switch when new deep-link kinds are added.
+  val route: String? = null
+)
+
+/**
+ * Task 5: one row from `public.shop_ratings`. Used to render the vendor's
+ * Ratings & Reviews screen. `customerName` is best-effort — RLS on `profiles`
+ * blocks cross-user reads, so we only see a name when the DB row itself keeps
+ * one; otherwise the UI falls back to "Verified customer".
+ */
+data class ShopRating(
+  val id: String,
+  val orderId: String,
+  val rating: Int,
+  val review: String = "",
+  val createdAt: String = "",
+  val customerName: String = ""
 )
 
 /**
@@ -498,6 +529,7 @@ data class VendorAnalytics(
 
 enum class MainTab(val title: String, val testTag: String) {
   HOME("Home", "tab_home"),
+  SHOPS("Shops", "tab_shops"),
   CATEGORIES("Categories", "tab_categories"),
   SEARCH("Search", "tab_search"),
   PROFILE("Profile", "tab_profile")

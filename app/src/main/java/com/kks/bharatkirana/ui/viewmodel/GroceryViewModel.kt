@@ -242,6 +242,13 @@ class GroceryViewModel(
   private val _ratedOrderIds = MutableStateFlow<Set<String>>(emptySet())
   val ratedOrderIds: StateFlow<Set<String>> = _ratedOrderIds.asStateFlow()
 
+  // Task 5: shop ratings feed for the vendor's Reviews screen. Populated lazily
+  // via loadShopRatings() when the vendor opens VendorReviewsScreen.
+  private val _shopRatings = MutableStateFlow<List<ShopRating>>(emptyList())
+  val shopRatings: StateFlow<List<ShopRating>> = _shopRatings.asStateFlow()
+  private val _shopRatingsLoading = MutableStateFlow(false)
+  val shopRatingsLoading: StateFlow<Boolean> = _shopRatingsLoading.asStateFlow()
+
   // Round 7: transient message after a vendor uploads a new product — reports
   // per-image upload success/failure so the vendor isn't left staring at a blank
   // screen wondering if their photos were saved.
@@ -537,7 +544,15 @@ class GroceryViewModel(
               orderDate = order.orderDate,
               nowLabel = "Today, $now"
             )
-            order.copy(status = status, timeline = rebuilt)
+            // Task 3: convert shop.packingTime to a real pickup window once the
+            // vendor confirms. Leave the placeholder alone for later statuses
+            // so a customer already on Ready-for-Pickup doesn't see the ETA
+            // silently rewritten.
+            val nextPickup = if (status == OrderStatus.CONFIRMED) {
+              val shop = _shops.value.firstOrNull { it.id == order.shopId }
+              computePickupEta(shop?.packingTime ?: 15)
+            } else order.expectedPickupTime
+            order.copy(status = status, timeline = rebuilt, expectedPickupTime = nextPickup)
           }
         }
         // Customer status pushes (Confirmed, Preparing, Ready, Completed,
@@ -561,7 +576,8 @@ class GroceryViewModel(
       message = record.optString("message"),
       isRead = record.optBoolean("is_read", false),
       orderId = record.optString("order_id").takeIf { it.isNotBlank() },
-      createdAt = record.optString("created_at")
+      createdAt = record.optString("created_at"),
+      route = if (record.isNull("route")) null else record.optString("route").takeIf { it.isNotBlank() }
     )
     _notifications.update { listOf(notification) + it }
   }
@@ -607,6 +623,10 @@ class GroceryViewModel(
       viewModelScope.launch {
         supabaseGroceryRepo.updateFcmToken(userId, explicitToken, accessToken)
           .onFailure { android.util.Log.w("BreakQ", "FCM token sync failed: ${it.message}") }
+        // Parallel path used by the admin-panel notification campaigns. Failure
+        // here doesn't block order pushes (which still use profiles.fcm_token).
+        supabaseGroceryRepo.upsertDeviceToken(userId, explicitToken, accessToken = accessToken)
+          .onFailure { android.util.Log.w("BreakQ", "device_tokens upsert failed: ${it.message}") }
       }
       return
     }
@@ -620,6 +640,8 @@ class GroceryViewModel(
       viewModelScope.launch {
         supabaseGroceryRepo.updateFcmToken(userId, token, accessToken)
           .onFailure { android.util.Log.w("BreakQ", "FCM token sync failed: ${it.message}") }
+        supabaseGroceryRepo.upsertDeviceToken(userId, token, accessToken = accessToken)
+          .onFailure { android.util.Log.w("BreakQ", "device_tokens upsert failed: ${it.message}") }
       }
     }
   }
@@ -629,15 +651,51 @@ class GroceryViewModel(
     val userId = supabaseAuthService.currentUserId ?: return
     supabaseGroceryRepo.updateFcmToken(userId, "", supabaseAuthService.currentAccessToken)
       .onFailure { android.util.Log.w("BreakQ", "Could not clear FCM token on sign-out: ${it.message}") }
+    // Also drop the per-device row so campaigns stop targeting this handset.
+    val cachedToken = prefs.getString("fcm_token", null)
+    if (!cachedToken.isNullOrBlank()) {
+      supabaseGroceryRepo.deleteDeviceToken(cachedToken, supabaseAuthService.currentAccessToken)
+        .onFailure { android.util.Log.w("BreakQ", "device_tokens delete failed: ${it.message}") }
+    }
   }
 
+  // Task 6b: an orderId captured before the session was ready. Drained by
+  // login()/restoreSession() once _userProfile.email is populated so a push tap
+  // that lands on cold start still lands on the right screen.
+  private var _pendingNotificationOrderId: String? = null
+  private var _pendingNotificationRoute: String? = null
+
   // Round 4b: when the user taps a push notification, MainActivity routes here.
-  // If we have an orderId, drop them straight on the OrderDetails screen; otherwise
-  // fall back to Main so they at least land somewhere useful.
-  fun handleNotificationTap(orderId: String?) {
-    if (_userProfile.value.email.isBlank()) return
-    val screen = if (!orderId.isNullOrBlank()) AppScreen.OrderDetails(orderId) else AppScreen.Main
-    navigateTo(screen)
+  // Order pushes carry an orderId; admin promo pushes carry a `route` string
+  // (e.g. "notifications"). If we have either, we deep-link accordingly.
+  fun handleNotificationTap(orderId: String?, route: String? = null) {
+    if (_userProfile.value.email.isBlank()) {
+      // Session isn't ready yet (cold start). Stash and let the login/restore
+      // completion path replay this tap once serverRole is known.
+      if (!orderId.isNullOrBlank()) _pendingNotificationOrderId = orderId
+      if (!route.isNullOrBlank()) _pendingNotificationRoute = route
+      return
+    }
+    routeToNotificationTarget(orderId, route)
+  }
+
+  private fun routeToNotificationTarget(orderId: String?, route: String? = null) {
+    val target: AppScreen = when {
+      route == "notifications" -> AppScreen.Notifications
+      orderId.isNullOrBlank() -> AppScreen.Notifications
+      _userProfile.value.serverRole == UserRole.VENDOR -> AppScreen.VendorOrderDetails(orderId)
+      else -> AppScreen.OrderDetails(orderId)
+    }
+    navigateTo(target)
+  }
+
+  private fun drainPendingNotificationTap() {
+    val pendingOrder = _pendingNotificationOrderId
+    val pendingRoute = _pendingNotificationRoute
+    if (pendingOrder == null && pendingRoute == null) return
+    _pendingNotificationOrderId = null
+    _pendingNotificationRoute = null
+    routeToNotificationTarget(pendingOrder, pendingRoute)
   }
 
   private fun loadSavedSession() {
@@ -1063,16 +1121,51 @@ class GroceryViewModel(
 
   fun toggleWishlist(productId: String) {
     if (productId.isBlank()) return
+    val wasIn = productId in _wishlistIds.value
     _wishlistIds.update { current ->
-      if (productId in current) current - productId else current + productId
+      if (wasIn) current - productId else current + productId
     }
     persistWishlist()
+    // Server sync — writes are per-user via RLS; failure logs but doesn't
+    // revert the optimistic local change (customer can retry the toggle).
+    val userId = supabaseAuthService.currentUserId ?: return
+    val token = supabaseAuthService.currentAccessToken
+    viewModelScope.launch {
+      val result = if (wasIn) {
+        supabaseGroceryRepo.removeWishlistItem(userId, productId, token)
+      } else {
+        supabaseGroceryRepo.addWishlistItem(userId, productId, token)
+      }
+      result.onFailure { android.util.Log.w("BreakQ", "wishlist sync failed: ${it.message}") }
+    }
   }
 
   fun removeFromWishlist(productId: String) {
     if (productId !in _wishlistIds.value) return
     _wishlistIds.update { it - productId }
     persistWishlist()
+    val userId = supabaseAuthService.currentUserId ?: return
+    viewModelScope.launch {
+      supabaseGroceryRepo.removeWishlistItem(userId, productId, supabaseAuthService.currentAccessToken)
+        .onFailure { android.util.Log.w("BreakQ", "wishlist remove failed: ${it.message}") }
+    }
+  }
+
+  /**
+   * Overwrites the local wishlist with the server's copy. Called at login so
+   * a customer signing in on a shared device never inherits the previous
+   * user's prefs cache.
+   */
+  private fun refreshWishlistFromServer() {
+    val userId = supabaseAuthService.currentUserId ?: return
+    viewModelScope.launch {
+      supabaseGroceryRepo.fetchWishlistProductIds(userId, supabaseAuthService.currentAccessToken)
+        .onSuccess { ids ->
+          _wishlistIds.value = ids
+          persistWishlist()
+        }
+        .onFailure { android.util.Log.w("BreakQ", "wishlist fetch failed: ${it.message}") }
+    }
   }
 
   private fun restoreCartFromPrefs() {
@@ -1181,7 +1274,8 @@ class GroceryViewModel(
           title = "Order placed successfully",
           message = "Order ${confirmed.displayNumber} for ₹${confirmed.totalAmount}. We'll notify you when ${confirmed.storeName.ifBlank { "the shop" }} accepts it.",
           channelId = "customer_notifications",
-          channelName = "Order Updates"
+          channelName = "Order Updates",
+          orderId = confirmed.id
         )
         navigateTo(AppScreen.OrderPlaced(confirmed.id))
       }.onFailure { err ->
@@ -1236,7 +1330,13 @@ class GroceryViewModel(
     val _unused = order
   }
 
-  private fun showSystemNotification(title: String, message: String, channelId: String, channelName: String) {
+  private fun showSystemNotification(
+    title: String,
+    message: String,
+    channelId: String,
+    channelName: String,
+    orderId: String? = null
+  ) {
     val context = getApplication<Application>()
     val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
 
@@ -1245,12 +1345,30 @@ class GroceryViewModel(
       notificationManager.createNotificationChannel(channel)
     }
 
+    // Task 6: make the tap route to the right order screen, same way FCM pushes
+    // do via MyFirebaseMessagingService. Without this, tapping a locally-fired
+    // "Order placed" toast did nothing.
+    val intent = android.content.Intent(context, com.kks.bharatkirana.MainActivity::class.java).apply {
+      addFlags(android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP or android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP)
+      putExtra(com.kks.bharatkirana.service.MyFirebaseMessagingService.EXTRA_FROM_PUSH, true)
+      if (!orderId.isNullOrBlank()) {
+        putExtra(com.kks.bharatkirana.service.MyFirebaseMessagingService.EXTRA_ORDER_ID, orderId)
+      }
+    }
+    val pendingIntent = android.app.PendingIntent.getActivity(
+      context,
+      (orderId ?: title).hashCode(),
+      intent,
+      android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
+    )
+
     val builder = androidx.core.app.NotificationCompat.Builder(context, channelId)
       .setSmallIcon(com.kks.bharatkirana.R.drawable.ic_launcher_foreground)
       .setContentTitle(title)
       .setContentText(message)
       .setPriority(androidx.core.app.NotificationCompat.PRIORITY_HIGH)
       .setAutoCancel(true)
+      .setContentIntent(pendingIntent)
 
     notificationManager.notify(System.currentTimeMillis().toInt(), builder.build())
   }
@@ -1529,6 +1647,7 @@ class GroceryViewModel(
     _orders.value = emptyList()
     _latestPlacedOrderId.value = null
     _ratedOrderIds.value = emptySet()
+    _shopRatings.value = emptyList()
 
     // Notifications
     _notifications.value = emptyList()
@@ -1683,12 +1802,20 @@ class GroceryViewModel(
         refreshAddresses(currentUserId)
       }
 
+      // Overwrite the prefs-cached wishlist with server truth so a customer
+      // signing in on a shared device sees their own list, not the last user's.
+      refreshWishlistFromServer()
+
       // Load orders using the (possibly updated) admin flag. Unconditionally
       // overwrite so the newly-authenticated user never sees stale rows from
       // the previous account — even if their own list is genuinely empty.
       fetchOrdersInto(cleanEmail, replace = true)
 
       loadNotifications()
+
+      // Task 6b: if a push tap arrived during cold start (before we knew who
+      // the user was), replay it now that serverRole is known.
+      drainPendingNotificationTap()
     }
   }
 
@@ -2399,6 +2526,11 @@ class GroceryViewModel(
           }
           _authStatusMessage.value = "Couldn't update order: ${err.localizedMessage ?: "server refused"}."
           android.util.Log.w("BreakQ", "updateOrderStatus failed for $orderId -> ${newStatus.label}", err)
+          // previousStatus can itself be stale (e.g. Realtime dropped the
+          // customer's Cancel event while vendor was backgrounded, then vendor
+          // tapped Confirm on a locally-still-PLACED row). Pull server truth so
+          // the vendor's dashboard reflects reality, not the stale revert.
+          refreshOrders()
         }
       _updatingOrderIds.update { it - orderId }
     }
@@ -2803,7 +2935,39 @@ class GroceryViewModel(
             } else shop
           }
         }
+        // Task 5: also prepend to the ratings feed so if the vendor is on the
+        // Reviews screen, the new review shows up without a manual refresh.
+        // Feed only tracks a single shop at a time, so filter to that shop_id.
+        _shopRatings.update { list ->
+          listOf(
+            ShopRating(
+              id = "",
+              orderId = orderId,
+              rating = rating,
+              review = review,
+              createdAt = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US).format(Date())
+            )
+          ) + list
+        }
       }
+    }
+  }
+
+  /**
+   * Task 5: load the vendor-visible ratings feed for a shop. Called when the
+   * vendor opens VendorReviewsScreen. Safe to call repeatedly — refreshes the
+   * feed and clears the loading flag when done.
+   */
+  fun loadShopRatings(shopId: String) {
+    if (shopId.isBlank()) return
+    _shopRatingsLoading.value = true
+    viewModelScope.launch {
+      supabaseGroceryRepo.fetchShopRatings(shopId, supabaseAuthService.currentAccessToken)
+        .onSuccess { list -> _shopRatings.value = list }
+        .onFailure { err ->
+          android.util.Log.w("BreakQ", "loadShopRatings failed for $shopId", err)
+        }
+      _shopRatingsLoading.value = false
     }
   }
 }

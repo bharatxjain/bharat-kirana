@@ -7,18 +7,27 @@ import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Dashboard
+import androidx.compose.material.icons.filled.ShoppingBag
 import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -33,6 +42,7 @@ import com.kks.bharatkirana.data.model.UpdateStatus
 import com.kks.bharatkirana.data.model.UserRole
 import com.kks.bharatkirana.ui.components.BharatBottomNavigationBar
 import com.kks.bharatkirana.ui.theme.BharatBackground
+import com.kks.bharatkirana.ui.theme.BharatPurpleContainer
 import com.kks.bharatkirana.ui.theme.BharatPurplePrimary
 import com.kks.bharatkirana.ui.theme.BharatTextPrimary
 import com.kks.bharatkirana.ui.theme.BharatTextSecondary
@@ -208,17 +218,17 @@ fun MainScreen(
       // showing the onboarding pager to an already-signed-in user.
       is AppScreen.Restoring -> {
         Box(
-          modifier = Modifier.fillMaxSize().background(Color.White),
+          modifier = Modifier.fillMaxSize().background(BharatPurplePrimary),
           contentAlignment = Alignment.Center
         ) {
           Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Text(
               text = "BreakQ",
               style = MaterialTheme.typography.headlineLarge.copy(fontWeight = FontWeight.ExtraBold),
-              color = BharatPurplePrimary
+              color = Color.White
             )
             Spacer(modifier = Modifier.height(20.dp))
-            CircularProgressIndicator(color = BharatPurplePrimary, strokeWidth = 3.dp)
+            CircularProgressIndicator(color = Color.White, strokeWidth = 3.dp)
           }
         }
       }
@@ -597,15 +607,21 @@ fun MainScreen(
           onBackClick = { viewModel.navigateBack() },
           onNotificationClick = { notification ->
             viewModel.markNotificationRead(notification.id)
-            if (notification.orderId != null) {
-              // Role-split: vendors land on the vendor-specific screen, so
-              // they see action buttons instead of Reorder/Call Shop/Rate.
-              val target = if (userProfile.serverRole == UserRole.VENDOR) {
-                AppScreen.VendorOrderDetails(notification.orderId)
-              } else {
-                AppScreen.OrderDetails(notification.orderId)
+            when {
+              // Admin promo campaigns set route=="notifications" and no orderId;
+              // tapping just marks the row read (we're already on the list).
+              notification.route == "notifications" -> Unit
+              notification.orderId != null -> {
+                // Role-split: vendors land on the vendor-specific screen, so
+                // they see action buttons instead of Reorder/Call Shop/Rate.
+                val target = if (userProfile.serverRole == UserRole.VENDOR) {
+                  AppScreen.VendorOrderDetails(notification.orderId)
+                } else {
+                  AppScreen.OrderDetails(notification.orderId)
+                }
+                viewModel.navigateTo(target)
               }
-              viewModel.navigateTo(target)
+              else -> Unit
             }
           },
           onMarkAllRead = { viewModel.markAllNotificationsRead() },
@@ -739,8 +755,23 @@ fun MainScreen(
           hasWhatsappSupport = supportWhatsappNumber.isNotBlank(),
           onBackClick = { viewModel.navigateBack() },
           onOpenWhatsapp = { viewModel.openSupportWhatsApp() },
-          onOpenOrders = { viewModel.navigateTo(AppScreen.OrderHistory) }
+          onOpenOrders = { viewModel.navigateTo(AppScreen.OrderHistory) },
+          onOpenHowItWorks = { viewModel.navigateTo(AppScreen.HowBreakQWorks) },
+          onOpenCustomerGuidelines = { viewModel.navigateTo(AppScreen.CustomerGuidelines) },
+          onOpenCancellationPolicy = { viewModel.navigateTo(AppScreen.CancellationPolicy) }
         )
+      }
+
+      is AppScreen.HowBreakQWorks -> {
+        HowBreakQWorksScreen(onBackClick = { viewModel.navigateBack() })
+      }
+
+      is AppScreen.CustomerGuidelines -> {
+        CustomerGuidelinesScreen(onBackClick = { viewModel.navigateBack() })
+      }
+
+      is AppScreen.CancellationPolicy -> {
+        CancellationPolicyScreen(onBackClick = { viewModel.navigateBack() })
       }
 
       is AppScreen.AboutUs -> {
@@ -952,7 +983,17 @@ fun MainScreen(
       }
 
       is AppScreen.VendorReviews -> {
-        VendorReviewsScreen(onBackClick = { viewModel.navigateBack() })
+        val vendorShop = shops.find { it.id == userProfile.shopId }
+        val ratings by viewModel.shopRatings.collectAsState()
+        val ratingsLoading by viewModel.shopRatingsLoading.collectAsState()
+        VendorReviewsScreen(
+          ratings = ratings,
+          averageRating = vendorShop?.rating ?: 0f,
+          ratingCount = vendorShop?.ratingCount ?: 0,
+          isLoading = ratingsLoading,
+          onBackClick = { viewModel.navigateBack() },
+          onRefresh = { vendorShop?.id?.let { viewModel.loadShopRatings(it) } }
+        )
       }
 
       is AppScreen.Subscription -> {
@@ -1168,11 +1209,39 @@ fun MainScreen(
             }
           }
         ) { paddingValues ->
-          Box(
+          Column(
             modifier = Modifier
               .fillMaxSize()
               .padding(paddingValues)
           ) {
+            // Task 3: shared customer shell header (address + notif + avatar +
+            // search bar) rendered above every main tab except Profile. Search
+            // bar is editable on the Search tab and readonly elsewhere; tapping
+            // readonly switches to Search. Each tab screen no longer renders
+            // its own StoreLocationHeader or search bar.
+            if (currentTab != MainTab.PROFILE) {
+              com.kks.bharatkirana.ui.components.CustomerShellHeader(
+                storeName = selectedAddress?.formatted.orEmpty().ifBlank { userProfile.address },
+                userInitial = userProfile.fullName.trim().firstOrNull()?.uppercaseChar()?.toString() ?: "U",
+                isAdmin = userProfile.isAdmin,
+                unreadNotificationCount = unreadNotificationCount,
+                isSearchTab = currentTab == MainTab.SEARCH,
+                searchQuery = searchQuery,
+                onSearchQueryChange = { q -> viewModel.onSearchQueryChange(q) },
+                onSearchBarTap = {
+                  if (currentTab != MainTab.SEARCH) viewModel.setTab(MainTab.SEARCH)
+                },
+                onProfileClick = { viewModel.setTab(MainTab.PROFILE) },
+                onStoreClick = { viewModel.navigateTo(AppScreen.SelectLocation) },
+                onChangeStoreClick = { viewModel.navigateTo(AppScreen.SelectLocation) },
+                onAdminClick = {
+                  if (userProfile.isSuperAdmin) viewModel.navigateTo(AppScreen.AdminDashboard)
+                  else if (userProfile.isVendor) viewModel.navigateTo(AppScreen.VendorDashboard)
+                },
+                onNotificationsClick = { viewModel.navigateTo(AppScreen.Notifications) }
+              )
+            }
+            Box(modifier = Modifier.fillMaxSize().weight(1f)) {
             when (currentTab) {
               MainTab.HOME -> {
                 // Active = anything not in a terminal state, matching the vendor
@@ -1182,45 +1251,72 @@ fun MainScreen(
                   .filter { it.status != com.kks.bharatkirana.data.model.OrderStatus.COMPLETED &&
                             it.status != com.kks.bharatkirana.data.model.OrderStatus.CANCELLED }
                   .maxByOrNull { it.createdAt.ifBlank { it.orderDate } }
-                HomeScreen(
-                  userProfile = userProfile,
-                  categories = categories,
-                  products = products,
-                  cartItems = cartItems,
-                  searchQuery = searchQuery,
-                  onSearchQueryChange = { q ->
-                    viewModel.onSearchQueryChange(q)
-                    viewModel.setTab(MainTab.SEARCH)
-                  },
-                  onCategoryClick = { cat -> viewModel.selectCategory(cat) },
-                  onProductClick = { prod -> viewModel.selectProduct(prod) },
-                  onAddToCart = { prod ->
-                    val defaultWeight = prod.weightOptions.firstOrNull()
-                    if (defaultWeight != null) viewModel.addToCart(prod, defaultWeight, 1)
-                  },
-                  onUpdateCartQty = { prodId, weightLabel, delta ->
-                    viewModel.updateCartQuantity(prodId, weightLabel, delta)
-                  },
-                  onViewCartClick = { viewModel.navigateTo(AppScreen.Cart) },
-                  onProfileClick = { viewModel.setTab(MainTab.PROFILE) },
-                  onStoreClick = { viewModel.navigateTo(AppScreen.SelectLocation) },
-                  onChangeStoreClick = { viewModel.navigateTo(AppScreen.SelectLocation) },
-                  onAdminClick = {
-                    if (userProfile.isSuperAdmin) viewModel.navigateTo(AppScreen.AdminDashboard)
-                    else if (userProfile.isVendor) viewModel.navigateTo(AppScreen.VendorDashboard)
-                  },
-                  onNotificationsClick = { viewModel.navigateTo(AppScreen.Notifications) },
-                  unreadNotificationCount = unreadNotificationCount,
-                  promoBanner = promoBanner,
-                  isLoading = isLoading,
-                  activeShopId = activeShopId,
+                Box(modifier = Modifier.fillMaxSize()) {
+                  HomeScreen(
+                    userProfile = userProfile,
+                    categories = categories,
+                    products = products,
+                    cartItems = cartItems,
+                    searchQuery = searchQuery,
+                    onSearchQueryChange = { q ->
+                      viewModel.onSearchQueryChange(q)
+                      viewModel.setTab(MainTab.SEARCH)
+                    },
+                    onCategoryClick = { cat -> viewModel.selectCategory(cat) },
+                    onProductClick = { prod -> viewModel.selectProduct(prod) },
+                    onAddToCart = { prod ->
+                      val defaultWeight = prod.weightOptions.firstOrNull()
+                      if (defaultWeight != null) viewModel.addToCart(prod, defaultWeight, 1)
+                    },
+                    onUpdateCartQty = { prodId, weightLabel, delta ->
+                      viewModel.updateCartQuantity(prodId, weightLabel, delta)
+                    },
+                    onViewCartClick = { viewModel.navigateTo(AppScreen.Cart) },
+                    onProfileClick = { viewModel.setTab(MainTab.PROFILE) },
+                    onStoreClick = { viewModel.navigateTo(AppScreen.SelectLocation) },
+                    onChangeStoreClick = { viewModel.navigateTo(AppScreen.SelectLocation) },
+                    onAdminClick = {
+                      if (userProfile.isSuperAdmin) viewModel.navigateTo(AppScreen.AdminDashboard)
+                      else if (userProfile.isVendor) viewModel.navigateTo(AppScreen.VendorDashboard)
+                    },
+                    onNotificationsClick = { viewModel.navigateTo(AppScreen.Notifications) },
+                    unreadNotificationCount = unreadNotificationCount,
+                    promoBanner = promoBanner,
+                    isLoading = isLoading,
+                    activeShopId = activeShopId,
+                    shops = shops,
+                    userLocation = userLocation,
+                    deliveryAddressLine = selectedAddress?.formatted.orEmpty(),
+                    // Task: active-order card is now rendered as a bottom-sheet
+                    // overlay (below), not as an in-list Home item. Passing null
+                    // keeps HomeScreen's in-column ActiveOrderCard hidden.
+                    activeOrder = null,
+                    onTrackOrderClick = { orderId -> viewModel.navigateTo(AppScreen.OrderDetails(orderId)) },
+                    onShopClick = { shop -> viewModel.navigateTo(AppScreen.ShopDetail(shop.id)) },
+                    onViewAllShopsClick = { viewModel.navigateTo(AppScreen.NearbyShops) }
+                  )
+                  ActiveOrderBottomSheet(
+                    order = activeOrder,
+                    onTrackClick = { id -> viewModel.navigateTo(AppScreen.OrderDetails(id)) },
+                    modifier = Modifier.align(Alignment.BottomCenter)
+                  )
+                }
+              }
+
+              MainTab.SHOPS -> {
+                // Reuses NearbyShopsScreen in tab mode — same shop dataset,
+                // same filter/search/distance logic, but renders map + list
+                // stacked and drops the back button + view toggle.
+                NearbyShopsScreen(
                   shops = shops,
-                  userLocation = userLocation,
-                  deliveryAddressLine = selectedAddress?.formatted.orEmpty(),
-                  activeOrder = activeOrder,
-                  onTrackOrderClick = { orderId -> viewModel.navigateTo(AppScreen.OrderDetails(orderId)) },
                   onShopClick = { shop -> viewModel.navigateTo(AppScreen.ShopDetail(shop.id)) },
-                  onViewAllShopsClick = { viewModel.navigateTo(AppScreen.NearbyShops) }
+                  onProfileClick = { viewModel.setTab(MainTab.PROFILE) },
+                  onBackClick = { viewModel.setTab(MainTab.HOME) },
+                  userInitial = userProfile.fullName.trim().firstOrNull()?.uppercaseChar()?.toString() ?: "U",
+                  unreadNotificationCount = unreadNotificationCount,
+                  onNotificationsClick = { viewModel.navigateTo(AppScreen.Notifications) },
+                  userLocation = userLocation,
+                  isTabMode = true
                 )
               }
 
@@ -1336,11 +1432,13 @@ fun MainScreen(
                     onVendorRegisterClick = { viewModel.navigateTo(AppScreen.VendorRegistration) },
                     onAboutUsClick = { viewModel.navigateTo(AppScreen.AboutUs) },
                     onAccountActionsClick = { viewModel.navigateTo(AppScreen.AccountActions) },
+                    onWishlistClick = { viewModel.navigateTo(AppScreen.Wishlist) },
                     savedAddressCount = addresses.size,
                     profileFetchComplete = profileFetchComplete
                   )
                 }
               }
+            }
             }
           }
         }
@@ -1448,4 +1546,99 @@ private fun UpdateAvailableDialog(
       }
     }
   )
+}
+
+// -----------------------------------------------------------------------------
+// Active-order tracker as an animated bottom-sheet overlay on Home. Slides in
+// from the bottom whenever there is a non-terminal order and slides out when
+// the order transitions to Completed/Cancelled. Not modal — Home content
+// remains fully interactive underneath.
+// -----------------------------------------------------------------------------
+@Composable
+private fun ActiveOrderBottomSheet(
+  order: com.kks.bharatkirana.data.model.Order?,
+  onTrackClick: (String) -> Unit,
+  modifier: Modifier = Modifier
+) {
+  val (headline, subline) = when (order?.status) {
+    com.kks.bharatkirana.data.model.OrderStatus.PLACED -> "Order placed" to "Waiting for the shop to confirm"
+    com.kks.bharatkirana.data.model.OrderStatus.CONFIRMED -> "Order confirmed" to "The shop will start preparing shortly"
+    com.kks.bharatkirana.data.model.OrderStatus.PREPARING -> "Preparing your order" to "The shop is packing it up"
+    com.kks.bharatkirana.data.model.OrderStatus.READY_FOR_PICKUP -> "Ready for pickup" to "Show your QR at the counter"
+    else -> "" to ""
+  }
+  val visible = order != null &&
+    order.status != com.kks.bharatkirana.data.model.OrderStatus.COMPLETED &&
+    order.status != com.kks.bharatkirana.data.model.OrderStatus.CANCELLED
+  AnimatedVisibility(
+    visible = visible,
+    enter = slideInVertically(animationSpec = tween(280)) { it } + fadeIn(),
+    exit = slideOutVertically(animationSpec = tween(220)) { it } + fadeOut(),
+    modifier = modifier
+      .fillMaxWidth()
+      .padding(horizontal = 12.dp, vertical = 12.dp)
+  ) {
+    if (order == null) return@AnimatedVisibility
+    Surface(
+      shape = RoundedCornerShape(20.dp),
+      color = Color.White,
+      tonalElevation = 6.dp,
+      shadowElevation = 12.dp,
+      modifier = Modifier
+        .fillMaxWidth()
+        .clickable { onTrackClick(order.id) }
+    ) {
+      Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {
+        Box(
+          modifier = Modifier
+            .align(Alignment.CenterHorizontally)
+            .padding(bottom = 8.dp)
+            .clip(RoundedCornerShape(2.dp))
+            .background(Color(0xFFE2E8F0))
+            .width(38.dp)
+            .height(4.dp)
+        )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+          Box(
+            modifier = Modifier
+              .size(40.dp)
+              .clip(androidx.compose.foundation.shape.CircleShape)
+              .background(BharatPurpleContainer),
+            contentAlignment = Alignment.Center
+          ) {
+            Icon(
+              imageVector = Icons.Default.ShoppingBag,
+              contentDescription = null,
+              tint = BharatPurplePrimary,
+              modifier = Modifier.size(22.dp)
+            )
+          }
+          Spacer(modifier = Modifier.width(12.dp))
+          Column(modifier = Modifier.weight(1f)) {
+            Text(
+              text = "$headline \u00b7 ${order.displayNumber}",
+              fontWeight = FontWeight.Bold,
+              fontSize = 14.sp,
+              color = BharatTextPrimary
+            )
+            Text(text = subline, fontSize = 12.sp, color = BharatTextSecondary)
+          }
+          Spacer(modifier = Modifier.width(8.dp))
+          Surface(
+            shape = RoundedCornerShape(10.dp),
+            color = BharatPurplePrimary,
+            modifier = Modifier.clickable { onTrackClick(order.id) }
+          ) {
+            Text(
+              text = "Track Order",
+              color = Color.White,
+              fontWeight = FontWeight.ExtraBold,
+              fontSize = 12.sp,
+              modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp)
+            )
+          }
+        }
+      }
+    }
+  }
 }

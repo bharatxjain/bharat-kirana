@@ -114,10 +114,12 @@ class MainActivity : ComponentActivity(), PaymentResultWithDataListener {
     if (intent == null) return
     if (!intent.getBooleanExtra(MyFirebaseMessagingService.EXTRA_FROM_PUSH, false)) return
     val orderId = intent.getStringExtra(MyFirebaseMessagingService.EXTRA_ORDER_ID)
-    viewModel.handleNotificationTap(orderId)
-    // Consume the extra so orientation changes don't re-trigger it.
+    val route = intent.getStringExtra(MyFirebaseMessagingService.EXTRA_ROUTE)
+    viewModel.handleNotificationTap(orderId, route)
+    // Consume the extras so orientation changes don't re-trigger routing.
     intent.removeExtra(MyFirebaseMessagingService.EXTRA_FROM_PUSH)
     intent.removeExtra(MyFirebaseMessagingService.EXTRA_ORDER_ID)
+    intent.removeExtra(MyFirebaseMessagingService.EXTRA_ROUTE)
   }
 
   private fun openRazorpayCheckout(state: GroceryViewModel.CheckoutState.ReadyToPay) {

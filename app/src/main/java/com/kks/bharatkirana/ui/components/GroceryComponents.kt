@@ -197,6 +197,55 @@ fun StoreLocationHeader(
   }
 }
 
+/**
+ * Shared shell header used at the top of every customer main-tab screen except
+ * Profile: address + notifications + avatar (StoreLocationHeader) plus a
+ * single GrocerySearchBar. When [isSearchTab] is true the search bar is a real
+ * editable field that autofocuses; otherwise it's readonly and tapping switches
+ * to the Search tab. This is what keeps the header consistent between Home,
+ * Shops, Categories and Search — no per-screen headers to duplicate.
+ */
+@Composable
+fun CustomerShellHeader(
+  storeName: String,
+  userInitial: String,
+  isAdmin: Boolean,
+  unreadNotificationCount: Int,
+  isSearchTab: Boolean,
+  searchQuery: String,
+  onSearchQueryChange: (String) -> Unit,
+  onSearchBarTap: () -> Unit,
+  onProfileClick: () -> Unit,
+  onStoreClick: () -> Unit,
+  onChangeStoreClick: () -> Unit,
+  onAdminClick: () -> Unit,
+  onNotificationsClick: () -> Unit
+) {
+  Column(modifier = Modifier.fillMaxWidth().background(Color.White)) {
+    StoreLocationHeader(
+      storeName = storeName,
+      userInitial = userInitial,
+      isAdmin = isAdmin,
+      unreadNotificationCount = unreadNotificationCount,
+      onProfileClick = onProfileClick,
+      onStoreClick = onStoreClick,
+      onChangeStoreClick = onChangeStoreClick,
+      onAdminClick = onAdminClick,
+      onNotificationsClick = onNotificationsClick
+    )
+    GrocerySearchBar(
+      query = if (isSearchTab) searchQuery else "",
+      onQueryChange = onSearchQueryChange,
+      placeholder = if (isSearchTab) "Search across 1000+ items..."
+                    else "Search groceries, rice, atta...",
+      autoFocus = false,
+      readOnly = !isSearchTab,
+      onClick = { onSearchBarTap() }
+    )
+    Spacer(modifier = Modifier.height(6.dp))
+  }
+}
+
 @Composable
 fun GrocerySearchBar(
   query: String,
@@ -973,6 +1022,7 @@ fun BharatBottomNavigationBar(
       val isSelected = currentTab == tab
       val (icon, selectedIcon) = when (tab) {
         MainTab.HOME -> Icons.Outlined.Home to Icons.Default.Home
+        MainTab.SHOPS -> Icons.Outlined.Storefront to Icons.Default.Storefront
         MainTab.CATEGORIES -> Icons.Outlined.GridView to Icons.Default.GridView
         MainTab.SEARCH -> Icons.Outlined.Search to Icons.Default.Search
         MainTab.PROFILE -> Icons.Outlined.Person to Icons.Default.Person

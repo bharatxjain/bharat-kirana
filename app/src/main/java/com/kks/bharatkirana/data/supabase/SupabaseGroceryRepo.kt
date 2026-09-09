@@ -248,6 +248,59 @@ class SupabaseGroceryRepo(
     }
 
   /**
+   * Multi-device FCM registration used by the admin-panel notification
+   * campaigns. Runs in parallel with profiles.fcm_token (which the
+   * notify-order-status Edge Function still uses); this table is per-device
+   * so a user with 2 phones gets pushes on both. Uses PostgREST upsert on
+   * the token unique constraint so the same token following the same user
+   * across sessions doesn't duplicate rows.
+   */
+  suspend fun upsertDeviceToken(
+    userId: String,
+    token: String,
+    platform: String = "android",
+    accessToken: String? = null
+  ): Result<Unit> =
+    withContext(Dispatchers.IO) {
+      runCatching {
+        if (token.isBlank()) throw Exception("device token blank")
+        val url = "${SupabaseConfig.restUrl}/device_tokens?on_conflict=token"
+        val payload = JSONObject().apply {
+          put("user_id", userId)
+          put("token", token)
+          put("platform", platform)
+          put("last_seen_at", "now()")
+        }
+        val request = baseRequestBuilder(url, accessToken)
+          .addHeader("Prefer", "return=minimal,resolution=merge-duplicates")
+          .post(payload.toString().toRequestBody(jsonMediaType))
+          .build()
+        val response = client.newCall(request).execute()
+        if (!response.isSuccessful) {
+          val body = response.body?.string().orEmpty().take(200)
+          throw Exception("Failed to upsert device token: HTTP ${response.code} — $body")
+        }
+      }
+    }
+
+  /** Removes this device's FCM registration so pushes stop following it after logout. */
+  suspend fun deleteDeviceToken(token: String, accessToken: String? = null): Result<Unit> =
+    withContext(Dispatchers.IO) {
+      runCatching {
+        if (token.isBlank()) return@runCatching
+        val url = "${SupabaseConfig.restUrl}/device_tokens?token=eq.$token"
+        val request = baseRequestBuilder(url, accessToken)
+          .addHeader("Prefer", "return=minimal")
+          .delete()
+          .build()
+        val response = client.newCall(request).execute()
+        if (!response.isSuccessful) {
+          throw Exception("Failed to delete device token: HTTP ${response.code}")
+        }
+      }
+    }
+
+  /**
    * Fetch this user's in-app notifications (written by the notify-order-status Edge
    * Function alongside every push it sends — see SETUP_STEPS.md Task 3).
    */
@@ -271,7 +324,10 @@ class SupabaseGroceryRepo(
               message = obj.optString("message"),
               isRead = obj.optBoolean("is_read", false),
               orderId = obj.optString("order_id").takeIf { it.isNotBlank() },
-              createdAt = obj.optString("created_at")
+              createdAt = obj.optString("created_at"),
+              // `route` was added by notifications_campaigns.sql; older rows
+              // are NULL and fall through to the orderId/notifications logic.
+              route = if (obj.isNull("route")) null else obj.optString("route").takeIf { it.isNotBlank() }
             )
           )
         }
@@ -1328,6 +1384,118 @@ class SupabaseGroceryRepo(
           if (id.isNotBlank()) ids.add(id)
         }
         ids
+      }
+    }
+
+  /**
+   * Wishlist: fetch every product_id this customer has saved. RLS on
+   * public.wishlists restricts rows to user_id = auth.uid(), so no extra
+   * filter is needed beyond the select.
+   */
+  suspend fun fetchWishlistProductIds(
+    userId: String,
+    accessToken: String? = null
+  ): Result<Set<String>> =
+    withContext(Dispatchers.IO) {
+      runCatching {
+        val url = "${SupabaseConfig.restUrl}/wishlists?user_id=eq.$userId&select=product_id"
+        val request = baseRequestBuilder(url, accessToken).get().build()
+        val response = client.newCall(request).execute()
+        val body = response.body?.string() ?: ""
+        if (!response.isSuccessful) throw Exception("Failed to fetch wishlist: HTTP ${response.code}")
+        val array = JSONArray(body)
+        val ids = mutableSetOf<String>()
+        for (i in 0 until array.length()) {
+          val o = array.optJSONObject(i) ?: continue
+          val pid = o.optString("product_id")
+          if (pid.isNotBlank()) ids.add(pid)
+        }
+        ids
+      }
+    }
+
+  /** Upsert-safe insert (relies on the (user_id, product_id) PK). */
+  suspend fun addWishlistItem(
+    userId: String,
+    productId: String,
+    accessToken: String? = null
+  ): Result<Unit> =
+    withContext(Dispatchers.IO) {
+      runCatching {
+        if (productId.isBlank()) return@runCatching
+        val url = "${SupabaseConfig.restUrl}/wishlists?on_conflict=user_id,product_id"
+        val payload = JSONObject().apply {
+          put("user_id", userId)
+          put("product_id", productId)
+        }
+        val request = baseRequestBuilder(url, accessToken)
+          .addHeader("Prefer", "return=minimal,resolution=merge-duplicates")
+          .post(payload.toString().toRequestBody(jsonMediaType))
+          .build()
+        val response = client.newCall(request).execute()
+        if (!response.isSuccessful) {
+          val body = response.body?.string().orEmpty().take(200)
+          throw Exception("Failed to add wishlist item: HTTP ${response.code} — $body")
+        }
+      }
+    }
+
+  suspend fun removeWishlistItem(
+    userId: String,
+    productId: String,
+    accessToken: String? = null
+  ): Result<Unit> =
+    withContext(Dispatchers.IO) {
+      runCatching {
+        if (productId.isBlank()) return@runCatching
+        val url = "${SupabaseConfig.restUrl}/wishlists?user_id=eq.$userId&product_id=eq.$productId"
+        val request = baseRequestBuilder(url, accessToken)
+          .addHeader("Prefer", "return=minimal")
+          .delete()
+          .build()
+        val response = client.newCall(request).execute()
+        if (!response.isSuccessful) {
+          throw Exception("Failed to remove wishlist item: HTTP ${response.code}")
+        }
+      }
+    }
+
+  /**
+   * Task 5: fetch every rating row for a shop so the vendor can see reviews
+   * and stars. RLS on shop_ratings is public-read (`using (true)`), so this
+   * call succeeds for the shop owner without any extra policy.
+   */
+  suspend fun fetchShopRatings(
+    shopId: String,
+    accessToken: String? = null,
+    limit: Int = 100
+  ): Result<List<com.kks.bharatkirana.data.model.ShopRating>> =
+    withContext(Dispatchers.IO) {
+      runCatching {
+        val url = "${SupabaseConfig.restUrl}/shop_ratings" +
+          "?shop_id=eq.$shopId" +
+          "&select=id,order_id,rating,review,created_at" +
+          "&order=created_at.desc" +
+          "&limit=$limit"
+        val request = baseRequestBuilder(url, accessToken).get().build()
+        val response = client.newCall(request).execute()
+        val body = response.body?.string() ?: ""
+        if (!response.isSuccessful) throw Exception("Failed to fetch shop reviews: HTTP ${response.code}")
+        val array = JSONArray(body)
+        val list = mutableListOf<com.kks.bharatkirana.data.model.ShopRating>()
+        for (i in 0 until array.length()) {
+          val o = array.optJSONObject(i) ?: continue
+          list.add(
+            com.kks.bharatkirana.data.model.ShopRating(
+              id = o.optString("id"),
+              orderId = o.optString("order_id"),
+              rating = o.optInt("rating", 0),
+              review = o.optString("review", ""),
+              createdAt = o.optString("created_at", "")
+            )
+          )
+        }
+        list
       }
     }
 

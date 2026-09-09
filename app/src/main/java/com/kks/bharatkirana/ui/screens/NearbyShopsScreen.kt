@@ -45,12 +45,18 @@ fun NearbyShopsScreen(
   unreadNotificationCount: Int = 0,
   onNotificationsClick: () -> Unit = {},
   userLocation: Location? = null,
+  isTabMode: Boolean = false,
   modifier: Modifier = Modifier
 ) {
   var searchQuery by remember { mutableStateOf("") }
   val filters = listOf("All Shops", "Nearest", "Top Rated", "Groceries", "Organic")
   var selectedFilter by remember { mutableStateOf("All Shops") }
+  // Tab mode always shows map + list stacked (Zomato-style); the standalone
+  // legacy usage keeps the map/list toggle so we don't regress the "View all"
+  // deep-link opened from Home in older builds.
   var isMapView by remember { mutableStateOf(false) }
+  var selectedShopId by remember { mutableStateOf<String?>(null) }
+  val listState = androidx.compose.foundation.lazy.rememberLazyListState()
   
   // Distance filter: customer picks max radius to search within.
   val distanceOptions = listOf(1, 3, 5, 10)
@@ -80,7 +86,11 @@ fun NearbyShopsScreen(
 
   Scaffold(
     topBar = {
-      TopAppBar(
+      // In tab mode the shared CustomerShellHeader (rendered by MainScreen)
+      // already provides address + notif + avatar, so hide our own topbar to
+      // avoid duplication.
+      if (!isTabMode) {
+        TopAppBar(
         title = {
           Row(verticalAlignment = Alignment.CenterVertically) {
             Icon(
@@ -105,21 +115,25 @@ fun NearbyShopsScreen(
           }
         },
         navigationIcon = {
-          IconButton(onClick = onBackClick) {
-            Icon(
-              imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-              contentDescription = "Back",
-              tint = BharatPurplePrimary
-            )
+          if (!isTabMode) {
+            IconButton(onClick = onBackClick) {
+              Icon(
+                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                contentDescription = "Back",
+                tint = BharatPurplePrimary
+              )
+            }
           }
         },
         actions = {
-          IconButton(onClick = { isMapView = !isMapView }) {
-            Icon(
-              imageVector = if (isMapView) Icons.Default.List else Icons.Default.Map,
-              contentDescription = "Toggle View",
-              tint = BharatPurplePrimary
-            )
+          if (!isTabMode) {
+            IconButton(onClick = { isMapView = !isMapView }) {
+              Icon(
+                imageVector = if (isMapView) Icons.Default.List else Icons.Default.Map,
+                contentDescription = "Toggle View",
+                tint = BharatPurplePrimary
+              )
+            }
           }
           // Notification bell with unread badge (same behavior as HomeScreen).
           Box {
@@ -176,6 +190,7 @@ fun NearbyShopsScreen(
         },
         colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.White)
       )
+      }
     },
     modifier = modifier.fillMaxSize()
   ) { paddingValues ->
@@ -185,85 +200,286 @@ fun NearbyShopsScreen(
         .background(Color(0xFFF9FAFB))
         .padding(paddingValues)
     ) {
-      // Search Bar
-      OutlinedTextField(
-        value = searchQuery,
-        onValueChange = { searchQuery = it },
-        placeholder = { Text("Search nearby stores, groceries...", color = BharatTextMuted, fontSize = 14.sp) },
-        leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = BharatTextSecondary) },
-        modifier = Modifier
-          .fillMaxWidth()
-          .padding(horizontal = 16.dp, vertical = 12.dp),
-        shape = RoundedCornerShape(12.dp),
-        colors = OutlinedTextFieldDefaults.colors(
-          focusedTextColor = BharatTextPrimary,
-          unfocusedTextColor = BharatTextPrimary
+      // Search Bar — hidden in tab mode because the shared CustomerShellHeader
+      // already exposes a product search field; the inline shop-name filter
+      // would be a redundant second field. The chip row below still narrows
+      // results by radius/rating/category.
+      if (!isTabMode) {
+        OutlinedTextField(
+          value = searchQuery,
+          onValueChange = { searchQuery = it },
+          placeholder = { Text("Search nearby stores, groceries...", color = BharatTextMuted, fontSize = 14.sp) },
+          leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = BharatTextSecondary) },
+          modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+          shape = RoundedCornerShape(12.dp),
+          colors = OutlinedTextFieldDefaults.colors(
+            focusedTextColor = BharatTextPrimary,
+            unfocusedTextColor = BharatTextPrimary
+          )
         )
-      )
+      }
 
-      // Distance Filter Row
-      Row(
-        modifier = Modifier
-          .fillMaxWidth()
-          .padding(horizontal = 16.dp, vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically
-      ) {
-        Text(
-          text = "Radius:",
-          style = MaterialTheme.typography.labelMedium,
-          color = BharatTextSecondary,
-          modifier = Modifier.padding(end = 12.dp)
-        )
-        distanceOptions.forEach { km ->
-          val isSelected = selectedDistanceKm == km
-          Surface(
-            onClick = { selectedDistanceKm = km },
-            shape = RoundedCornerShape(8.dp),
-            color = if (isSelected) BharatPurplePrimary else Color.White,
-            border = BorderStroke(1.dp, if (isSelected) BharatPurplePrimary else Color(0xFFE5E7EB)),
-            modifier = Modifier.padding(end = 8.dp)
-          ) {
-            Text(
-              text = "${km}km",
-              color = if (isSelected) Color.White else BharatTextPrimary,
-              fontSize = 12.sp,
-              fontWeight = FontWeight.Bold,
-              modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+      // Distance Filter Row — pinned in legacy mode; scrolls with the page in
+      // tab mode (rendered inside the LazyColumn below).
+      if (!isTabMode) {
+        Row(
+          modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 4.dp),
+          verticalAlignment = Alignment.CenterVertically
+        ) {
+          Text(
+            text = "Radius:",
+            style = MaterialTheme.typography.labelMedium,
+            color = BharatTextSecondary,
+            modifier = Modifier.padding(end = 12.dp)
+          )
+          distanceOptions.forEach { km ->
+            val isSelected = selectedDistanceKm == km
+            Surface(
+              onClick = { selectedDistanceKm = km },
+              shape = RoundedCornerShape(8.dp),
+              color = if (isSelected) BharatPurplePrimary else Color.White,
+              border = BorderStroke(1.dp, if (isSelected) BharatPurplePrimary else Color(0xFFE5E7EB)),
+              modifier = Modifier.padding(end = 8.dp)
+            ) {
+              Text(
+                text = "${km}km",
+                color = if (isSelected) Color.White else BharatTextPrimary,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+              )
+            }
+          }
+        }
+
+        // Other Filters
+        LazyRow(
+          contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+          horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+          items(filters) { filter ->
+            FilterChip(
+              selected = selectedFilter == filter,
+              onClick = { selectedFilter = filter },
+              label = { Text(filter) },
+              colors = FilterChipDefaults.filterChipColors(
+                selectedContainerColor = BharatPurplePrimary,
+                selectedLabelColor = Color.White,
+                containerColor = Color.White,
+                labelColor = BharatTextSecondary
+              ),
+              border = FilterChipDefaults.filterChipBorder(
+                enabled = true,
+                selected = selectedFilter == filter,
+                borderColor = Color(0xFFE5E7EB),
+                selectedBorderColor = BharatPurplePrimary,
+                borderWidth = 1.dp
+              ),
+              shape = RoundedCornerShape(12.dp)
             )
           }
         }
       }
 
-      // Other Filters
-      LazyRow(
-        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
-      ) {
-        items(filters) { filter ->
-          FilterChip(
-            selected = selectedFilter == filter,
-            onClick = { selectedFilter = filter },
-            label = { Text(filter) },
-            colors = FilterChipDefaults.filterChipColors(
-              selectedContainerColor = BharatPurplePrimary,
-              selectedLabelColor = Color.White,
-              containerColor = Color.White,
-              labelColor = BharatTextSecondary
-            ),
-            border = FilterChipDefaults.filterChipBorder(
-              enabled = true,
-              selected = selectedFilter == filter,
-              borderColor = Color(0xFFE5E7EB),
-              selectedBorderColor = BharatPurplePrimary,
-              borderWidth = 1.dp
-            ),
-            shape = RoundedCornerShape(12.dp)
-          )
-        }
-      }
-
       // Shop List or Empty Message or Map View
-      if (isMapView) {
+      if (isTabMode) {
+        // Tab mode: everything (filter chips + map + shop list) lives inside a
+        // single LazyColumn so the whole page scrolls as one, matching how
+        // Zomato/Blinkit treat their shop discovery pages. selectedShopId
+        // bridges the map and the list; NearbyShopsMap already handles being
+        // disposed and re-created when it scrolls out of view.
+        // Scroll target index in the LazyColumn: 3 header items (radius chips,
+        // category chips, map card) + the shop's index. Kept as a constant so
+        // if we add or remove items above, we only tweak this in one place.
+        val headerItemCount = 3
+        LaunchedEffect(selectedShopId, filteredShops) {
+          val shopIdx = filteredShops.indexOfFirst { it.id == selectedShopId }
+          if (shopIdx >= 0) listState.animateScrollToItem(headerItemCount + shopIdx)
+        }
+        LazyColumn(
+          state = listState,
+          modifier = Modifier.fillMaxSize(),
+          contentPadding = PaddingValues(bottom = 24.dp),
+          verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+          item(key = "radius_chips") {
+            Row(
+              modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp),
+              verticalAlignment = Alignment.CenterVertically
+            ) {
+              Text(
+                text = "Radius:",
+                style = MaterialTheme.typography.labelMedium,
+                color = BharatTextSecondary,
+                modifier = Modifier.padding(end = 12.dp)
+              )
+              distanceOptions.forEach { km ->
+                val isSelected = selectedDistanceKm == km
+                Surface(
+                  onClick = { selectedDistanceKm = km },
+                  shape = RoundedCornerShape(8.dp),
+                  color = if (isSelected) BharatPurplePrimary else Color.White,
+                  border = BorderStroke(1.dp, if (isSelected) BharatPurplePrimary else Color(0xFFE5E7EB)),
+                  modifier = Modifier.padding(end = 8.dp)
+                ) {
+                  Text(
+                    text = "${km}km",
+                    color = if (isSelected) Color.White else BharatTextPrimary,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                  )
+                }
+              }
+            }
+          }
+
+          item(key = "category_chips") {
+            LazyRow(
+              contentPadding = PaddingValues(horizontal = 16.dp),
+              horizontalArrangement = Arrangement.spacedBy(8.dp),
+              modifier = Modifier.fillMaxWidth()
+            ) {
+              items(filters) { filter ->
+                FilterChip(
+                  selected = selectedFilter == filter,
+                  onClick = { selectedFilter = filter },
+                  label = { Text(filter) },
+                  colors = FilterChipDefaults.filterChipColors(
+                    selectedContainerColor = BharatPurplePrimary,
+                    selectedLabelColor = Color.White,
+                    containerColor = Color.White,
+                    labelColor = BharatTextSecondary
+                  ),
+                  border = FilterChipDefaults.filterChipBorder(
+                    enabled = true,
+                    selected = selectedFilter == filter,
+                    borderColor = Color(0xFFE5E7EB),
+                    selectedBorderColor = BharatPurplePrimary,
+                    borderWidth = 1.dp
+                  ),
+                  shape = RoundedCornerShape(12.dp)
+                )
+              }
+            }
+          }
+
+          item(key = "map_card") {
+            Box(
+              modifier = Modifier
+                .fillMaxWidth()
+                .height(240.dp)
+                .padding(horizontal = 16.dp)
+                .clip(RoundedCornerShape(16.dp))
+            ) {
+              if (MapplsConfig.isConfigured && filteredShops.isNotEmpty()) {
+                NearbyShopsMap(
+                  shops = filteredShops,
+                  userLocation = userLocation,
+                  onShopMarkerClick = { s -> selectedShopId = s.id },
+                  focusedShopId = selectedShopId,
+                  modifier = Modifier.fillMaxSize()
+                )
+                Surface(
+                  color = Color.Black.copy(alpha = 0.75f),
+                  shape = RoundedCornerShape(20.dp),
+                  modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .padding(10.dp)
+                ) {
+                  Text(
+                    text = "${filteredShops.size} shops · tap a pin to highlight",
+                    color = Color.White,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Medium,
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                  )
+                }
+              } else {
+                Column(
+                  horizontalAlignment = Alignment.CenterHorizontally,
+                  verticalArrangement = Arrangement.Center,
+                  modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color(0xFFF3F4F6))
+                    .padding(24.dp)
+                ) {
+                  Icon(
+                    imageVector = Icons.Default.Map,
+                    contentDescription = null,
+                    tint = Color(0xFFCBD5E1),
+                    modifier = Modifier.size(48.dp)
+                  )
+                  Spacer(modifier = Modifier.height(8.dp))
+                  Text(
+                    text = if (filteredShops.isEmpty())
+                      "No shops match the current filters"
+                    else
+                      "Map preview unavailable",
+                    fontSize = 12.sp,
+                    color = BharatTextSecondary,
+                    textAlign = TextAlign.Center
+                  )
+                }
+              }
+            }
+          }
+
+          if (filteredShops.isEmpty()) {
+            item(key = "empty_state") {
+              Box(
+                modifier = Modifier.fillMaxWidth().padding(top = 40.dp),
+                contentAlignment = Alignment.Center
+              ) {
+                Text(
+                  text = "No local shops under ${selectedDistanceKm}km",
+                  style = MaterialTheme.typography.bodyMedium,
+                  color = BharatTextSecondary
+                )
+              }
+            }
+          } else {
+            items(filteredShops, key = { it.id }) { shop ->
+              val isSelected = shop.id == selectedShopId
+              Box(
+                modifier = Modifier
+                  .fillMaxWidth()
+                  .padding(horizontal = 16.dp)
+                  .clip(RoundedCornerShape(24.dp))
+                  .then(
+                    if (isSelected)
+                      Modifier.background(BharatPurpleContainer.copy(alpha = 0.35f))
+                    else Modifier
+                  )
+              ) {
+                NearbyShopCard(shop = shop, onClick = { onShopClick(shop) })
+                Surface(
+                  onClick = { selectedShopId = shop.id },
+                  shape = CircleShape,
+                  color = if (isSelected) BharatPurplePrimary else Color.White,
+                  border = BorderStroke(1.dp, BharatPurplePrimary),
+                  modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(14.dp)
+                ) {
+                  Icon(
+                    imageVector = Icons.Default.PinDrop,
+                    contentDescription = "Focus on map",
+                    tint = if (isSelected) Color.White else BharatPurplePrimary,
+                    modifier = Modifier.padding(8.dp).size(20.dp)
+                  )
+                }
+              }
+            }
+          }
+        }
+      } else if (isMapView) {
         Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
           if (MapplsConfig.isConfigured) {
             NearbyShopsMap(

@@ -118,23 +118,9 @@ fun HomeScreen(
         .testTag("home_screen_content"),
       contentPadding = PaddingValues(bottom = if (cartItemCount > 0) 130.dp else 48.dp)
     ) {
-      // Store Location Header
-      item {
-        StoreLocationHeader(
-          // The selected delivery address from customer_addresses. Falls back to
-          // the legacy profiles.address string, then to the header's own
-          // "Add a delivery address" placeholder.
-          storeName = deliveryAddressLine.ifBlank { userProfile.address },
-          userInitial = userProfile.fullName.firstOrNull()?.toString() ?: "R",
-          isAdmin = userProfile.isAdmin,
-          unreadNotificationCount = unreadNotificationCount,
-          onProfileClick = onProfileClick,
-          onStoreClick = onStoreClick,
-          onChangeStoreClick = onChangeStoreClick,
-          onAdminClick = onAdminClick,
-          onNotificationsClick = onNotificationsClick
-        )
-      }
+      // Store Location Header + search bar moved to the shared CustomerShellHeader
+      // rendered by MainScreen above the tab area. Home now starts directly with
+      // the active-order tracker (if any) followed by the promo banner + content.
 
       // Active-order tracker. Reactive: driven by the customer-scoped _orders
       // StateFlow which is already kept fresh by the existing Realtime collector,
@@ -149,71 +135,8 @@ fun HomeScreen(
         }
       }
 
-      // Nearby-shops map preview. Reuses the exact Mappls component that powers
-      // NearbyShopsScreen. Hidden when keys are missing or no approved shop has
-      // coordinates, so the customer never sees an empty grey box.
-      if (MapplsConfig.isConfigured && mappableShops.isNotEmpty()) {
-        item(key = "home_nearby_shops_map") {
-          Box(
-            modifier = Modifier
-              .fillMaxWidth()
-              .padding(horizontal = 12.dp)
-              .height(170.dp)
-              .clip(RoundedCornerShape(16.dp))
-          ) {
-            NearbyShopsMap(
-              shops = mappableShops,
-              userLocation = userLocation,
-              onShopMarkerClick = onShopClick,
-              modifier = Modifier.fillMaxSize()
-            )
-            Surface(
-              color = Color.Black.copy(alpha = 0.75f),
-              shape = RoundedCornerShape(20.dp),
-              modifier = Modifier
-                .align(Alignment.TopStart)
-                .padding(10.dp)
-            ) {
-              Text(
-                text = "Tap a pin to open a shop",
-                color = Color.White,
-                fontSize = 11.sp,
-                fontWeight = FontWeight.Medium,
-                modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
-              )
-            }
-            Surface(
-              onClick = onViewAllShopsClick,
-              color = Color.White,
-              shape = RoundedCornerShape(20.dp),
-              modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .padding(10.dp)
-            ) {
-              Text(
-                text = "View all",
-                color = BharatPurplePrimary,
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp)
-              )
-            }
-          }
-          Spacer(modifier = Modifier.height(10.dp))
-        }
-      }
-
-      // Search Bar — tap navigates to the Search tab (which owns the real
-      // TextField) so the keyboard stays open while the user types.
-      item {
-        GrocerySearchBar(
-          query = "",
-          onQueryChange = {},
-          readOnly = true,
-          onClick = { onSearchQueryChange("") }
-        )
-        Spacer(modifier = Modifier.height(10.dp))
-      }
+      // Nearby-shops map moved to its own bottom-nav tab (MainTab.SHOPS).
+      // Home stays focused on active order + search + categories + products.
 
       // Promo banner from Firebase Remote Config (F.promo_banner_text/enabled).
       // Change text/toggle from the Firebase console — no app update needed.

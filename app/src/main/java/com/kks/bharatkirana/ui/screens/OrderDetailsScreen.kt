@@ -89,11 +89,17 @@ fun OrderDetailsScreen(
   val isTerminal = order.status == OrderStatus.COMPLETED || order.status == OrderStatus.CANCELLED
 
   if (showCancelDialog) {
+    val isConfirmedStage = order.status == OrderStatus.CONFIRMED
+    val dialogTitle = if (isConfirmedStage) "Cancel confirmed order?" else "Cancel this order?"
+    val dialogBody = if (isConfirmedStage)
+      "The shop has already accepted order ${order.displayNumber} and may have started planning your items. Cancelling now inconveniences the shop — please only do this if you truly need to. This can't be undone."
+    else
+      "Order ${order.displayNumber} will be cancelled. This can't be undone \u2014 the shop will be notified."
     AlertDialog(
       onDismissRequest = { showCancelDialog = false },
       containerColor = Color.White,
-      title = { Text("Cancel this order?", fontWeight = FontWeight.Bold, color = BharatTextPrimary) },
-      text = { Text("Order ${order.displayNumber} will be cancelled. This can't be undone \u2014 the shop will be notified.", color = BharatTextSecondary) },
+      title = { Text(dialogTitle, fontWeight = FontWeight.Bold, color = BharatTextPrimary) },
+      text = { Text(dialogBody, color = BharatTextSecondary) },
       confirmButton = {
         Button(
           onClick = {
