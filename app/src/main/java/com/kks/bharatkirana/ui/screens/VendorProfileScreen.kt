@@ -18,27 +18,43 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
+import android.net.Uri
+import coil.compose.AsyncImage
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.HelpOutline
 import androidx.compose.material.icons.automirrored.filled.Logout
+import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.ChatBubble
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Gavel
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Payment
+import androidx.compose.material.icons.filled.PrivacyTip
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Storefront
+import androidx.compose.material.icons.filled.Timer
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -74,12 +90,25 @@ fun VendorProfileScreen(
   onBackClick: () -> Unit,
   onSavePersonalInfo: (String, String, String, String) -> Unit,
   onUpdateShop: (String, Shop) -> Unit,
+  onUpdateShopImage: (String, Uri) -> Unit = { _, _ -> },
   onManagePlan: () -> Unit,
   onOpenReviews: () -> Unit,
   onSupportClick: () -> Unit,
   onLogout: () -> Unit,
-  totalOrders: Int = 0,
-  totalRevenue: Int = 0,
+  // Shop settings — same state that lives on the vendor dashboard's Settings
+  // tab. Rendered here so the vendor can flip open/closed, tweak packing time
+  // or auto-confirm without leaving Account.
+  isStoreOpen: Boolean = true,
+  autoConfirmOrders: Boolean = true,
+  packingTimeMinutes: Int = 12,
+  onToggleStoreStatus: () -> Unit = {},
+  onToggleAutoConfirm: () -> Unit = {},
+  onUpdatePackingTime: (Int) -> Unit = {},
+  onOpenHowItWorks: () -> Unit = {},
+  onOpenCancellationPolicy: () -> Unit = {},
+  onOpenPrivacyPolicy: () -> Unit = {},
+  onOpenTerms: () -> Unit = {},
+  onOpenAboutUs: () -> Unit = {},
   modifier: Modifier = Modifier
 ) {
   var showEditShopDialog by remember { mutableStateOf(false) }
@@ -111,7 +140,7 @@ fun VendorProfileScreen(
       contentPadding = PaddingValues(16.dp),
       verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-      // ── Header card: owner name, email, shop badge ────────────────────────
+      // ── Header: shop identity + live status pill ──────────────────────────
       item {
         Card(
           shape = RoundedCornerShape(16.dp),
@@ -119,51 +148,75 @@ fun VendorProfileScreen(
           border = BorderStroke(1.dp, Color(0xFFF1F5F9)),
           modifier = Modifier.fillMaxWidth()
         ) {
-          Row(
-            modifier = Modifier.padding(16.dp),
-            verticalAlignment = Alignment.CenterVertically
-          ) {
-            Box(
-              modifier = Modifier
-                .size(56.dp)
-                .clip(CircleShape)
-                .background(BharatPurpleContainer),
-              contentAlignment = Alignment.Center
-            ) {
-              Text(
-                text = shop.ownerName.firstOrNull()?.uppercase() ?: "V",
-                color = BharatPurplePrimary,
-                fontWeight = FontWeight.ExtraBold,
-                fontSize = 22.sp
-              )
-            }
-            Spacer(modifier = Modifier.width(14.dp))
-            Column(modifier = Modifier.weight(1f)) {
-              Text(
-                text = shop.ownerName.ifBlank { userProfile.fullName.ifBlank { "Shop Owner" } },
-                fontWeight = FontWeight.Bold,
-                fontSize = 16.sp,
-                color = BharatTextPrimary
-              )
-              Text(
-                text = userProfile.email,
-                fontSize = 12.sp,
-                color = BharatTextSecondary
-              )
-              Spacer(modifier = Modifier.height(6.dp))
-              Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(
-                  imageVector = Icons.Default.Storefront,
-                  contentDescription = null,
-                  tint = BharatPurplePrimary,
-                  modifier = Modifier.size(12.dp)
-                )
-                Spacer(modifier = Modifier.width(4.dp))
+          Column(modifier = Modifier.padding(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+              Box(
+                modifier = Modifier
+                  .size(56.dp)
+                  .clip(CircleShape)
+                  .background(BharatPurpleContainer),
+                contentAlignment = Alignment.Center
+              ) {
+                if (shop.imageUrl.isNotBlank() && shop.imageUrl != "null") {
+                  AsyncImage(
+                    model = shop.imageUrl,
+                    contentDescription = "Shop photo",
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize()
+                  )
+                } else {
+                  Text(
+                    text = shop.name.firstOrNull()?.uppercase() ?: "S",
+                    color = BharatPurplePrimary,
+                    fontWeight = FontWeight.ExtraBold,
+                    fontSize = 22.sp
+                  )
+                }
+              }
+              Spacer(modifier = Modifier.width(14.dp))
+              Column(modifier = Modifier.weight(1f)) {
                 Text(
-                  text = shop.name,
-                  fontSize = 11.sp,
-                  fontWeight = FontWeight.SemiBold,
-                  color = BharatPurplePrimary
+                  text = shop.name.ifBlank { "Shop" },
+                  fontWeight = FontWeight.ExtraBold,
+                  fontSize = 17.sp,
+                  color = BharatTextPrimary,
+                  maxLines = 1
+                )
+                Text(
+                  text = shop.ownerName.ifBlank { userProfile.fullName.ifBlank { "Shop Owner" } },
+                  fontSize = 12.sp,
+                  color = BharatTextSecondary,
+                  maxLines = 1
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                  Icon(Icons.Default.Star, contentDescription = null, tint = Color(0xFFF59E0B), modifier = Modifier.size(12.dp))
+                  Spacer(modifier = Modifier.width(3.dp))
+                  Text(
+                    text = if (shop.ratingCount > 0)
+                      "%.1f · %d review%s".format(shop.rating, shop.ratingCount, if (shop.ratingCount == 1) "" else "s")
+                    else
+                      "No reviews yet",
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = BharatTextSecondary
+                  )
+                }
+              }
+              // Live status pill
+              val pillBg = if (isStoreOpen) Color(0xFFDCFCE7) else Color(0xFFFEE2E2)
+              val pillFg = if (isStoreOpen) Color(0xFF166534) else Color(0xFFDC2626)
+              Box(
+                modifier = Modifier
+                  .clip(RoundedCornerShape(10.dp))
+                  .background(pillBg)
+                  .padding(horizontal = 10.dp, vertical = 6.dp)
+              ) {
+                Text(
+                  text = if (isStoreOpen) "OPEN" else "CLOSED",
+                  color = pillFg,
+                  fontWeight = FontWeight.ExtraBold,
+                  fontSize = 10.sp
                 )
               }
             }
@@ -171,7 +224,8 @@ fun VendorProfileScreen(
         }
       }
 
-      // ── Action cards ──────────────────────────────────────────────────────
+      // ── Shop operations card (open/closed + packing time + auto-confirm) ──
+      item { SectionHeader("Shop operations") }
       item {
         Card(
           shape = RoundedCornerShape(16.dp),
@@ -179,38 +233,72 @@ fun VendorProfileScreen(
           border = BorderStroke(1.dp, Color(0xFFF1F5F9)),
           modifier = Modifier.fillMaxWidth()
         ) {
-          Row(modifier = Modifier.padding(16.dp)) {
-            Column(modifier = Modifier.weight(1f)) {
-              Text("TOTAL ORDERS", fontWeight = FontWeight.ExtraBold, fontSize = 10.sp, color = BharatTextSecondary, letterSpacing = 0.5.sp)
-              Spacer(modifier = Modifier.height(4.dp))
-              Text(text = "$totalOrders", fontWeight = FontWeight.ExtraBold, fontSize = 22.sp, color = BharatTextPrimary)
-              Text("Lifetime orders", fontSize = 11.sp, color = BharatTextSecondary)
-            }
-            Spacer(modifier = Modifier.width(12.dp))
-            Column(modifier = Modifier.weight(1f)) {
-              Text("LIFETIME REVENUE", fontWeight = FontWeight.ExtraBold, fontSize = 10.sp, color = BharatTextSecondary, letterSpacing = 0.5.sp)
-              Spacer(modifier = Modifier.height(4.dp))
-              Text(text = "\u20b9$totalRevenue", fontWeight = FontWeight.ExtraBold, fontSize = 22.sp, color = BharatTextPrimary)
-              Text("Verified settlements", fontSize = 11.sp, color = BharatTextSecondary)
+          Column(modifier = Modifier.padding(16.dp)) {
+            SettingSwitchRow(
+              title = "Accepting orders",
+              subtitle = if (isStoreOpen) "Customers can place orders" else "Shop is closed for new orders",
+              checked = isStoreOpen,
+              onCheckedChange = { onToggleStoreStatus() }
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+            SettingSwitchRow(
+              title = "Auto-confirm orders",
+              subtitle = if (autoConfirmOrders) "New orders skip manual accept" else "You'll accept each order manually",
+              checked = autoConfirmOrders,
+              onCheckedChange = { onToggleAutoConfirm() }
+            )
+            Spacer(modifier = Modifier.height(10.dp))
+            Text(
+              "Packing time",
+              fontWeight = FontWeight.Bold,
+              fontSize = 13.sp,
+              color = BharatTextPrimary
+            )
+            Text(
+              "How long you usually take to pack an order. Customers see this as their pickup ETA.",
+              fontSize = 11.sp,
+              color = BharatTextSecondary
+            )
+            Spacer(modifier = Modifier.height(10.dp))
+            // Equal-weight pill strip — each option gets 1/5 of the row so
+            // labels never wrap regardless of device width.
+            Row(
+              modifier = Modifier.fillMaxWidth(),
+              horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+              listOf(5, 10, 15, 20, 30).forEach { mins ->
+                val selected = packingTimeMinutes == mins
+                Box(
+                  modifier = Modifier
+                    .weight(1f)
+                    .height(38.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(if (selected) BharatPurplePrimary else Color(0xFFF1F5F9))
+                    .clickable { onUpdatePackingTime(mins) },
+                  contentAlignment = Alignment.Center
+                ) {
+                  Text(
+                    text = "$mins min",
+                    color = if (selected) Color.White else BharatTextPrimary,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 12.sp,
+                    maxLines = 1
+                  )
+                }
+              }
             }
           }
         }
       }
 
+      // ── Business ──────────────────────────────────────────────────────────
+      item { SectionHeader("Business") }
       item {
         ProfileActionCard(
-          icon = Icons.Default.Edit,
-          title = "Edit Personal Info",
-          subtitle = "Your name, mobile number and address",
-          onClick = { showEditPersonalDialog = true }
-        )
-      }
-      item {
-        ProfileActionCard(
-          icon = Icons.Default.Storefront,
-          title = "Edit Store Details",
-          subtitle = "Shop name, phone, address",
-          onClick = { showEditShopDialog = true }
+          icon = Icons.Default.Payment,
+          title = "Subscription plan",
+          subtitle = currentTierName?.let { "$it plan · Manage billing" } ?: "Choose or upgrade your plan",
+          onClick = onManagePlan
         )
       }
       item {
@@ -225,13 +313,78 @@ fun VendorProfileScreen(
           accentColor = Color(0xFFF59E0B)
         )
       }
+
+      // ── Shop account ──────────────────────────────────────────────────────
+      item { SectionHeader("Shop account") }
+      item {
+        ProfileActionCard(
+          icon = Icons.Default.Storefront,
+          title = "Edit shop details",
+          subtitle = "Shop name, phone, address",
+          onClick = { showEditShopDialog = true }
+        )
+      }
+      item {
+        ProfileActionCard(
+          icon = Icons.Default.Edit,
+          title = "Edit owner info",
+          subtitle = "Your name, mobile number and address",
+          onClick = { showEditPersonalDialog = true }
+        )
+      }
+
+      // ── Support ──────────────────────────────────────────────────────────
+      item { SectionHeader("Support") }
       item {
         ProfileActionCard(
           icon = Icons.Default.ChatBubble,
-          title = "Contact Support",
-          subtitle = "Chat with our team on WhatsApp",
+          title = "Chat with BreakQ support",
+          subtitle = "Message our team on WhatsApp",
           onClick = onSupportClick,
           accentColor = BharatGreen
+        )
+      }
+      item {
+        ProfileActionCard(
+          icon = Icons.AutoMirrored.Filled.HelpOutline,
+          title = "How BreakQ works",
+          subtitle = "For shop owners",
+          onClick = onOpenHowItWorks
+        )
+      }
+      item {
+        ProfileActionCard(
+          icon = Icons.Default.Timer,
+          title = "Cancellation policy",
+          subtitle = "When and why an order can be cancelled",
+          onClick = onOpenCancellationPolicy
+        )
+      }
+
+      // ── Legal ────────────────────────────────────────────────────────────
+      item { SectionHeader("Legal") }
+      item {
+        ProfileActionCard(
+          icon = Icons.Default.PrivacyTip,
+          title = "Privacy policy",
+          subtitle = "How we handle your data",
+          onClick = onOpenPrivacyPolicy
+        )
+      }
+      item {
+        ProfileActionCard(
+          icon = Icons.Default.Gavel,
+          title = "Terms of service",
+          subtitle = "Your agreement with BreakQ",
+          onClick = onOpenTerms
+        )
+      }
+      item {
+        ProfileActionCard(
+          icon = Icons.Default.Info,
+          title = "About BreakQ",
+          subtitle = "Version, credits, contact",
+          onClick = onOpenAboutUs
         )
       }
 
@@ -249,6 +402,14 @@ fun VendorProfileScreen(
           Text("Log Out", color = Color(0xFFDC2626), fontWeight = FontWeight.Bold)
         }
       }
+      item {
+        Text(
+          text = userProfile.email,
+          fontSize = 11.sp,
+          color = BharatTextMuted,
+          modifier = Modifier.fillMaxWidth().padding(top = 4.dp)
+        )
+      }
     }
   }
 
@@ -257,6 +418,11 @@ fun VendorProfileScreen(
     var owner by remember { mutableStateOf(shop.ownerName) }
     var addr by remember { mutableStateOf(shop.address) }
     var phone by remember { mutableStateOf(shop.phone) }
+    var newPhotoUri by remember { mutableStateOf<Uri?>(null) }
+    val photoPickerLauncher = rememberLauncherForActivityResult(
+      contract = ActivityResultContracts.PickVisualMedia(),
+      onResult = { uri -> if (uri != null) newPhotoUri = uri }
+    )
     // Uses the exact same forced-light styling as the dashboard's dialog so a
     // system dark theme cannot render dark text on a dark surface.
     AlertDialog(
@@ -267,6 +433,48 @@ fun VendorProfileScreen(
       title = { Text("Edit Store Details", fontWeight = FontWeight.Bold, color = BharatTextPrimary) },
       text = {
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+          // Shop hero image picker + preview. Tapping the tile opens the
+          // system photo picker; the chosen URI is uploaded on Save.
+          Box(
+            modifier = Modifier
+              .fillMaxWidth()
+              .height(140.dp)
+              .clip(RoundedCornerShape(12.dp))
+              .background(Color(0xFFF1F5F9))
+              .clickable {
+                photoPickerLauncher.launch(
+                  PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                )
+              },
+            contentAlignment = Alignment.Center
+          ) {
+            when {
+              newPhotoUri != null -> AsyncImage(
+                model = newPhotoUri,
+                contentDescription = "New shop photo",
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
+              )
+              shop.imageUrl.isNotBlank() && shop.imageUrl != "null" -> AsyncImage(
+                model = shop.imageUrl,
+                contentDescription = "Current shop photo",
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
+              )
+              else -> Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Icon(Icons.Default.CameraAlt, contentDescription = null, tint = BharatPurplePrimary)
+                Spacer(modifier = Modifier.height(4.dp))
+                Text("Tap to add shop photo", fontSize = 12.sp, color = BharatTextSecondary)
+              }
+            }
+          }
+          if (newPhotoUri != null) {
+            Text(
+              "New photo selected — will replace current shop image on Save.",
+              fontSize = 11.sp,
+              color = BharatPurplePrimary
+            )
+          }
           OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Shop Name") }, modifier = Modifier.fillMaxWidth(), colors = editStoreFieldColors())
           OutlinedTextField(value = owner, onValueChange = { owner = it }, label = { Text("Owner Name") }, modifier = Modifier.fillMaxWidth(), colors = editStoreFieldColors())
           OutlinedTextField(value = phone, onValueChange = { phone = it }, label = { Text("Phone") }, modifier = Modifier.fillMaxWidth(), colors = editStoreFieldColors())
@@ -277,6 +485,7 @@ fun VendorProfileScreen(
         Button(
           onClick = {
             onUpdateShop(shop.id, shop.copy(name = name, ownerName = owner, address = addr, phone = phone))
+            newPhotoUri?.let { onUpdateShopImage(shop.id, it) }
             showEditShopDialog = false
           },
           colors = ButtonDefaults.buttonColors(containerColor = BharatPurplePrimary)
@@ -361,6 +570,46 @@ private fun ProfileActionCard(
       }
       Icon(Icons.Default.ChevronRight, contentDescription = null, tint = BharatTextMuted)
     }
+  }
+}
+
+@Composable
+private fun SectionHeader(text: String) {
+  Text(
+    text = text.uppercase(),
+    fontWeight = FontWeight.ExtraBold,
+    fontSize = 11.sp,
+    color = BharatTextSecondary,
+    letterSpacing = 0.6.sp,
+    modifier = Modifier.padding(start = 4.dp, top = 8.dp)
+  )
+}
+
+@Composable
+private fun SettingSwitchRow(
+  title: String,
+  subtitle: String,
+  checked: Boolean,
+  onCheckedChange: (Boolean) -> Unit
+) {
+  Row(
+    modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
+    verticalAlignment = Alignment.CenterVertically
+  ) {
+    Column(modifier = Modifier.weight(1f)) {
+      Text(title, fontWeight = FontWeight.Bold, fontSize = 13.sp, color = BharatTextPrimary)
+      Text(subtitle, fontSize = 11.sp, color = BharatTextSecondary)
+    }
+    Switch(
+      checked = checked,
+      onCheckedChange = onCheckedChange,
+      colors = SwitchDefaults.colors(
+        checkedThumbColor = Color.White,
+        checkedTrackColor = BharatPurplePrimary,
+        uncheckedThumbColor = Color.White,
+        uncheckedTrackColor = Color(0xFFCBD5E1)
+      )
+    )
   }
 }
 

@@ -855,6 +855,7 @@ class GroceryViewModel(
       supabaseGroceryRepo.fetchShops(supabaseAuthService.currentAccessToken).onSuccess { liveShops ->
         _shops.value = liveShops
         _userLocation.value?.let { updateShopDistances(it) }
+        syncShopOperationsFromDb()
       }
 
       // Sync orders. Skip entirely if we don't know who the user is yet — a
@@ -1215,15 +1216,35 @@ class GroceryViewModel(
     val promoDiscount = promo?.computeDiscount(itemTotal) ?: 0
     val totalAmount = (itemTotal + handlingFee - discount - promoDiscount).coerceAtLeast(0)
 
-    val orderNum = (1000..9999).random()
-    val orderId = "KIR-8F$orderNum"
+    // Timestamp-based id so two orders placed a few seconds apart on the same
+    // device can never collide on the (1000..9999) random space we used to use.
+    // Customer-facing sequential number still comes from orders.order_number
+    // (server-side trigger) and shows via order.displayNumber.
+    val orderId = "KIR-" + System.currentTimeMillis().toString() +
+      "-" + (1000..9999).random()
 
     val timeFormat = SimpleDateFormat("h:mm a", Locale.getDefault())
     val currentTime = timeFormat.format(Date())
 
-    // Use the shopId of the first cart item as the order's shopId (RLS requires this
-    // so the vendor of that shop can see the order).
-    val shopId = items.firstOrNull()?.product?.shopId ?: "default_shop"
+    // Use the shopId of the first cart item as the order's shopId (RLS requires
+    // this so the vendor of that shop can see the order). If no items had a
+    // shopId, refuse to place — the order would otherwise land on
+    // "default_shop" and no vendor would ever see it.
+    val shopId = items.firstOrNull()?.product?.shopId?.takeIf { it.isNotBlank() && it != "default_shop" }
+    if (shopId == null) {
+      _authStatusMessage.value = "Couldn't place order: no shop selected. Open a shop and re-add items."
+      return null
+    }
+
+    // Snapshot the shop's real name/address from the shops list at order time
+    // so History and OrderDetails always show the correct shop, even if the
+    // customer never routed through the shop screen (activeStore may be blank).
+    val liveShop = _shops.value.firstOrNull { it.id == shopId }
+    val snapshotStoreName = liveShop?.name?.takeIf { it.isNotBlank() }
+      ?: _userProfile.value.activeStore.takeIf { it.isNotBlank() }
+      ?: "Your shop"
+    val snapshotStoreAddress = liveShop?.address?.takeIf { it.isNotBlank() }
+      ?: _userProfile.value.activeStoreAddress
 
     val newOrder = Order(
       id = orderId,
@@ -1233,8 +1254,8 @@ class GroceryViewModel(
       orderDate = "Today, $currentTime",
       status = OrderStatus.PLACED,
       expectedPickupTime = "Awaiting shop confirmation",
-      storeName = _userProfile.value.activeStore,
-      storeAddress = _userProfile.value.activeStoreAddress,
+      storeName = snapshotStoreName,
+      storeAddress = snapshotStoreAddress,
       timeline = buildOrderTimeline(
         currentStatus = OrderStatus.PLACED,
         orderDate = "Today, $currentTime",
@@ -1863,6 +1884,49 @@ class GroceryViewModel(
     }
   }
 
+  /**
+   * Uploads a new shop hero image from the Profile/Edit Shop flow, then
+   * PATCHes the URL onto the row and refreshes the local shops list.
+   * Emits progress via [_vendorUploadPercent] and errors via [_vendorUploadError]
+   * so existing UI hooks can render them without a new state channel.
+   */
+  fun updateShopImage(shopId: String, uri: Uri) {
+    val token = supabaseAuthService.currentAccessToken
+    viewModelScope.launch {
+      _vendorUploadPercent.value = 0
+      _vendorUploadState.value = VendorUploadState.UPLOADING_PHOTO
+      val bytes = getBytesFromUri(uri)
+      if (bytes == null) {
+        _vendorUploadError.value = "Couldn't read the photo from your gallery. Pick it again."
+        _vendorUploadState.value = VendorUploadState.IDLE
+        return@launch
+      }
+      // Cache-buster on the filename so the CDN and Coil can't serve a stale
+      // copy when the vendor uploads a replacement for the same shop.
+      val objectName = "${shopId}_shop_${System.currentTimeMillis()}.jpg"
+      supabaseGroceryRepo.uploadImage(
+        "shop-images", objectName, bytes, token
+      ) { pct -> _vendorUploadPercent.value = pct }
+        .onSuccess { newUrl ->
+          val current = _shops.value.firstOrNull { it.id == shopId }
+          val patched = (current ?: return@onSuccess).copy(imageUrl = newUrl)
+          _shops.update { list -> list.map { if (it.id == shopId) patched else it } }
+          supabaseGroceryRepo.updateShop(shopId, patched, token)
+            .onFailure {
+              _vendorUploadError.value = "Photo uploaded but shop update failed: ${it.message}"
+              android.util.Log.w("BreakQ", "updateShop after image upload failed", it)
+            }
+          _vendorUploadPercent.value = 100
+          _vendorUploadState.value = VendorUploadState.IDLE
+        }
+        .onFailure {
+          _vendorUploadError.value = "Shop photo didn't upload: ${it.message}"
+          _vendorUploadState.value = VendorUploadState.IDLE
+          android.util.Log.w("BreakQ", "Shop image upload from profile failed", it)
+        }
+    }
+  }
+
   fun verifyVendor(shopId: String, verified: Boolean) {
     val status = if (verified) VendorStatus.APPROVED else VendorStatus.PENDING
     _shops.update { list ->
@@ -1918,9 +1982,11 @@ class GroceryViewModel(
     _vendorUploadPercent.value = 0
     _vendorUploadState.value = VendorUploadState.UPLOADING_PHOTO
     viewModelScope.launch {
-      // 1. Upload the shop photo (required) and business proof (optional) to the
-      // `shop-documents` Storage bucket before creating the shop row, so the row
-      // is written once with its final URLs.
+      // 1. Upload the shop photo (required) and business proof (optional) before
+      // creating the shop row, so the row is written once with its final URLs.
+      // The shop hero photo goes to the public `shop-images` bucket (customers
+      // need to render it without a token); the business proof stays in the
+      // private `shop-documents` bucket (only admins should see it).
       var shopImageUrl: String? = null
       var proofUrl: String? = null
 
@@ -1930,7 +1996,7 @@ class GroceryViewModel(
           _vendorUploadError.value = "Couldn't read the shop photo from your gallery. Pick it again."
         } else {
           supabaseGroceryRepo.uploadImage(
-            "shop-documents", "${shopId}_shop.jpg", bytes, token
+            "shop-images", "${shopId}_shop.jpg", bytes, token
           ) { pct -> _vendorUploadPercent.value = pct }
             .onSuccess { shopImageUrl = it }
             .onFailure {
@@ -2446,19 +2512,64 @@ class GroceryViewModel(
   private val _autoConfirmOrders = MutableStateFlow(true)
   val autoConfirmOrders: StateFlow<Boolean> = _autoConfirmOrders.asStateFlow()
 
-  private val _packingTimeMinutes = MutableStateFlow(12)
+  private val _packingTimeMinutes = MutableStateFlow(15)
   val packingTimeMinutes: StateFlow<Int> = _packingTimeMinutes.asStateFlow()
 
+  /**
+   * Pull the vendor's own shop out of [_shops] and seed the operations
+   * toggles from it. Called after login + after every _shops emission so
+   * the UI never shows a default that disagrees with the DB.
+   */
+  private fun syncShopOperationsFromDb() {
+    val shopId = _userProfile.value.shopId ?: return
+    val shop = _shops.value.firstOrNull { it.id == shopId } ?: return
+    _isStoreOpen.value = shop.isOpen
+    _autoConfirmOrders.value = shop.autoConfirm
+    _packingTimeMinutes.value = shop.packingTime.coerceIn(5, 180)
+  }
+
   fun toggleStoreStatus() {
-    _isStoreOpen.update { !it }
+    val next = !_isStoreOpen.value
+    _isStoreOpen.value = next
+    persistShopOperations(isOpen = next)
   }
 
   fun toggleAutoConfirm() {
-    _autoConfirmOrders.update { !it }
+    val next = !_autoConfirmOrders.value
+    _autoConfirmOrders.value = next
+    persistShopOperations(autoConfirm = next)
   }
 
   fun updatePackingTime(minutes: Int) {
-    _packingTimeMinutes.value = minutes.coerceIn(5, 60)
+    val clamped = minutes.coerceIn(5, 180)
+    _packingTimeMinutes.value = clamped
+    persistShopOperations(packingTime = clamped)
+  }
+
+  /**
+   * Persist any subset of the operations toggles to `public.shops` and mirror
+   * the value into `_shops` so any customer/vendor screen that reads the shop
+   * picks up the change without a round-trip.
+   */
+  private fun persistShopOperations(
+    isOpen: Boolean? = null,
+    autoConfirm: Boolean? = null,
+    packingTime: Int? = null
+  ) {
+    val shopId = _userProfile.value.shopId ?: return
+    val current = _shops.value.firstOrNull { it.id == shopId } ?: return
+    val patched = current.copy(
+      isOpen = isOpen ?: current.isOpen,
+      autoConfirm = autoConfirm ?: current.autoConfirm,
+      packingTime = packingTime ?: current.packingTime
+    )
+    _shops.update { list -> list.map { if (it.id == shopId) patched else it } }
+    viewModelScope.launch {
+      supabaseGroceryRepo.updateShop(shopId, patched, supabaseAuthService.currentAccessToken)
+        .onFailure {
+          android.util.Log.w("BreakQ", "Shop operations save failed", it)
+        }
+    }
   }
 
   fun updateOrderStatus(orderId: String, newStatus: OrderStatus) {

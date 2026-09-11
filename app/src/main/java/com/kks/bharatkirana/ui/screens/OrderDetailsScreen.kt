@@ -13,6 +13,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Call
+import androidx.compose.material.icons.filled.Campaign
 import androidx.compose.material.icons.filled.DirectionsCar
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
@@ -209,7 +210,6 @@ fun OrderDetailsScreen(
         verticalArrangement = Arrangement.spacedBy(12.dp)
       ) {
         StatusHeroCard(order = order)
-        TimelineCard(order = order)
 
         val shopLat = shop?.lat ?: 0.0
         val shopLng = shop?.lng ?: 0.0
@@ -225,11 +225,18 @@ fun OrderDetailsScreen(
           )
         }
 
+        // Reserved promotional area. Rendered as a subtle placeholder card so
+        // the layout ships with the right spacing / height; drop-in an ad
+        // banner (image + CTA) here later without redesigning the screen.
+        PromoAdSlot()
+
+        TimelineCard(order = order)
+
         StoreDetailsCard(
           shop = shop,
           fallbackName = order.storeName,
           fallbackAddress = order.storeAddress,
-          pickupWindow = order.expectedPickupTime,
+          pickupWindow = com.kks.bharatkirana.data.model.computePickupEtaFor(order, shop),
           distanceLabel = shopDistanceLabel,
           onCall = { phone ->
             val intent = android.content.Intent(android.content.Intent.ACTION_DIAL, "tel:$phone".toUri())
@@ -343,7 +350,33 @@ private fun StatusHeroCard(order: Order) {
         trackColor = Color(0xFFF1F5F9),
         modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(4.dp))
       )
+      // Real per-status timestamps from the DB (Task 1 migration). Only render
+      // rows that actually have a stamped time — never a fake "Today, <now>".
+      val placedAt    = com.kks.bharatkirana.data.model.formatOrderTimestampPretty(order.createdAt) ?: order.orderDate
+      val confirmedAt = com.kks.bharatkirana.data.model.formatOrderTimestampPretty(order.confirmedAt)
+      val readyAt     = com.kks.bharatkirana.data.model.formatOrderTimestampPretty(order.readyAt)
+      val completedAt = com.kks.bharatkirana.data.model.formatOrderTimestampPretty(order.completedAt)
+      val cancelledAt = com.kks.bharatkirana.data.model.formatOrderTimestampPretty(order.cancelledAt)
+      Spacer(modifier = Modifier.height(12.dp))
+      Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        HeroTimestampRow("Placed", placedAt)
+        confirmedAt?.let { HeroTimestampRow("Accepted", it) }
+        readyAt?.let { HeroTimestampRow("Ready for pickup", it) }
+        completedAt?.let { HeroTimestampRow("Picked up", it) }
+        cancelledAt?.let { HeroTimestampRow("Cancelled", it) }
+      }
     }
+  }
+}
+
+@Composable
+private fun HeroTimestampRow(label: String, value: String) {
+  Row(
+    modifier = Modifier.fillMaxWidth(),
+    horizontalArrangement = Arrangement.SpaceBetween
+  ) {
+    Text(label, fontSize = 11.sp, color = BharatTextSecondary)
+    Text(value, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = BharatTextPrimary)
   }
 }
 
@@ -400,7 +433,9 @@ private fun TimelineCard(order: Order) {
     Column(modifier = Modifier.padding(18.dp)) {
       Text("Order Progress", fontWeight = FontWeight.Bold, fontSize = 15.sp, color = BharatTextPrimary)
       Spacer(modifier = Modifier.height(12.dp))
-      OrderTimelineView(timeline = order.timeline)
+      // Use the REAL per-status timestamps from the DB (Task 1 migration)
+      // instead of the client-computed "Today, <now>" placeholders.
+      OrderTimelineView(timeline = com.kks.bharatkirana.data.model.buildOrderTimelineFor(order))
     }
   }
 }
@@ -790,6 +825,64 @@ private fun RatingCard(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(12.dp)
       ) { Text("Submit Rating", fontWeight = FontWeight.Bold, color = Color.White) }
+    }
+  }
+}
+
+/**
+ * Reserved area between the live-status header and the order timeline where a
+ * promotional banner will render once ads ship. Kept as a neutral placeholder
+ * so the layout is stable now and can be replaced without redesigning the
+ * screen — swap the inner Column for the ad content.
+ */
+@Composable
+private fun PromoAdSlot() {
+  Card(
+    shape = RoundedCornerShape(16.dp),
+    colors = CardDefaults.cardColors(containerColor = Color(0xFFF8F1FF)),
+    border = BorderStroke(1.dp, Color(0xFFEDE5F5)),
+    modifier = Modifier
+      .fillMaxWidth()
+      .height(96.dp)
+  ) {
+    Row(
+      modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 12.dp),
+      verticalAlignment = Alignment.CenterVertically
+    ) {
+      Box(
+        modifier = Modifier
+          .size(56.dp)
+          .clip(RoundedCornerShape(12.dp))
+          .background(BharatPurpleContainer),
+        contentAlignment = Alignment.Center
+      ) {
+        Icon(
+          imageVector = Icons.Default.Campaign,
+          contentDescription = null,
+          tint = BharatPurplePrimary
+        )
+      }
+      Spacer(modifier = Modifier.width(12.dp))
+      Column(modifier = Modifier.weight(1f)) {
+        Text(
+          text = "Sponsored",
+          fontSize = 10.sp,
+          fontWeight = FontWeight.Bold,
+          color = BharatTextSecondary
+        )
+        Text(
+          text = "Promotions from BreakQ show up here",
+          fontSize = 13.sp,
+          fontWeight = FontWeight.SemiBold,
+          color = BharatTextPrimary
+        )
+        Text(
+          text = "Discover offers while you wait for your order",
+          fontSize = 11.sp,
+          color = BharatTextSecondary,
+          maxLines = 1
+        )
+      }
     }
   }
 }

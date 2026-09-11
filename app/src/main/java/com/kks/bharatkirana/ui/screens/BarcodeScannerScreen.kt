@@ -51,7 +51,8 @@ fun BarcodeScannerScreen(
   modifier: Modifier = Modifier,
   title: String = "Scan Product Barcode",
   hint: String = "Point at the barcode on the product packet",
-  subHint: String = "Hold steady \u2014 works with EAN, UPC, QR codes"
+  subHint: String = "Hold steady \u2014 works with EAN, UPC, QR codes",
+  qrMode: Boolean = false
 ) {
   val context = LocalContext.current
   var hasPermission by remember {
@@ -109,17 +110,25 @@ fun BarcodeScannerScreen(
         )
       }
 
-      // Middle scan window (visual only; ML Kit reads the entire frame)
+      // Middle scan window (visual only; ML Kit reads the entire frame). In
+      // qrMode we draw a square with corner brackets like a modern QR reader
+      // instead of the wide barcode rectangle.
       Box(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 40.dp),
+        modifier = Modifier
+          .fillMaxWidth()
+          .padding(horizontal = if (qrMode) 32.dp else 40.dp),
         contentAlignment = Alignment.Center
       ) {
-        Box(
-          modifier = Modifier
-            .fillMaxWidth()
-            .aspectRatio(1.6f)
-            .border(3.dp, Color.White, RoundedCornerShape(16.dp))
-        )
+        if (qrMode) {
+          QrFrame(color = Color.White)
+        } else {
+          Box(
+            modifier = Modifier
+              .fillMaxWidth()
+              .aspectRatio(1.6f)
+              .border(3.dp, Color.White, RoundedCornerShape(16.dp))
+          )
+        }
       }
 
       // Instructions
@@ -232,6 +241,57 @@ private fun CameraPreviewWithBarcode(onBarcodeScanned: (String) -> Unit) {
   if (handled) {
     Box(modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.4f)), contentAlignment = Alignment.Center) {
       CircularProgressIndicator(color = Color.White)
+    }
+  }
+}
+
+// Square QR-style frame with corner brackets. Renders larger than the barcode
+// rectangle so a customer's phone screen sits comfortably inside.
+@Composable
+private fun QrFrame(color: Color) {
+  val brackets = 34.dp
+  val stroke = 5.dp
+  Box(
+    modifier = Modifier
+      .fillMaxWidth()
+      .aspectRatio(1f)
+  ) {
+    // Top-left
+    Box(
+      modifier = Modifier
+        .align(Alignment.TopStart)
+        .size(brackets)
+        .background(color = androidx.compose.ui.graphics.Color.Transparent)
+    ) {
+      Box(modifier = Modifier.fillMaxWidth().height(stroke).background(color))
+      Box(modifier = Modifier.fillMaxHeight().width(stroke).background(color))
+    }
+    // Top-right
+    Box(
+      modifier = Modifier
+        .align(Alignment.TopEnd)
+        .size(brackets)
+    ) {
+      Box(modifier = Modifier.fillMaxWidth().height(stroke).background(color))
+      Box(modifier = Modifier.align(Alignment.TopEnd).fillMaxHeight().width(stroke).background(color))
+    }
+    // Bottom-left
+    Box(
+      modifier = Modifier
+        .align(Alignment.BottomStart)
+        .size(brackets)
+    ) {
+      Box(modifier = Modifier.align(Alignment.BottomStart).fillMaxWidth().height(stroke).background(color))
+      Box(modifier = Modifier.fillMaxHeight().width(stroke).background(color))
+    }
+    // Bottom-right
+    Box(
+      modifier = Modifier
+        .align(Alignment.BottomEnd)
+        .size(brackets)
+    ) {
+      Box(modifier = Modifier.align(Alignment.BottomEnd).fillMaxWidth().height(stroke).background(color))
+      Box(modifier = Modifier.align(Alignment.TopEnd).fillMaxHeight().width(stroke).background(color))
     }
   }
 }

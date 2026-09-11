@@ -449,7 +449,8 @@ fun MainScreen(
       is AppScreen.OrderPlaced -> {
         val order = orders.find { it.id == screen.orderId } ?: orders.firstOrNull()
         if (order != null) {
-          val shopDistance = shops.firstOrNull { it.id == order.shopId }?.distance
+          val orderShop = shops.firstOrNull { it.id == order.shopId }
+          val shopDistance = orderShop?.distance
           OrderPlacedScreen(
             order = order,
             onViewOrdersClick = {
@@ -462,7 +463,8 @@ fun MainScreen(
               viewModel.setTab(MainTab.HOME)
               viewModel.navigateTo(AppScreen.Main)
             },
-            shopDistanceLabel = shopDistance
+            shopDistanceLabel = shopDistance,
+            shop = orderShop
           )
         }
       }
@@ -972,12 +974,22 @@ fun MainScreen(
               viewModel.updateProfile(name, email, mobile, address)
             },
             onUpdateShop = { id, shop -> viewModel.updateShopDetails(id, shop) },
+            onUpdateShopImage = { id, uri -> viewModel.updateShopImage(id, uri) },
             onManagePlan = { viewModel.navigateTo(AppScreen.Subscription) },
             onOpenReviews = { viewModel.navigateTo(AppScreen.VendorReviews) },
             onSupportClick = { viewModel.openSupportWhatsApp() },
             onLogout = { viewModel.logout() },
-            totalOrders = orders.count { it.shopId == vendorShop.id },
-            totalRevenue = orders.filter { it.shopId == vendorShop.id }.sumOf { it.totalAmount }
+            isStoreOpen = isStoreOpen,
+            autoConfirmOrders = autoConfirmOrders,
+            packingTimeMinutes = packingTimeMinutes,
+            onToggleStoreStatus = { viewModel.toggleStoreStatus() },
+            onToggleAutoConfirm = { viewModel.toggleAutoConfirm() },
+            onUpdatePackingTime = { mins -> viewModel.updatePackingTime(mins) },
+            onOpenHowItWorks = { viewModel.navigateTo(AppScreen.HowBreakQWorks) },
+            onOpenCancellationPolicy = { viewModel.navigateTo(AppScreen.CancellationPolicy) },
+            onOpenPrivacyPolicy = { viewModel.navigateTo(AppScreen.PrivacyPolicy) },
+            onOpenTerms = { viewModel.navigateTo(AppScreen.TermsOfService) },
+            onOpenAboutUs = { viewModel.navigateTo(AppScreen.AboutUs) }
           )
         }
       }

@@ -190,107 +190,182 @@ fun OrderCard(
     elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
   ) {
     Column(modifier = Modifier.padding(16.dp)) {
+      // Shop identity + terminal-status pill. Uses the real per-status
+      // timestamp from the DB (Task 1 migration) — no more inferred "now".
       Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
+        verticalAlignment = Alignment.Top
       ) {
-        Column {
-          Text(
-            text = "Order ${order.displayNumber}",
-            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-            color = BharatTextPrimary
-          )
-          Text(
-            text = order.orderDate,
-            style = MaterialTheme.typography.bodySmall,
-            color = BharatTextMuted
-          )
-        }
-
-        Surface(
-          shape = RoundedCornerShape(10.dp),
-          color = when (order.status) {
-            OrderStatus.COMPLETED -> Color(0xFFF1F5F9)
-            OrderStatus.READY_FOR_PICKUP -> Color(0xFFF0FDF4)
-            else -> BharatPurpleContainer
-          }
-        ) {
-          Text(
-            text = order.status.label,
-            color = when (order.status) {
-              OrderStatus.COMPLETED -> BharatTextSecondary
-              OrderStatus.READY_FOR_PICKUP -> Color(0xFF166534)
-              else -> BharatPurplePrimary
-            },
-            fontWeight = FontWeight.ExtraBold,
-            fontSize = 11.sp,
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
-          )
-        }
-      }
-
-      Spacer(modifier = Modifier.height(16.dp))
-
-      LazyRow(
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-        modifier = Modifier.fillMaxWidth()
-      ) {
-        items(order.items) { cartItem ->
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
           Box(
             modifier = Modifier
-              .size(56.dp)
-              .clip(RoundedCornerShape(12.dp))
-              .background(Color(0xFFF8FAFC)),
+              .size(44.dp)
+              .clip(RoundedCornerShape(10.dp))
+              .background(BharatPurpleContainer),
             contentAlignment = Alignment.Center
           ) {
-            if (cartItem.product.localImageRes != null) {
-              Image(
-                painter = painterResource(id = cartItem.product.localImageRes),
-                contentDescription = null,
-                modifier = Modifier.fillMaxSize(),
-                contentScale = ContentScale.Crop
+            Icon(
+              imageVector = Icons.Default.Storefront,
+              contentDescription = null,
+              tint = BharatPurplePrimary,
+              modifier = Modifier.size(22.dp)
+            )
+          }
+          Spacer(modifier = Modifier.width(12.dp))
+          Column(modifier = Modifier.weight(1f)) {
+            Text(
+              text = order.storeName.ifBlank { "Shop" },
+              fontWeight = FontWeight.Bold,
+              fontSize = 15.sp,
+              color = BharatTextPrimary,
+              maxLines = 1
+            )
+            if (order.storeAddress.isNotBlank()) {
+              Text(
+                text = order.storeAddress,
+                fontSize = 11.sp,
+                color = BharatTextSecondary,
+                maxLines = 1
               )
-            } else {
-              Icon(Icons.Default.ShoppingCart, contentDescription = null, tint = BharatPurpleAccent, modifier = Modifier.size(24.dp))
             }
           }
         }
+        val statusColor = when (order.status) {
+          OrderStatus.COMPLETED -> BharatGreen
+          OrderStatus.CANCELLED -> Color(0xFFDC2626)
+          OrderStatus.READY_FOR_PICKUP -> Color(0xFF166534)
+          else -> BharatPurplePrimary
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+          if (order.status == OrderStatus.COMPLETED) {
+            Icon(
+              imageVector = Icons.Default.CheckCircle,
+              contentDescription = null,
+              tint = statusColor,
+              modifier = Modifier.size(14.dp)
+            )
+            Spacer(modifier = Modifier.width(4.dp))
+          }
+          Text(
+            text = order.status.label,
+            color = statusColor,
+            fontWeight = FontWeight.ExtraBold,
+            fontSize = 12.sp
+          )
+        }
       }
 
-      Spacer(modifier = Modifier.height(16.dp))
+      Spacer(modifier = Modifier.height(12.dp))
       HorizontalDivider(color = Color(0xFFF1F5F9))
-      Spacer(modifier = Modifier.height(16.dp))
+      Spacer(modifier = Modifier.height(10.dp))
 
+      // Line items summary (top 3, then "+N more") — matches Swiggy card style.
+      order.items.take(3).forEach { cartItem ->
+        Row(modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
+          Text(
+            text = "${cartItem.quantity}x  ${cartItem.product.name.ifBlank { "Item" }}",
+            fontSize = 13.sp,
+            color = BharatTextPrimary,
+            modifier = Modifier.weight(1f),
+            maxLines = 1
+          )
+        }
+      }
+      if (order.items.size > 3) {
+        Text(
+          text = "+${order.items.size - 3} more",
+          fontSize = 11.sp,
+          color = BharatTextSecondary,
+          modifier = Modifier.padding(top = 2.dp)
+        )
+      }
+      if (order.items.isEmpty()) {
+        Text(
+          text = "${order.items.size} items",
+          fontSize = 12.sp,
+          color = BharatTextSecondary
+        )
+      }
+
+      Spacer(modifier = Modifier.height(12.dp))
+
+      OutlinedButton(
+        onClick = onReorder,
+        shape = RoundedCornerShape(12.dp),
+        border = androidx.compose.foundation.BorderStroke(1.dp, BharatPurplePrimary),
+        modifier = Modifier.fillMaxWidth(),
+        contentPadding = PaddingValues(vertical = 10.dp)
+      ) {
+        Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp), tint = BharatPurplePrimary)
+        Spacer(modifier = Modifier.width(6.dp))
+        Text("Reorder", fontWeight = FontWeight.Bold, color = BharatPurplePrimary)
+      }
+
+      Spacer(modifier = Modifier.height(10.dp))
       Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
       ) {
-        Column {
-          Text(
-            text = "₹${order.totalAmount}",
-            style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.ExtraBold),
-            color = BharatTextPrimary
-          )
-          Text(
-            text = "${order.items.size} items",
-            style = MaterialTheme.typography.bodySmall,
-            color = BharatTextSecondary
-          )
-        }
-
-        OutlinedButton(
-          onClick = onReorder,
-          shape = RoundedCornerShape(12.dp),
-          border = androidx.compose.foundation.BorderStroke(1.dp, BharatPurplePrimary),
-          contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)
-        ) {
-          Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
-          Spacer(modifier = Modifier.width(6.dp))
-          Text("Reorder", fontWeight = FontWeight.Bold, color = BharatPurplePrimary)
-        }
+        Text(
+          text = orderFooterLabel(order),
+          fontSize = 11.sp,
+          color = BharatTextSecondary
+        )
+        Text(
+          text = "Total ₹${order.totalAmount}",
+          fontSize = 12.sp,
+          fontWeight = FontWeight.Bold,
+          color = BharatTextPrimary
+        )
       }
     }
   }
+}
+
+/**
+ * Footer text for the past-order card. Prefers the real per-status timestamp
+ * from the row so we no longer show a fake "Today, <now>" for a delivered or
+ * cancelled order. Falls back to `orderDate` (the placement label) when the
+ * relevant status timestamp is missing (older rows).
+ */
+private fun orderFooterLabel(order: Order): String {
+  val terminalIso = when (order.status) {
+    OrderStatus.COMPLETED -> order.completedAt
+    OrderStatus.CANCELLED -> order.cancelledAt
+    OrderStatus.READY_FOR_PICKUP -> order.readyAt
+    OrderStatus.PREPARING -> order.preparingAt
+    OrderStatus.CONFIRMED -> order.confirmedAt
+    OrderStatus.PLACED -> order.createdAt.takeIf { it.isNotBlank() }
+  }
+  val prettyTime = terminalIso?.let { formatIsoPretty(it) }
+  val prefix = when (order.status) {
+    OrderStatus.COMPLETED -> "Picked up"
+    OrderStatus.CANCELLED -> "Cancelled"
+    OrderStatus.READY_FOR_PICKUP -> "Ready"
+    OrderStatus.PREPARING -> "Preparing"
+    OrderStatus.CONFIRMED -> "Confirmed"
+    OrderStatus.PLACED -> "Placed"
+  }
+  return if (prettyTime != null) "$prefix: $prettyTime" else "$prefix: ${order.orderDate}"
+}
+
+/** Best-effort ISO-8601 → "Sep 8, 9:57 PM" formatter. */
+private fun formatIsoPretty(iso: String): String? {
+  if (iso.isBlank()) return null
+  val patterns = listOf(
+    "yyyy-MM-dd'T'HH:mm:ss.SSSSSSXXX",
+    "yyyy-MM-dd'T'HH:mm:ss.SSSXXX",
+    "yyyy-MM-dd'T'HH:mm:ssXXX",
+    "yyyy-MM-dd'T'HH:mm:ss'Z'"
+  )
+  val date = patterns.firstNotNullOfOrNull { p ->
+    try {
+      java.text.SimpleDateFormat(p, java.util.Locale.US).apply {
+        timeZone = java.util.TimeZone.getTimeZone("UTC")
+      }.parse(iso)
+    } catch (_: Exception) { null }
+  } ?: return null
+  return java.text.SimpleDateFormat("MMM d, h:mm a", java.util.Locale.getDefault()).format(date)
 }

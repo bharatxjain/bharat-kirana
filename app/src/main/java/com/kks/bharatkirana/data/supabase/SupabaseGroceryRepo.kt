@@ -788,12 +788,19 @@ class SupabaseGroceryRepo(
               totalAmount = totalAmount,
               orderDate = orderDate,
               status = status,
-              expectedPickupTime = "Today by 5:30 PM",
+              // Placeholder — the ViewModel/UI derives the real ETA from
+              // (confirmed_at + shop.packingTime) at render time.
+              expectedPickupTime = "",
               qrCodePayload = qrCodePayload,
               timeline = timeline,
               customerName = customerName,
               customerMobile = customerMobile,
               createdAt = createdAt,
+              confirmedAt = if (obj.isNull("confirmed_at")) null else obj.optString("confirmed_at").takeIf { it.isNotBlank() },
+              preparingAt = if (obj.isNull("preparing_at")) null else obj.optString("preparing_at").takeIf { it.isNotBlank() },
+              readyAt     = if (obj.isNull("ready_at"))     null else obj.optString("ready_at").takeIf { it.isNotBlank() },
+              completedAt = if (obj.isNull("completed_at")) null else obj.optString("completed_at").takeIf { it.isNotBlank() },
+              cancelledAt = if (obj.isNull("cancelled_at")) null else obj.optString("cancelled_at").takeIf { it.isNotBlank() },
               orderNumber = orderNumber,
               pickupToken = pickupToken
             )
@@ -1093,6 +1100,8 @@ class SupabaseGroceryRepo(
           put("years_in_business", shop.yearsInBusiness)
           put("is_partner", false)
           put("accepting_orders", shop.isOpen)
+          put("auto_confirm", shop.autoConfirm)
+          put("packing_time", shop.packingTime.coerceIn(5, 180))
           put("open_time", shop.openTime)
           put("close_time", shop.closeTime)
           // New shops start pending. An admin (web panel) flips this to
@@ -1142,6 +1151,14 @@ class SupabaseGroceryRepo(
           put("open_time", shop.openTime)
           put("close_time", shop.closeTime)
           put("is_partner", shop.isPartner)
+          put("packing_time", shop.packingTime.coerceIn(5, 180))
+          put("auto_confirm", shop.autoConfirm)
+          // Persist the shop hero image URL so a vendor edit that includes a
+          // new photo actually reaches the DB. Skip when blank so we don't
+          // accidentally wipe an existing image with an empty string.
+          if (shop.imageUrl.isNotBlank() && shop.imageUrl != "null") {
+            put("image_url", shop.imageUrl)
+          }
         }
 
         val request = baseRequestBuilder(url, accessToken)
@@ -1188,7 +1205,10 @@ class SupabaseGroceryRepo(
           throw Exception("Storage upload failed (${response.code}): $errBody")
         }
         onProgress(100)
-        "${SupabaseConfig.storageUrl}/public/$bucket/$imageName"
+        // Supabase's public URL for a public bucket. The old code produced
+        // "…/storage/v1/public/…" which is missing the /object/ segment, so
+        // every uploaded shop / product image URL was a permanent 404.
+        "${SupabaseConfig.storageUrl}/object/public/$bucket/$imageName"
       }
     }
 
@@ -1319,11 +1339,13 @@ class SupabaseGroceryRepo(
               ratingCount = obj.optInt("rating_count", 0),
               yearsInBusiness = obj.optInt("years_in_business", 0),
               deliveryTime = obj.optString("delivery_time", "20-30 mins"),
-              imageUrl = obj.optString("image_url", ""),
+              imageUrl = if (obj.isNull("image_url")) "" else obj.optString("image_url", ""),
               isPartner = obj.optBoolean("is_partner", false),
               primaryCategory = obj.optString("primary_category", "Grocery"),
               status = vendorStatus,
               isOpen = obj.optBoolean("accepting_orders", true),
+              autoConfirm = obj.optBoolean("auto_confirm", true),
+              packingTime = obj.optInt("packing_time", 15).coerceIn(5, 180),
               openTime = obj.optString("open_time", "08:00"),
               closeTime = obj.optString("close_time", "21:00")
             )
@@ -1482,10 +1504,10 @@ class SupabaseGroceryRepo(
         val body = response.body?.string() ?: ""
         if (!response.isSuccessful) throw Exception("Failed to fetch shop reviews: HTTP ${response.code}")
         val array = JSONArray(body)
-        val list = mutableListOf<com.kks.bharatkirana.data.model.ShopRating>()
+        val ratings = mutableListOf<com.kks.bharatkirana.data.model.ShopRating>()
         for (i in 0 until array.length()) {
           val o = array.optJSONObject(i) ?: continue
-          list.add(
+          ratings.add(
             com.kks.bharatkirana.data.model.ShopRating(
               id = o.optString("id"),
               orderId = o.optString("order_id"),
@@ -1495,7 +1517,33 @@ class SupabaseGroceryRepo(
             )
           )
         }
-        list
+        // Second call to resolve the customer-facing order number for each
+        // review row. shop_ratings has no FK to orders, so PostgREST embed
+        // isn't available — we batch-fetch instead.
+        val orderIds = ratings.map { it.orderId }.filter { it.isNotBlank() }.distinct()
+        if (orderIds.isNotEmpty()) {
+          val idsParam = orderIds.joinToString(",")
+          val ordersUrl = "${SupabaseConfig.restUrl}/orders" +
+            "?id=in.($idsParam)" +
+            "&select=id,order_number"
+          val orderRequest = baseRequestBuilder(ordersUrl, accessToken).get().build()
+          val orderResponse = client.newCall(orderRequest).execute()
+          val orderBody = orderResponse.body?.string() ?: ""
+          if (orderResponse.isSuccessful) {
+            val numById = mutableMapOf<String, Int>()
+            val ordersArr = JSONArray(orderBody)
+            for (i in 0 until ordersArr.length()) {
+              val obj = ordersArr.optJSONObject(i) ?: continue
+              val id = obj.optString("id")
+              val n = obj.optInt("order_number", -1)
+              if (id.isNotBlank() && n > 0) numById[id] = n
+            }
+            return@runCatching ratings.map { r ->
+              r.copy(orderNumber = numById[r.orderId])
+            }
+          }
+        }
+        ratings
       }
     }
 

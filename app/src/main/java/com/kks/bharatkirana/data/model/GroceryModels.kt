@@ -4,6 +4,7 @@ import androidx.annotation.DrawableRes
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.TimeZone
 
 /**
  * Signals to the vendor that the product they're trying to list is already in
@@ -298,6 +299,56 @@ fun computePickupEta(packingMinutes: Int, now: Date = Date()): String {
   return "Today by ${SimpleDateFormat("h:mm a", Locale.getDefault()).format(eta)}"
 }
 
+/**
+ * Parse an ISO-8601 Postgres timestamptz. Returns null when blank or unparseable.
+ */
+fun parseOrderIsoInstant(iso: String?): Date? {
+  if (iso.isNullOrBlank()) return null
+  val patterns = listOf(
+    "yyyy-MM-dd'T'HH:mm:ss.SSSSSSXXX",
+    "yyyy-MM-dd'T'HH:mm:ss.SSSXXX",
+    "yyyy-MM-dd'T'HH:mm:ssXXX",
+    "yyyy-MM-dd'T'HH:mm:ss'Z'",
+    "yyyy-MM-dd'T'HH:mm:ss"
+  )
+  return patterns.firstNotNullOfOrNull { p ->
+    try {
+      SimpleDateFormat(p, Locale.US).apply {
+        timeZone = TimeZone.getTimeZone("UTC")
+      }.parse(iso)
+    } catch (_: Exception) { null }
+  }
+}
+
+/**
+ * Single source of truth for what pickup-time copy the customer sees on the
+ * OrderPlaced / Track Order / OrderDetails screens. Never returns a hardcoded
+ * "5:30 PM" — always derived from real DB timestamps and the vendor's
+ * configured `shop.packingTime`.
+ *
+ *  - PLACED               → "Awaiting shop confirmation" (or "~N mins after confirmation")
+ *  - CONFIRMED / PREPARING → real `confirmed_at + packingTime` (persists correctly
+ *                             even if the app reopens hours later — anchored to
+ *                             the confirmation instant, not "now")
+ *  - READY_FOR_PICKUP     → "Ready now — head to the shop"
+ *  - COMPLETED            → "Picked up at <completed_at>"
+ *  - CANCELLED            → "Order cancelled"
+ */
+fun computePickupEtaFor(order: Order, shop: Shop?): String {
+  val packing = (shop?.packingTime ?: 15).coerceIn(5, 180)
+  return when (order.status) {
+    OrderStatus.PLACED -> "Usually ready in ~$packing min after shop confirms"
+    OrderStatus.CONFIRMED, OrderStatus.PREPARING -> {
+      val confirmedInstant = parseOrderIsoInstant(order.confirmedAt) ?: Date()
+      computePickupEta(packing, confirmedInstant)
+    }
+    OrderStatus.READY_FOR_PICKUP -> "Ready now — head to the shop"
+    OrderStatus.COMPLETED -> formatOrderTimestampPretty(order.completedAt)
+      ?.let { "Picked up at $it" } ?: "Picked up"
+    OrderStatus.CANCELLED -> "Order cancelled"
+  }
+}
+
 // Round 6: single source of truth for how the 5-step customer timeline looks
 // at any given backend status. Called both when the customer inserts an order
 // (initial = PLACED) and when the Realtime UPDATE arrives after a vendor action.
@@ -334,6 +385,78 @@ fun buildOrderTimeline(currentStatus: OrderStatus, orderDate: String, nowLabel: 
   }
 }
 
+/**
+ * Best-effort ISO-8601 (Postgres timestamptz) → "Sep 8, 9:57 PM" formatter.
+ * Returns null when the input is blank or unparseable so callers can fall
+ * back to a placeholder rather than showing "1970-01-01".
+ */
+fun formatOrderTimestampPretty(iso: String?): String? {
+  if (iso.isNullOrBlank()) return null
+  val patterns = listOf(
+    "yyyy-MM-dd'T'HH:mm:ss.SSSSSSXXX",
+    "yyyy-MM-dd'T'HH:mm:ss.SSSXXX",
+    "yyyy-MM-dd'T'HH:mm:ssXXX",
+    "yyyy-MM-dd'T'HH:mm:ss'Z'",
+    "yyyy-MM-dd'T'HH:mm:ss"
+  )
+  val parsed: Date? = patterns.firstNotNullOfOrNull { p ->
+    try {
+      SimpleDateFormat(p, Locale.US).apply {
+        timeZone = TimeZone.getTimeZone("UTC")
+      }.parse(iso)
+    } catch (_: Exception) { null }
+  } ?: return null
+  return SimpleDateFormat("MMM d, h:mm a", Locale.getDefault()).format(parsed)
+}
+
+/**
+ * Builds the 5-step customer timeline from the row's REAL per-status
+ * timestamps (populated by the trg_stamp_order_status_at trigger). Falls back
+ * to placeholder copy for future steps and for statuses that predate the
+ * timestamps migration (existing rows). Prefer this over [buildOrderTimeline]
+ * at render time so users see the actual moment the vendor confirmed / packed
+ * / marked ready.
+ */
+fun buildOrderTimelineFor(order: Order): List<OrderTimelineItem> {
+  val stamps: Map<OrderStatus, String?> = mapOf(
+    OrderStatus.PLACED           to (formatOrderTimestampPretty(order.createdAt) ?: order.orderDate),
+    OrderStatus.CONFIRMED        to formatOrderTimestampPretty(order.confirmedAt),
+    OrderStatus.PREPARING        to formatOrderTimestampPretty(order.preparingAt),
+    OrderStatus.READY_FOR_PICKUP to formatOrderTimestampPretty(order.readyAt),
+    OrderStatus.COMPLETED        to formatOrderTimestampPretty(order.completedAt),
+    OrderStatus.CANCELLED        to formatOrderTimestampPretty(order.cancelledAt)
+  )
+  if (order.status == OrderStatus.CANCELLED) {
+    return listOf(
+      OrderTimelineItem(OrderStatus.PLACED,    stamps[OrderStatus.PLACED]    ?: order.orderDate, isCompleted = true),
+      OrderTimelineItem(OrderStatus.CANCELLED, stamps[OrderStatus.CANCELLED] ?: "Cancelled",     isCompleted = true, isCurrent = true)
+    )
+  }
+  val progressSteps = listOf(
+    OrderStatus.PLACED,
+    OrderStatus.CONFIRMED,
+    OrderStatus.PREPARING,
+    OrderStatus.READY_FOR_PICKUP,
+    OrderStatus.COMPLETED
+  )
+  return progressSteps.map { step ->
+    val placeholder = when (step) {
+      OrderStatus.PLACED           -> order.orderDate
+      OrderStatus.CONFIRMED        -> "Waiting for shop"
+      OrderStatus.PREPARING        -> "Not started"
+      OrderStatus.READY_FOR_PICKUP -> "Not ready yet"
+      OrderStatus.COMPLETED        -> "Pending pickup"
+      else -> ""
+    }
+    val text = stamps[step] ?: placeholder
+    when {
+      step.stepIndex < order.status.stepIndex -> OrderTimelineItem(step, text, isCompleted = true)
+      step == order.status                   -> OrderTimelineItem(step, text, isCompleted = true, isCurrent = true)
+      else                                    -> OrderTimelineItem(step, placeholder, isCompleted = false)
+    }
+  }
+}
+
 data class Order(
   val id: String, // e.g. "KIR-7F42"
   val shopId: String = "default_shop",
@@ -352,6 +475,14 @@ data class Order(
   // ISO 8601 timestamp string from orders.created_at; used to compute the
   // "10 mins ago" style relative label the vendor sees on order cards.
   val createdAt: String = "",
+  // Real per-status timestamps written by the trg_stamp_order_status_at
+  // trigger. Null until that particular status was reached, so the client can
+  // fall back to a "not started" label instead of inventing a fake time.
+  val confirmedAt: String? = null,
+  val preparingAt: String? = null,
+  val readyAt: String? = null,
+  val completedAt: String? = null,
+  val cancelledAt: String? = null,
   // Short human-friendly per-shop counter (e.g. 4827). Assigned by the
   // Postgres trigger on insert. Falls back to `id` for display when the
   // orders row predates the pickup migration.
@@ -462,7 +593,11 @@ data class ShopRating(
   val rating: Int,
   val review: String = "",
   val createdAt: String = "",
-  val customerName: String = ""
+  val customerName: String = "",
+  // Populated by the client after a follow-up /orders lookup so the vendor's
+  // Reviews screen shows the real sequential order number (#1042) instead of
+  // the last 4 chars of the internal KIR-8F… id.
+  val orderNumber: Int? = null
 )
 
 /**

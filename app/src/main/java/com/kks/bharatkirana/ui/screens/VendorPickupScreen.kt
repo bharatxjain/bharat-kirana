@@ -156,7 +156,8 @@ fun VendorScanPickupScreen(
           onCancel = onBackClick,
           title = "Scan Customer QR",
           hint = "Point at the pickup QR on the customer's screen",
-          subHint = "The QR is generated when the customer places an order"
+          subHint = "The QR is generated when the customer places an order",
+          qrMode = true
         )
       }
     }

@@ -67,6 +67,7 @@ fun OrderPlacedScreen(
   onHomeClick: () -> Unit,
   onTrackOrderClick: () -> Unit = onViewOrdersClick,
   shopDistanceLabel: String? = null,
+  shop: com.kks.bharatkirana.data.model.Shop? = null,
   modifier: Modifier = Modifier
 ) {
   Surface(
@@ -259,7 +260,7 @@ fun OrderPlacedScreen(
                 color = BharatTextSecondary
               )
               Text(
-                text = order.expectedPickupTime,
+                text = com.kks.bharatkirana.data.model.computePickupEtaFor(order, shop),
                 style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold),
                 color = BharatPurplePrimary
               )

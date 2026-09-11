@@ -166,7 +166,7 @@ private fun ReviewCard(review: ShopRating) {
       }
       Spacer(modifier = Modifier.height(6.dp))
       Text(
-        text = "Verified pickup · Order #${review.orderId.takeLast(4).uppercase()}",
+        text = "Verified pickup · Order #${review.orderNumber ?: "—"}",
         fontSize = 11.sp,
         color = BharatTextSecondary
       )
