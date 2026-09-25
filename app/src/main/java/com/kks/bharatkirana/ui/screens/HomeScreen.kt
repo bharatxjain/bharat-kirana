@@ -83,7 +83,6 @@ fun HomeScreen(
   onStoreClick: () -> Unit,
   onChangeStoreClick: () -> Unit,
   onViewCartClick: () -> Unit,
-  onAdminClick: () -> Unit = {},
   onNotificationsClick: () -> Unit = {},
   unreadNotificationCount: Int = 0,
   promoBanner: String? = null,

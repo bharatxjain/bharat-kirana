@@ -56,12 +56,10 @@ import com.kks.bharatkirana.ui.theme.*
 fun StoreLocationHeader(
   storeName: String = "BreakQ Store",
   userInitial: String = "R",
-  isAdmin: Boolean = false,
   unreadNotificationCount: Int = 0,
   onProfileClick: () -> Unit = {},
   onStoreClick: () -> Unit = {},
   onChangeStoreClick: () -> Unit = {},
-  onAdminClick: () -> Unit = {},
   onNotificationsClick: () -> Unit = {}
 ) {
   Row(
@@ -130,16 +128,6 @@ fun StoreLocationHeader(
     }
 
     Row(verticalAlignment = Alignment.CenterVertically) {
-      if (isAdmin) {
-        IconButton(
-          onClick = onAdminClick,
-          modifier = Modifier.size(32.dp)
-        ) {
-          Icon(Icons.Default.AdminPanelSettings, contentDescription = "Admin", tint = BharatPurplePrimary)
-        }
-        Spacer(modifier = Modifier.width(8.dp))
-      }
-
       Box {
         IconButton(
           onClick = onNotificationsClick,
@@ -209,7 +197,6 @@ fun StoreLocationHeader(
 fun CustomerShellHeader(
   storeName: String,
   userInitial: String,
-  isAdmin: Boolean,
   unreadNotificationCount: Int,
   isSearchTab: Boolean,
   searchQuery: String,
@@ -218,19 +205,16 @@ fun CustomerShellHeader(
   onProfileClick: () -> Unit,
   onStoreClick: () -> Unit,
   onChangeStoreClick: () -> Unit,
-  onAdminClick: () -> Unit,
   onNotificationsClick: () -> Unit
 ) {
   Column(modifier = Modifier.fillMaxWidth().background(Color.White)) {
     StoreLocationHeader(
       storeName = storeName,
       userInitial = userInitial,
-      isAdmin = isAdmin,
       unreadNotificationCount = unreadNotificationCount,
       onProfileClick = onProfileClick,
       onStoreClick = onStoreClick,
       onChangeStoreClick = onChangeStoreClick,
-      onAdminClick = onAdminClick,
       onNotificationsClick = onNotificationsClick
     )
     GrocerySearchBar(

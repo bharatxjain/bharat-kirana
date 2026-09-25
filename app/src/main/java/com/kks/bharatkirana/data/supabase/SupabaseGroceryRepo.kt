@@ -6,7 +6,6 @@ import com.kks.bharatkirana.data.model.Order
 import com.kks.bharatkirana.data.model.OrderStatus
 import com.kks.bharatkirana.data.model.OrderTimelineItem
 import com.kks.bharatkirana.data.model.Product
-import com.kks.bharatkirana.data.model.PromoCode
 import com.kks.bharatkirana.data.model.Shop
 import com.kks.bharatkirana.data.model.SubscriptionTier
 import com.kks.bharatkirana.data.model.UserProfile
@@ -77,12 +76,14 @@ class SupabaseGroceryRepo(
   }
 
   /**
-   * Fetch live Products from Supabase PostgreSQL
+   * Fetch live Products from Supabase PostgreSQL.
+   * Sends the signed-in user's token like the other reads, so RLS evaluates the
+   * real user instead of `anon`. Falls back to the anon key only before login.
    */
-  suspend fun fetchProducts(): Result<List<Product>> = withContext(Dispatchers.IO) {
+  suspend fun fetchProducts(accessToken: String? = null): Result<List<Product>> = withContext(Dispatchers.IO) {
     runCatching {
       val url = "${SupabaseConfig.restUrl}/products?select=*"
-      val request = baseRequestBuilder(url).get().build()
+      val request = baseRequestBuilder(url, accessToken).get().build()
       val response = client.newCall(request).execute()
       val body = response.body?.string() ?: ""
 
@@ -646,56 +647,11 @@ class SupabaseGroceryRepo(
     }
 
   /**
-   * Update full product details in Supabase
-   */
-  suspend fun updateFullProduct(product: com.kks.bharatkirana.data.model.Product, accessToken: String? = null): Result<Unit> =
-    withContext(Dispatchers.IO) {
-      runCatching {
-        val url = "${SupabaseConfig.restUrl}/products?id=eq.${product.id}"
-        val weightsJson = JSONArray()
-        for (w in product.weightOptions) {
-          weightsJson.put(JSONObject().apply {
-            put("label", w.label)
-            put("price", w.price)
-            put("originalPrice", w.originalPrice)
-            put("discount", w.discountLabel)
-          })
-        }
-
-        val payload = JSONObject().apply {
-          put("name", product.name)
-          put("brand", product.brand)
-          put("category_id", product.categoryId)
-          put("current_price", product.currentPrice)
-          put("original_price", product.originalPrice)
-          put("discount_percent", product.discountPercent)
-          put("unit", product.unit)
-          put("description", product.description)
-          put("in_stock", product.inStock)
-          put("weight_options", weightsJson)
-          put("image_urls", JSONArray(product.imageUrls))
-          put("image_url", product.imageUrl)
-        }
-
-        val request = baseRequestBuilder(url, accessToken)
-          .addHeader("Prefer", "return=minimal")
-          .patch(payload.toString().toRequestBody(jsonMediaType))
-          .build()
-
-        val response = client.newCall(request).execute()
-        if (!response.isSuccessful) {
-          throw Exception("Failed to update product: HTTP ${response.code}")
-        }
-      }
-    }
-
-  /**
    * Fetch Orders from Supabase
    */
   suspend fun fetchOrders(
     customerEmail: String? = null,
     customerUserId: String? = null,
-    isAdmin: Boolean = false,
     vendorShopId: String? = null,
     accessToken: String? = null
   ): Result<List<Order>> =
@@ -705,7 +661,6 @@ class SupabaseGroceryRepo(
         // migration for order_items hasn't been applied on this Supabase project
         // the embed 400s, so fall through to a plain select=* fetch.
         fun buildUrl(select: String): String = when {
-          isAdmin -> "${SupabaseConfig.restUrl}/orders?$select&order=created_at.desc"
           !vendorShopId.isNullOrBlank() -> "${SupabaseConfig.restUrl}/orders?shop_id=eq.$vendorShopId&$select&order=created_at.desc"
           // Match on the auth user id OR the email. user_id is what RLS keys on
           // and is always written at insert; customer_email alone was fragile
@@ -1550,32 +1505,91 @@ class SupabaseGroceryRepo(
       }
     }
 
+  /** Server verdict on a promo code for a given cart. [reason] is null when it applies. */
+  data class PromoPreview(
+    val promoCode: String?,
+    val discount: Int,
+    val reason: String?,
+    val minOrderAmount: Int,
+    val itemsTotal: Int
+  )
+
   /**
-   * Look up a promo code by exact match. RLS on `promo_codes` already restricts
-   * this to `active = TRUE AND valid window` — so a returned row is guaranteed
-   * to be currently redeemable.
+   * Asks the server whether [code] would be accepted at checkout for these
+   * exact items. preview_promo runs the same evaluate_promo() rules and the same
+   * pricing as create_order_with_items, so the cart can never show a discount
+   * that checkout won't give. See ORDER_SERVER_AUTHORITY.sql.
    */
-  suspend fun fetchPromoCode(code: String, accessToken: String? = null): Result<PromoCode> =
+  suspend fun previewPromo(
+    code: String,
+    shopId: String,
+    items: List<CartItem>,
+    accessToken: String?
+  ): Result<PromoPreview> =
     withContext(Dispatchers.IO) {
       runCatching {
-        val cleanCode = code.trim().uppercase()
-        val url = "${SupabaseConfig.restUrl}/promo_codes?code=eq.$cleanCode&select=*"
+        val itemsJson = JSONArray().apply {
+          items.forEach { ci ->
+            put(
+              JSONObject().apply {
+                put("product_id", ci.product.id)
+                put("weight_label", ci.selectedWeight.label)
+                put("quantity", ci.quantity)
+              }
+            )
+          }
+        }
+        val payload = JSONObject().apply {
+          put("p_code", code.trim().uppercase())
+          put("p_shop_id", shopId)
+          put("p_items", itemsJson)
+        }
+        val request = baseRequestBuilder("${SupabaseConfig.restUrl}/rpc/preview_promo", accessToken)
+          .post(payload.toString().toRequestBody(jsonMediaType))
+          .build()
+        val response = client.newCall(request).execute()
+        val body = response.body?.string() ?: ""
+        if (!response.isSuccessful) throw Exception("Promo check failed: HTTP ${response.code}")
+
+        val arr = JSONArray(body)
+        if (arr.length() == 0) throw Exception("Promo check returned no result")
+        val row = arr.getJSONObject(0)
+        PromoPreview(
+          promoCode = if (row.isNull("promo_code")) null else row.optString("promo_code").takeIf { it.isNotBlank() },
+          discount = row.optInt("discount", 0),
+          reason = if (row.isNull("reason")) null else row.optString("reason").takeIf { it.isNotBlank() },
+          minOrderAmount = row.optInt("min_order_amount", 0),
+          itemsTotal = row.optInt("items_total", 0)
+        )
+      }
+    }
+
+  data class AppSettings(
+    val handlingFee: Int,
+    val minOrderFreeHandling: Int,
+    val freeHandlingDiscount: Int
+  )
+
+  /**
+   * The fee row create_order_with_items bills against. The cart shows these
+   * exact numbers, so the preview total and the charged total always agree.
+   */
+  suspend fun fetchAppSettings(accessToken: String? = null): Result<AppSettings> =
+    withContext(Dispatchers.IO) {
+      runCatching {
+        val url = "${SupabaseConfig.restUrl}/app_settings?id=eq.1&select=handling_fee,min_order_free_handling,free_handling_discount"
         val request = baseRequestBuilder(url, accessToken).get().build()
         val response = client.newCall(request).execute()
         val body = response.body?.string() ?: ""
-        if (!response.isSuccessful) throw Exception("Failed to fetch promo: HTTP ${response.code}")
+        if (!response.isSuccessful) throw Exception("Failed to fetch app settings: HTTP ${response.code}")
 
-        val array = JSONArray(body)
-        if (array.length() == 0) throw Exception("Invalid or expired code")
-
-        val obj = array.getJSONObject(0)
-        PromoCode(
-          code = obj.optString("code", cleanCode),
-          description = obj.optString("description", ""),
-          discountPercent = obj.optInt("discount_percent", 0),
-          discountFlatRupees = obj.optInt("discount_flat_rupees", 0),
-          minOrderAmount = obj.optInt("min_order_amount", 0),
-          maxDiscountRupees = if (obj.isNull("max_discount_rupees")) null else obj.optInt("max_discount_rupees")
+        val arr = JSONArray(body)
+        if (arr.length() == 0) throw Exception("app_settings row is missing")
+        val row = arr.getJSONObject(0)
+        AppSettings(
+          handlingFee = row.optInt("handling_fee", 0),
+          minOrderFreeHandling = row.optInt("min_order_free_handling", 0),
+          freeHandlingDiscount = row.optInt("free_handling_discount", 0)
         )
       }
     }

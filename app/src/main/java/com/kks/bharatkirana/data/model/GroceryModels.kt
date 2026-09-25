@@ -167,21 +167,12 @@ enum class AuthPath {
 
 enum class UpdateStatus { NONE, OPTIONAL, FORCED }
 
-data class PromoCode(
+// A promo the server's preview_promo() has confirmed for the current cart. The
+// discount is the server's figure; the app never works it out itself.
+data class AppliedPromo(
   val code: String,
-  val description: String = "",
-  val discountPercent: Int = 0,
-  val discountFlatRupees: Int = 0,
-  val minOrderAmount: Int = 0,
-  val maxDiscountRupees: Int? = null
-) {
-  fun computeDiscount(orderAmount: Int): Int {
-    if (orderAmount < minOrderAmount) return 0
-    val raw = if (discountPercent > 0) (orderAmount * discountPercent / 100) else discountFlatRupees
-    val cap = maxDiscountRupees
-    return if (cap != null && cap > 0) minOf(raw, cap) else raw
-  }
-}
+  val discountRupees: Int
+)
 
 data class UserProfile(
   val fullName: String = "",
@@ -198,16 +189,12 @@ data class UserProfile(
   val phoneVerified: Boolean = false,
   val authPath: AuthPath? = null,
   val fcmToken: String? = null,
-  // Populated from Supabase `user_profiles.role` after login. When null, we fall back
-  // to a `.env`-driven whitelist (BuildConfig.SUPER_ADMIN_EMAIL / ADMIN_EMAILS). Both
-  // are strictly UI hints — real authorization is enforced by Supabase RLS.
+  // Populated from Supabase `profiles.role` after login. A UI hint only — real
+  // authorization is enforced by Supabase RLS.
   val serverRole: UserRole? = null
 ) {
-  // Server role is now the sole source of truth. The .env whitelist fallback
-  // was a bootstrap for the pre-RLS era and started firing false positives once
-  // the DB row loaded slowly — promoting anyone whose email matched to admin
-  // even after the DB said they were a customer. Promote via Supabase Table
-  // Editor now: set profiles.role = 'admin' for that user.
+  // Admin accounts are recognised only so the app can refuse them and point
+  // them to the web admin panel.
   val isSuperAdmin: Boolean
     get() = serverRole == UserRole.SUPER_ADMIN
 
@@ -502,7 +489,6 @@ sealed class AppScreen {
   data object Restoring : AppScreen()
   data object Onboarding : AppScreen()
   data object Auth : AppScreen()
-  data class SignupSplash(val userEmail: String, val role: String = "Customer") : AppScreen()
   data object CompleteProfile : AppScreen()
   data object Main : AppScreen()
   data object RoleSelection : AppScreen()
@@ -513,7 +499,6 @@ sealed class AppScreen {
   data class OrderPlaced(val orderId: String) : AppScreen()
   data class OrderDetails(val orderId: String) : AppScreen()
   data class VendorOrderDetails(val orderId: String) : AppScreen()
-  data object AdminDashboard : AppScreen()
   data object PrivacyPolicy : AppScreen()
   data object TermsOfService : AppScreen()
   data object StoreInfo : AppScreen()

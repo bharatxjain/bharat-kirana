@@ -21,7 +21,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountBalanceWallet
-import androidx.compose.material.icons.filled.AdminPanelSettings
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Description
@@ -74,7 +73,6 @@ import com.kks.bharatkirana.data.model.UserRole
 import com.kks.bharatkirana.ui.theme.BharatBackground
 import com.kks.bharatkirana.ui.theme.BharatPurpleAccent
 import com.kks.bharatkirana.ui.theme.BharatPurpleContainer
-import com.kks.bharatkirana.ui.theme.BharatPurpleDark
 import com.kks.bharatkirana.ui.theme.BharatPurplePrimary
 import com.kks.bharatkirana.ui.theme.BharatTextMuted
 import com.kks.bharatkirana.ui.theme.BharatTextPrimary
@@ -191,10 +189,7 @@ fun ProfileScreen(
                 .size(56.dp)
                 .clip(CircleShape)
                 .background(
-                  Brush.linearGradient(
-                    if (userProfile.isAdmin) listOf(BharatPurpleDark, BharatPurplePrimary)
-                    else listOf(BharatPurplePrimary, BharatPurpleAccent)
-                  )
+                  Brush.linearGradient(listOf(BharatPurplePrimary, BharatPurpleAccent))
                 ),
               contentAlignment = Alignment.Center
             ) {
@@ -213,10 +208,7 @@ fun ProfileScreen(
                   color = BharatTextPrimary
                 )
                 Spacer(modifier = Modifier.width(6.dp))
-                RoleBadge(
-                  isAdmin = userProfile.isAdmin,
-                  isRealVendor = isRealVendor
-                )
+                RoleBadge(isRealVendor = isRealVendor)
               }
               if (userProfile.mobileNumber.isNotBlank()) {
                 Text(
@@ -424,13 +416,9 @@ fun ProfileScreen(
 }
 
 @Composable
-private fun RoleBadge(isAdmin: Boolean, isRealVendor: Boolean) {
-  val label = when {
-    isAdmin -> "Admin"
-    isRealVendor -> "Shop Owner"
-    else -> "Customer"
-  }
-  val highlighted = isAdmin || isRealVendor
+private fun RoleBadge(isRealVendor: Boolean) {
+  val label = if (isRealVendor) "Shop Owner" else "Customer"
+  val highlighted = isRealVendor
   Surface(
     shape = RoundedCornerShape(6.dp),
     color = if (highlighted) BharatPurpleContainer else Color(0xFFF1F5F9)
@@ -440,11 +428,7 @@ private fun RoleBadge(isAdmin: Boolean, isRealVendor: Boolean) {
       modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
     ) {
       Icon(
-        imageVector = when {
-          isAdmin -> Icons.Default.AdminPanelSettings
-          isRealVendor -> Icons.Default.Storefront
-          else -> Icons.Default.Person
-        },
+        imageVector = if (isRealVendor) Icons.Default.Storefront else Icons.Default.Person,
         contentDescription = null,
         tint = if (highlighted) BharatPurplePrimary else BharatTextSecondary,
         modifier = Modifier.size(11.dp)

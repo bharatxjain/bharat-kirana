@@ -3,11 +3,11 @@
 --
 --  RUN THIS WHOLE FILE AT ONCE. Nothing to fill in.
 --
---  It finds its own test shop, product and customer, runs six checks against
---  create_order_with_items, and prints a results table at the end.
+--  It finds its own test shop, product and customer, runs the checks against
+--  create_order_with_items and preview_promo, and prints a results table.
 --
 --  Every test order is rolled back to a savepoint, so NO test order, NO stock
---  change and NO promo usage is ever saved. The only thing left behind is the
+--  change and NO promo code is ever saved. The only thing left behind is the
 --  results table, which you can drop when you are done:
 --      drop table public.breakq_test_results;
 --
@@ -43,6 +43,14 @@ declare
   v_after      int;
   v_ok         boolean;
   v_msg        text;
+  v_other_shop text;
+  v_code       text;
+  v_p_reason   text;
+  v_p_disc     int;
+  v_p2_reason  text;
+  v_ord_disc   int;
+  v_ord_code   text;
+  t            record;
 begin
   ---------------------------------------------------------------------------
   -- Fixtures: a real approved shop with a real stock-tracked product,
@@ -321,6 +329,155 @@ begin
       case when v_ok then 'FAIL' else 'PASS' end,
       coalesce(v_msg, 'an unapproved shop accepted an order'));
   end if;
+
+  ---------------------------------------------------------------------------
+  -- TESTS 7-14 — promo codes. Each inserts a throwaway code, asks the cart
+  -- preview about it, then places a real checkout with it. PASS means both
+  -- gave the same answer and the rule held. Everything rolls back.
+  ---------------------------------------------------------------------------
+  select s.id into v_other_shop
+    from public.shops s
+   where s.id <> v_shop
+   limit 1;
+
+  for t in
+    select * from (values
+      (7,  'Promo: valid flat code applies',        true,  0,  5, 0,      null::int, null::interval, null::interval, null::int, false, null::text),
+      (8,  'Promo: percent code respects its cap',  true,  50, 0, 0,      1,         null,           null,           null,      false, null),
+      (9,  'Promo: inactive code refused',          false, 0,  5, 0,      null,      null,           null,           null,      false, 'INACTIVE'),
+      (10, 'Promo: expired code refused',           true,  0,  5, 0,      null,      null,           '-1 day',       null,      false, 'EXPIRED'),
+      (11, 'Promo: not-yet-started code refused',   true,  0,  5, 0,      null,      '1 day',        null,           null,      false, 'NOT_STARTED'),
+      (12, 'Promo: minimum order enforced',         true,  0,  5, 100000, null,      null,           null,           null,      false, 'MIN_ORDER'),
+      (13, 'Promo: usage limit enforced',           true,  0,  5, 0,      null,      null,           null,           0,         false, 'USAGE_LIMIT'),
+      (14, 'Promo: other shop''s code refused',     true,  0,  5, 0,      null,      null,           null,           null,      true,  'WRONG_SHOP')
+    ) as v(seq, name, active, pct, flat, min_order, max_disc, starts_in, ends_in, usage_limit, other_shop, expect_reason)
+  loop
+    if t.other_shop and v_other_shop is null then
+      insert into public.breakq_test_results values
+        (t.seq, t.name, 'SKIP', 'Only one shop exists.');
+      continue;
+    end if;
+
+    v_msg := null; v_p_reason := null; v_p_disc := null; v_ord_disc := null; v_ord_code := null;
+    v_code := 'ZZTEST' || t.seq || upper(substr(md5(random()::text), 1, 6));
+
+    begin
+      insert into public.promo_codes (
+        code, description, active, discount_percent, discount_flat_rupees,
+        min_order_amount, max_discount_rupees, valid_from, valid_until,
+        usage_limit, applicable_shop_id
+      ) values (
+        v_code, 'verification', t.active, t.pct, t.flat,
+        t.min_order, t.max_disc,
+        case when t.starts_in is null then now() - interval '1 minute' else now() + t.starts_in end,
+        case when t.ends_in   is null then null else now() + t.ends_in end,
+        t.usage_limit,
+        case when t.other_shop then v_other_shop else null end
+      );
+
+      select pp.reason, pp.discount into v_p_reason, v_p_disc
+        from public.preview_promo(v_code, v_shop,
+          jsonb_build_array(jsonb_build_object(
+            'product_id', v_product, 'weight_label', v_weight, 'quantity', 1))) pp;
+
+      select r.promo_discount, r.promo_code
+        into v_ord_disc, v_ord_code
+        from public.create_order_with_items(
+          v_order || jsonb_build_object(
+            'id',         'TEST-' || gen_random_uuid()::text,
+            'shop_id',    v_shop,
+            'promo_code', v_code
+          ),
+          jsonb_build_array(jsonb_build_object(
+            'product_id', v_product, 'weight_label', v_weight, 'quantity', 1))
+        ) r;
+      raise exception using errcode = 'ZZ001', message = 'rollback';
+    exception
+      when sqlstate 'ZZ001' then null;
+      when others then v_msg := sqlerrm;
+    end;
+
+    insert into public.breakq_test_results values (
+      t.seq, t.name,
+      case
+        when v_msg is not null then 'ERROR'
+        when t.expect_reason is null
+             and v_p_reason is null
+             and v_p_disc > 0
+             and v_ord_disc = v_p_disc
+             and v_ord_code = v_code
+             and (t.max_disc is null or v_p_disc <= t.max_disc)
+          then 'PASS'
+        when t.expect_reason is not null
+             and v_p_reason = t.expect_reason
+             and coalesce(v_ord_disc, 0) = 0
+             and v_ord_code is null
+          then 'PASS'
+        else 'FAIL'
+      end,
+      coalesce(v_msg, format('cart preview: reason=%s discount=%s | checkout: discount=%s code=%s',
+                             coalesce(v_p_reason, 'OK'), coalesce(v_p_disc, 0),
+                             coalesce(v_ord_disc, 0), coalesce(v_ord_code, '-'))));
+  end loop;
+
+  ---------------------------------------------------------------------------
+  -- TEST 15 — one use per customer. First checkout uses the code; after that
+  -- the cart preview must refuse it, and a second checkout must not get it.
+  ---------------------------------------------------------------------------
+  v_msg := null; v_p_reason := null; v_p2_reason := null; v_ord_disc := null; v_ord_code := null;
+  v_code := 'ZZTEST15' || upper(substr(md5(random()::text), 1, 6));
+  begin
+    insert into public.promo_codes (
+      code, description, active, discount_flat_rupees, min_order_amount,
+      valid_from, max_uses_per_customer
+    ) values (
+      v_code, 'verification', true, 5, 0, now() - interval '1 minute', 1
+    );
+
+    select pp.reason into v_p_reason
+      from public.preview_promo(v_code, v_shop,
+        jsonb_build_array(jsonb_build_object(
+          'product_id', v_product, 'weight_label', v_weight, 'quantity', 1))) pp;
+
+    perform public.create_order_with_items(
+      v_order || jsonb_build_object(
+        'id', 'TEST-' || gen_random_uuid()::text, 'shop_id', v_shop, 'promo_code', v_code),
+      jsonb_build_array(jsonb_build_object(
+        'product_id', v_product, 'weight_label', v_weight, 'quantity', 1)));
+
+    select pp.reason into v_p2_reason
+      from public.preview_promo(v_code, v_shop,
+        jsonb_build_array(jsonb_build_object(
+          'product_id', v_product, 'weight_label', v_weight, 'quantity', 1))) pp;
+
+    select r.promo_discount, r.promo_code
+      into v_ord_disc, v_ord_code
+      from public.create_order_with_items(
+        v_order || jsonb_build_object(
+          'id', 'TEST-' || gen_random_uuid()::text, 'shop_id', v_shop, 'promo_code', v_code),
+        jsonb_build_array(jsonb_build_object(
+          'product_id', v_product, 'weight_label', v_weight, 'quantity', 1))
+      ) r;
+    raise exception using errcode = 'ZZ001', message = 'rollback';
+  exception
+    when sqlstate 'ZZ001' then null;
+    when others then v_msg := sqlerrm;
+  end;
+
+  insert into public.breakq_test_results values (
+    15, 'Promo: one use per customer enforced',
+    case
+      when v_msg is not null then 'ERROR'
+      when v_p_reason is null
+           and v_p2_reason = 'PER_CUSTOMER_LIMIT'
+           and coalesce(v_ord_disc, 0) = 0
+           and v_ord_code is null
+        then 'PASS'
+      else 'FAIL'
+    end,
+    coalesce(v_msg, format('first preview=%s | after one use: preview=%s, checkout discount=%s',
+                           coalesce(v_p_reason, 'OK'), coalesce(v_p2_reason, 'OK'),
+                           coalesce(v_ord_disc, 0))));
 end $$;
 
 

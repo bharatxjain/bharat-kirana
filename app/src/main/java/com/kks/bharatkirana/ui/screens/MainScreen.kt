@@ -149,7 +149,7 @@ fun MainScreen(
 
   val activeShopIdForBack by viewModel.activeShopId.collectAsState()
   BackHandler(
-    enabled = (currentScreen != AppScreen.Main && currentScreen != AppScreen.AdminDashboard && currentScreen != AppScreen.VendorDashboard)
+    enabled = (currentScreen != AppScreen.Main && currentScreen != AppScreen.VendorDashboard)
       || (currentScreen == AppScreen.Main && currentTab != MainTab.HOME)
       || (currentScreen == AppScreen.Main && currentTab == MainTab.HOME && activeShopIdForBack != null)
   ) {
@@ -161,7 +161,7 @@ fun MainScreen(
         viewModel.selectShop(null)
         viewModel.navigateBack()
       }
-      currentScreen != AppScreen.Main && currentScreen != AppScreen.AdminDashboard && currentScreen != AppScreen.VendorDashboard -> viewModel.navigateBack()
+      currentScreen != AppScreen.Main && currentScreen != AppScreen.VendorDashboard -> viewModel.navigateBack()
     }
   }
 
@@ -268,7 +268,6 @@ fun MainScreen(
           onGoogleSignIn = { viewModel.signInWithGoogle() },
           onAuthSuccess = { email: String, role: UserRole, path: AuthPath ->
             viewModel.login(email, authPath = path) { user ->
-              val isAdmin = user.isAdmin
               // Trust serverRole exclusively. hasRealShop OR-ing with a stale
               // shopId used to route customers to VendorDashboard where the
               // lookup failed and they saw an infinite spinner.
@@ -280,7 +279,6 @@ fun MainScreen(
               // registration, which has no way back.
               val isConfirmedCustomer = user.serverRole == UserRole.CUSTOMER
               when {
-                isAdmin -> viewModel.navigateTo(AppScreen.AdminDashboard)
                 !user.profileCompleted -> {
                   viewModel.setPendingSignupRole(role)
                   viewModel.navigateTo(AppScreen.CompleteProfile)
@@ -302,33 +300,6 @@ fun MainScreen(
                   viewModel.navigateTo(AppScreen.Main)
                 }
               }
-            }
-          }
-        )
-      }
-
-      is AppScreen.SignupSplash -> {
-        SignupSplashScreen(
-          userEmail = screen.userEmail,
-          role = screen.role,
-          onContinue = {
-            val isAdminRole = screen.role.equals("Store Admin", ignoreCase = true) ||
-              screen.role.equals("Admin", ignoreCase = true) ||
-              screen.role.equals("Super Admin", ignoreCase = true)
-            val isVendor = screen.role.equals("Vendor", ignoreCase = true) ||
-              screen.role.equals("Shop Owner", ignoreCase = true)
-            
-            when {
-              isAdminRole -> viewModel.navigateTo(AppScreen.AdminDashboard)
-              isVendor -> {
-                // Vendor must complete profile (mobile/address) first, then register
-                // a shop. CompleteProfile reads pendingSignupRole and forwards to
-                // VendorRegistration. Jumping straight to VendorDashboard left the
-                // dashboard trying to render a shop that does not exist.
-                viewModel.setPendingSignupRole(UserRole.VENDOR)
-                viewModel.navigateTo(AppScreen.CompleteProfile)
-              }
-              else -> viewModel.navigateTo(AppScreen.CompleteProfile)
             }
           }
         )
@@ -1149,43 +1120,6 @@ fun MainScreen(
         )
       }
 
-      is AppScreen.AdminDashboard -> {
-        if (!userProfile.isAdmin) {
-          viewModel.navigateTo(AppScreen.Main)
-        } else {
-          AdminDashboardScreen(
-            userProfile = userProfile,
-            orders = orders,
-            products = products,
-            shops = shops,
-            categories = categories,
-            isStoreOpen = isStoreOpen,
-            autoConfirmOrders = autoConfirmOrders,
-            packingTimeMinutes = packingTimeMinutes,
-            onToggleStoreStatus = { viewModel.toggleStoreStatus() },
-            onToggleAutoConfirm = { viewModel.toggleAutoConfirm() },
-            onUpdatePackingTime = { mins -> viewModel.updatePackingTime(mins) },
-            onUpdateOrderStatus = { orderId, newStatus -> viewModel.updateOrderStatus(orderId, newStatus) },
-            onUpdateProductStock = { prodId, inStock -> viewModel.updateProductStock(prodId, inStock) },
-            onUpdateProductPrice = { prodId, newPrice -> viewModel.updateProductPrice(prodId, newPrice) },
-            onAddProduct = { newProd -> viewModel.addProduct(newProd) },
-            onDeleteProduct = { prodId -> viewModel.deleteProduct(prodId) },
-            onUpdateFullProduct = { id, name, unit, price, mrp, desc, stock, uris ->
-               viewModel.updateFullProduct(id, name, unit, price, mrp, desc, stock, uris)
-            },
-            onUpdateShopDetails = { shopId, shop -> 
-              viewModel.updateShopDetails(shopId, shop) 
-            },
-            onVerifyVendor = { shopId, verified -> viewModel.verifyVendor(shopId, verified) },
-            onVerifyPickupCode = { code -> viewModel.verifyPickupCode(code) },
-            onLogout = { viewModel.logout() },
-            onBackToStorefront = {
-              viewModel.navigateTo(AppScreen.Main)
-            }
-          )
-        }
-      }
-
       is AppScreen.Main -> {
         // Only forward to VendorDashboard when the server profile actually says
         // this is a vendor AND their shop row exists. A stale shopId alone is
@@ -1239,7 +1173,6 @@ fun MainScreen(
               com.kks.bharatkirana.ui.components.CustomerShellHeader(
                 storeName = selectedAddress?.formatted.orEmpty().ifBlank { userProfile.address },
                 userInitial = userProfile.fullName.trim().firstOrNull()?.uppercaseChar()?.toString() ?: "U",
-                isAdmin = userProfile.isAdmin,
                 unreadNotificationCount = unreadNotificationCount,
                 isSearchTab = currentTab == MainTab.SEARCH,
                 searchQuery = searchQuery,
@@ -1250,10 +1183,6 @@ fun MainScreen(
                 onProfileClick = { viewModel.setTab(MainTab.PROFILE) },
                 onStoreClick = { viewModel.navigateTo(AppScreen.SelectLocation) },
                 onChangeStoreClick = { viewModel.navigateTo(AppScreen.SelectLocation) },
-                onAdminClick = {
-                  if (userProfile.isSuperAdmin) viewModel.navigateTo(AppScreen.AdminDashboard)
-                  else if (userProfile.isVendor) viewModel.navigateTo(AppScreen.VendorDashboard)
-                },
                 onNotificationsClick = { viewModel.navigateTo(AppScreen.Notifications) }
               )
             }
@@ -1291,10 +1220,6 @@ fun MainScreen(
                     onProfileClick = { viewModel.setTab(MainTab.PROFILE) },
                     onStoreClick = { viewModel.navigateTo(AppScreen.SelectLocation) },
                     onChangeStoreClick = { viewModel.navigateTo(AppScreen.SelectLocation) },
-                    onAdminClick = {
-                      if (userProfile.isSuperAdmin) viewModel.navigateTo(AppScreen.AdminDashboard)
-                      else if (userProfile.isVendor) viewModel.navigateTo(AppScreen.VendorDashboard)
-                    },
                     onNotificationsClick = { viewModel.navigateTo(AppScreen.Notifications) },
                     unreadNotificationCount = unreadNotificationCount,
                     promoBanner = promoBanner,
@@ -1409,12 +1334,10 @@ fun MainScreen(
                     },
                     onAuthSuccess = { email: String, role: UserRole, path: AuthPath ->
                       viewModel.login(email, authPath = path) { user ->
-                        val isAdmin = user.isAdmin
                         // Same stale-shopId guard as the top-level Auth block.
                         val hasRealShop = user.shopId?.let { id -> shops.any { it.id == id } } == true
                         val isConfirmedVendor = hasRealShop || user.serverRole == UserRole.VENDOR
                         when {
-                          isAdmin -> viewModel.navigateTo(AppScreen.AdminDashboard)
                           !user.profileCompleted -> {
                             viewModel.setPendingSignupRole(role)
                             viewModel.navigateTo(AppScreen.CompleteProfile)

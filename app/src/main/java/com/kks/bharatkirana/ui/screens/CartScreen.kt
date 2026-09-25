@@ -60,8 +60,8 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.kks.bharatkirana.data.model.AppliedPromo
 import com.kks.bharatkirana.data.model.CartItem
-import com.kks.bharatkirana.data.model.PromoCode
 import com.kks.bharatkirana.data.model.UserProfile
 import com.kks.bharatkirana.ui.theme.BharatBackground
 import com.kks.bharatkirana.ui.theme.BharatGreen
@@ -81,10 +81,10 @@ fun CartScreen(
   onCheckout: () -> Unit,
   onProfileClick: () -> Unit,
   onExploreProducts: () -> Unit,
-  handlingFeeRupees: Int = 5,
-  minOrderForFreeHandling: Int = 200,
-  freeHandlingDiscount: Int = 15,
-  appliedPromo: PromoCode? = null,
+  handlingFeeRupees: Int = 0,
+  minOrderForFreeHandling: Int = 0,
+  freeHandlingDiscount: Int = 0,
+  appliedPromo: AppliedPromo? = null,
   promoStatusMessage: String? = null,
   onApplyPromo: (String) -> Unit = {},
   onClearPromo: () -> Unit = {},
@@ -95,7 +95,7 @@ fun CartScreen(
   val itemTotal = cartItems.sumOf { it.totalPrice }
   val discount = if (itemTotal > minOrderForFreeHandling) freeHandlingDiscount else 0
   val handlingFee = if (itemCount > 0) handlingFeeRupees else 0
-  val promoDiscount = appliedPromo?.computeDiscount(itemTotal) ?: 0
+  val promoDiscount = appliedPromo?.discountRupees ?: 0
   val finalTotal = (itemTotal + handlingFee - discount - promoDiscount).coerceAtLeast(0)
 
   Surface(
@@ -534,7 +534,7 @@ fun CartScreen(
 
 @Composable
 private fun PromoCodeCard(
-  appliedPromo: PromoCode?,
+  appliedPromo: AppliedPromo?,
   promoDiscount: Int,
   statusMessage: String?,
   onApply: (String) -> Unit,

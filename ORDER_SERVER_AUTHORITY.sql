@@ -12,6 +12,8 @@
 --       the last unit.
 --    3. promo_discount was computed on the phone and trusted. valid_from /
 --       valid_to / usage_limit were never enforced anywhere.
+--    4. The cart and checkout judged promo codes separately. Both now call
+--       evaluate_promo(), so the cart can't promise what checkout won't give.
 --
 --  Safe to re-run.
 -- =============================================================================
@@ -20,9 +22,8 @@
 -- -----------------------------------------------------------------------------
 -- 1. app_settings — one row, the fee numbers the SERVER bills against.
 --
---    These currently live only in Firebase Remote Config, which the database
---    cannot read. Seed these to match your Remote Config values so the cart
---    preview and the charged total agree.
+--    This is the only source of fees. The app's cart reads this same row, so
+--    the cart preview and the charged total always agree.
 -- -----------------------------------------------------------------------------
 create table if not exists public.app_settings (
   id                      int primary key default 1,
@@ -33,7 +34,10 @@ create table if not exists public.app_settings (
   constraint app_settings_single_row check (id = 1)
 );
 
-insert into public.app_settings (id) values (1) on conflict (id) do nothing;
+-- Seeds a fresh database with no fees. Never overwrites an existing row.
+insert into public.app_settings (id, handling_fee, min_order_free_handling, free_handling_discount)
+values (1, 0, 0, 0)
+on conflict (id) do nothing;
 
 alter table public.app_settings enable row level security;
 
@@ -66,6 +70,142 @@ create policy app_settings_read on public.app_settings
 alter table public.orders add column if not exists item_total        int;
 alter table public.orders add column if not exists handling_fee      int;
 alter table public.orders add column if not exists handling_discount int;
+
+
+-- -----------------------------------------------------------------------------
+-- 3b. Shared rules. Checkout AND the cart preview call these, so there is
+--     exactly one definition of "what does this cost" and "is this promo good".
+-- -----------------------------------------------------------------------------
+
+-- Price of one unit for the chosen size. NULL when the product has sizes and
+-- the label matches none of them (never silently falls back to current_price).
+create or replace function public.resolve_unit_price(
+  p_weight_options jsonb,
+  p_current_price  int,
+  p_weight_label   text
+)
+returns int
+language sql
+immutable
+set search_path = public, extensions
+as $$
+  select case
+           when jsonb_array_length(coalesce(p_weight_options, '[]'::jsonb)) > 0 then
+             (select (w->>'price')::int
+                from jsonb_array_elements(p_weight_options) w
+               where w->>'label' = coalesce(p_weight_label, '')
+               limit 1)
+           else p_current_price
+         end;
+$$;
+
+-- Every promo rule, in one place. reason is NULL when the code applies.
+-- Callers that must be race-safe (checkout) lock the promo row first.
+create or replace function public.evaluate_promo(
+  p_code      text,
+  p_shop_id   text,
+  p_items_sum int,
+  p_uid       uuid
+)
+returns table(promo_code text, discount int, reason text, min_order_amount int)
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_code  text := nullif(upper(trim(coalesce(p_code, ''))), '');
+  v_promo record;
+  v_raw   int;
+  v_disc  int;
+begin
+  if v_code is null then
+    return query select null::text, 0, 'NOT_FOUND'::text, 0;
+    return;
+  end if;
+
+  select pc.code, pc.discount_percent, pc.discount_flat_rupees,
+         pc.min_order_amount, pc.max_discount_rupees,
+         pc.valid_from, pc.valid_until, pc.usage_limit, pc.active,
+         pc.applicable_shop_id, pc.max_uses_per_customer
+    into v_promo
+    from public.promo_codes pc
+   where upper(pc.code) = v_code;
+
+  if not found then
+    return query select null::text, 0, 'NOT_FOUND'::text, 0;
+    return;
+  end if;
+
+  if not coalesce(v_promo.active, false) then
+    return query select v_promo.code, 0, 'INACTIVE'::text, coalesce(v_promo.min_order_amount, 0);
+    return;
+  end if;
+
+  if v_promo.valid_from is not null and now() < v_promo.valid_from then
+    return query select v_promo.code, 0, 'NOT_STARTED'::text, coalesce(v_promo.min_order_amount, 0);
+    return;
+  end if;
+
+  if v_promo.valid_until is not null and now() > v_promo.valid_until then
+    return query select v_promo.code, 0, 'EXPIRED'::text, coalesce(v_promo.min_order_amount, 0);
+    return;
+  end if;
+
+  if v_promo.applicable_shop_id is not null and v_promo.applicable_shop_id is distinct from p_shop_id then
+    return query select v_promo.code, 0, 'WRONG_SHOP'::text, coalesce(v_promo.min_order_amount, 0);
+    return;
+  end if;
+
+  if coalesce(p_items_sum, 0) < coalesce(v_promo.min_order_amount, 0) then
+    return query select v_promo.code, 0, 'MIN_ORDER'::text, coalesce(v_promo.min_order_amount, 0);
+    return;
+  end if;
+
+  if v_promo.usage_limit is not null and (
+       select count(*) from public.orders o
+        where o.promo_code = v_promo.code
+          and o.status <> 'Cancelled'
+     ) >= v_promo.usage_limit then
+    return query select v_promo.code, 0, 'USAGE_LIMIT'::text, coalesce(v_promo.min_order_amount, 0);
+    return;
+  end if;
+
+  if v_promo.max_uses_per_customer is not null and (
+       select count(*) from public.orders o
+        where o.promo_code = v_promo.code
+          and o.user_id = p_uid
+          and o.status <> 'Cancelled'
+     ) >= v_promo.max_uses_per_customer then
+    return query select v_promo.code, 0, 'PER_CUSTOMER_LIMIT'::text, coalesce(v_promo.min_order_amount, 0);
+    return;
+  end if;
+
+  v_raw := case
+             when coalesce(v_promo.discount_percent, 0) > 0
+             then (coalesce(p_items_sum, 0) * v_promo.discount_percent) / 100
+             else coalesce(v_promo.discount_flat_rupees, 0)
+           end;
+
+  if v_promo.max_discount_rupees is not null and v_promo.max_discount_rupees > 0 then
+    v_raw := least(v_raw, v_promo.max_discount_rupees);
+  end if;
+
+  -- Never let a promo exceed the goods value.
+  v_disc := greatest(least(v_raw, coalesce(p_items_sum, 0)), 0);
+
+  if v_disc = 0 then
+    return query select v_promo.code, 0, 'ZERO_DISCOUNT'::text, coalesce(v_promo.min_order_amount, 0);
+    return;
+  end if;
+
+  return query select v_promo.code, v_disc, null::text, coalesce(v_promo.min_order_amount, 0);
+end;
+$$;
+
+-- Internal only. evaluate_promo takes any user id, so exposing it would let a
+-- caller ask about someone else's promo usage.
+revoke all on function public.resolve_unit_price(jsonb, int, text) from public, anon, authenticated;
+revoke all on function public.evaluate_promo(text, text, int, uuid) from public, anon, authenticated;
 
 
 -- -----------------------------------------------------------------------------
@@ -119,10 +259,8 @@ declare
   v_cfg        record;
   v_handling   int := 0;
   v_hdiscount  int := 0;
-  v_promo      record;
   v_promo_disc int := 0;
   v_promo_code text := null;
-  v_raw_disc   int;
   v_total      int;
 begin
   ---------------------------------------------------------------------------
@@ -211,19 +349,13 @@ begin
     -- product has weight variants the label must match one of them exactly;
     -- falling back to current_price here would let a client pick the cheapest
     -- price for the largest pack.
-    if jsonb_array_length(coalesce(v_product.weight_options, '[]'::jsonb)) > 0 then
-      select (w->>'price')::int
-        into v_unit_price
-        from jsonb_array_elements(v_product.weight_options) w
-       where w->>'label' = v_weight
-       limit 1;
+    v_unit_price := public.resolve_unit_price(
+      v_product.weight_options, v_product.current_price, v_weight);
 
-      if v_unit_price is null then
-        raise exception 'The selected size for % is no longer sold.', v_product.name
-          using errcode = 'P0001';
-      end if;
-    else
-      v_unit_price := v_product.current_price;
+    if v_unit_price is null
+       and jsonb_array_length(coalesce(v_product.weight_options, '[]'::jsonb)) > 0 then
+      raise exception 'The selected size for % is no longer sold.', v_product.name
+        using errcode = 'P0001';
     end if;
 
     if v_unit_price is null or v_unit_price <= 0 then
@@ -276,54 +408,27 @@ begin
                  end;
 
   ---------------------------------------------------------------------------
-  -- Promo, validated and computed here. An invalid code is ignored rather
-  -- than fatal — nobody should lose a whole cart because a code expired
-  -- between opening the cart and tapping Place Order.
+  -- Promo, validated and computed by evaluate_promo(). An invalid code is
+  -- ignored rather than fatal — nobody should lose a whole cart because a code
+  -- expired between opening the cart and tapping Place Order.
+  --
+  -- The promo row is locked first so two checkouts racing for the last use of
+  -- a limited code are serialised: the second one waits, then counts the
+  -- first one's committed order.
   ---------------------------------------------------------------------------
   if v_promo_in is not null then
-    select pc.code, pc.discount_percent, pc.discount_flat_rupees,
-           pc.min_order_amount, pc.max_discount_rupees,
-           pc.valid_from, pc.valid_until, pc.usage_limit, pc.active,
-           pc.applicable_shop_id, pc.max_uses_per_customer
-      into v_promo
-      from public.promo_codes pc
-     where upper(pc.code) = v_promo_in
-       for update;
+    perform 1
+       from public.promo_codes pc
+      where upper(pc.code) = v_promo_in
+        for update;
 
-    if found
-       and coalesce(v_promo.active, false)
-       and (v_promo.valid_from  is null or now() >= v_promo.valid_from)
-       and (v_promo.valid_until is null or now() <= v_promo.valid_until)
-       and (v_promo.applicable_shop_id is null or v_promo.applicable_shop_id = v_shop_id)
-       and v_items_sum >= coalesce(v_promo.min_order_amount, 0)
-       and (v_promo.usage_limit is null or (
-             select count(*) from public.orders o
-              where o.promo_code = v_promo.code
-                and o.status <> 'Cancelled'
-           ) < v_promo.usage_limit)
-       and (v_promo.max_uses_per_customer is null or (
-             select count(*) from public.orders o
-              where o.promo_code = v_promo.code
-                and o.user_id = v_uid
-                and o.status <> 'Cancelled'
-           ) < v_promo.max_uses_per_customer)
-    then
-      v_raw_disc := case
-                      when coalesce(v_promo.discount_percent, 0) > 0
-                      then (v_items_sum * v_promo.discount_percent) / 100
-                      else coalesce(v_promo.discount_flat_rupees, 0)
-                    end;
+    select e.promo_code, e.discount
+      into v_promo_code, v_promo_disc
+      from public.evaluate_promo(v_promo_in, v_shop_id, v_items_sum, v_uid) e;
 
-      if v_promo.max_discount_rupees is not null and v_promo.max_discount_rupees > 0 then
-        v_raw_disc := least(v_raw_disc, v_promo.max_discount_rupees);
-      end if;
-
-      -- Never let a promo exceed the goods value.
-      v_promo_disc := greatest(least(v_raw_disc, v_items_sum), 0);
-
-      if v_promo_disc > 0 then
-        v_promo_code := v_promo.code;
-      end if;
+    if v_promo_disc is null or v_promo_disc <= 0 then
+      v_promo_code := null;
+      v_promo_disc := 0;
     end if;
   end if;
 
@@ -387,6 +492,55 @@ grant execute on function public.create_order_with_items(jsonb, jsonb) to authen
 
 
 -- -----------------------------------------------------------------------------
+-- 4b. preview_promo — what the cart calls before checkout.
+--
+--     Prices the cart with the same resolve_unit_price() and judges the code
+--     with the same evaluate_promo() that create_order_with_items uses, so a
+--     code shown as applied in the cart is one checkout will accept.
+--     Read-only: no stock, no order, no lock.
+-- -----------------------------------------------------------------------------
+create or replace function public.preview_promo(
+  p_code    text,
+  p_shop_id text,
+  p_items   jsonb default '[]'::jsonb
+)
+returns table(promo_code text, discount int, reason text, min_order_amount int, items_total int)
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_uid uuid := auth.uid();
+  v_sum int;
+begin
+  if v_uid is null then
+    raise exception 'You are signed out. Please sign in and try again.'
+      using errcode = 'P0001';
+  end if;
+
+  -- Lines checkout would refuse add nothing; checkout then rejects the cart.
+  select coalesce(sum(
+           public.resolve_unit_price(p.weight_options, p.current_price, it->>'weight_label')
+           * greatest(coalesce((it->>'quantity')::int, 1), 1)
+         ), 0)
+    into v_sum
+    from jsonb_array_elements(coalesce(p_items, '[]'::jsonb)) it
+    join public.products p on p.id = it->>'product_id'
+   where p.shop_id = p_shop_id
+     and coalesce(p.is_active, true)
+     and not coalesce(p.is_restricted, false);
+
+  return query
+    select e.promo_code, e.discount, e.reason, e.min_order_amount, v_sum
+      from public.evaluate_promo(p_code, p_shop_id, v_sum, v_uid) e;
+end;
+$$;
+
+revoke all on function public.preview_promo(text, text, jsonb) from public, anon;
+grant execute on function public.preview_promo(text, text, jsonb) to authenticated;
+
+
+-- -----------------------------------------------------------------------------
 -- 5. Restore stock when an order is cancelled or auto-expired.
 --    Without this, every cancellation permanently loses inventory.
 -- -----------------------------------------------------------------------------
@@ -420,18 +574,17 @@ create trigger trg_restore_stock_on_cancel
 -- -----------------------------------------------------------------------------
 -- 6. Fee configuration.
 --
---    Whatever is in this row is what customers are charged. It must match what
---    Firebase Remote Config shows in the cart, or the preview and the bill will
---    disagree.
+--    Whatever is in public.app_settings is what customers are charged AND what
+--    the cart shows. To change fees, update that one row — for example:
 --
---    Currently set to zero: BreakQ takes no handling fee.
+--      update public.app_settings
+--         set handling_fee = 5, min_order_free_handling = 200,
+--             free_handling_discount = 5, updated_at = now()
+--       where id = 1;
+--
+--    This file deliberately does not overwrite the row, so re-running it can
+--    never silently reset live fees.
 -- -----------------------------------------------------------------------------
-update public.app_settings
-   set handling_fee            = 0,
-       min_order_free_handling = 0,
-       free_handling_discount  = 0,
-       updated_at              = now()
- where id = 1;
 
 
 -- -----------------------------------------------------------------------------
@@ -444,6 +597,9 @@ select 'promo_codes' as checked, code, active, discount_percent, discount_flat_r
        usage_limit, max_uses_per_customer, applicable_shop_id
   from public.promo_codes order by code;
 
-select 'function' as checked, p.proname, p.prosecdef as security_definer
+select 'function' as checked, p.proname, p.prosecdef as security_definer,
+       has_function_privilege('authenticated', p.oid, 'EXECUTE') as app_can_call
   from pg_proc p join pg_namespace n on n.oid = p.pronamespace
- where n.nspname = 'public' and p.proname = 'create_order_with_items';
+ where n.nspname = 'public'
+   and p.proname in ('create_order_with_items', 'preview_promo', 'evaluate_promo', 'resolve_unit_price')
+ order by p.proname;

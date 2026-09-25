@@ -11,9 +11,6 @@ import com.google.firebase.remoteconfig.FirebaseRemoteConfigSettings
 object BharatRemoteConfig {
 
   object Keys {
-    const val MIN_ORDER_FREE_HANDLING = "min_order_for_free_handling"
-    const val HANDLING_FEE_RUPEES = "handling_fee_rupees"
-    const val FREE_HANDLING_DISCOUNT = "free_handling_discount_rupees"
     const val DEFAULT_SHOP_RADIUS_KM = "default_shop_radius_km"
     const val MIN_SUPPORTED_VERSION_CODE = "min_supported_version_code"
     const val LATEST_VERSION_CODE = "latest_version_code"
@@ -31,9 +28,6 @@ object BharatRemoteConfig {
       setConfigSettingsAsync(settings)
       setDefaultsAsync(
         mapOf(
-          Keys.MIN_ORDER_FREE_HANDLING to 200L,
-          Keys.HANDLING_FEE_RUPEES to 5L,
-          Keys.FREE_HANDLING_DISCOUNT to 15L,
           Keys.DEFAULT_SHOP_RADIUS_KM to 5L,
           Keys.MIN_SUPPORTED_VERSION_CODE to 1L,
           Keys.LATEST_VERSION_CODE to 1L,
@@ -52,9 +46,6 @@ object BharatRemoteConfig {
       .addOnFailureListener { onComplete(false) }
   }
 
-  fun minOrderForFreeHandling(): Int = rc.getLong(Keys.MIN_ORDER_FREE_HANDLING).toInt()
-  fun handlingFeeRupees(): Int = rc.getLong(Keys.HANDLING_FEE_RUPEES).toInt()
-  fun freeHandlingDiscount(): Int = rc.getLong(Keys.FREE_HANDLING_DISCOUNT).toInt()
   fun defaultShopRadiusKm(): Int = rc.getLong(Keys.DEFAULT_SHOP_RADIUS_KM).toInt()
   fun minSupportedVersionCode(): Int = rc.getLong(Keys.MIN_SUPPORTED_VERSION_CODE).toInt()
   fun latestVersionCode(): Int = rc.getLong(Keys.LATEST_VERSION_CODE).toInt()
