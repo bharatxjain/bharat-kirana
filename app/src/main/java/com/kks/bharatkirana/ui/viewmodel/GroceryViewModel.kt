@@ -30,6 +30,10 @@ import java.text.SimpleDateFormat
 import java.util.*
 import kotlin.math.*
 
+/**
+ * Which server branch [fetchOrdersInto] should hit.
+ *   AUTO     – pick based on role: vendors get shop_id, customers get user_id.
+ */
 class GroceryViewModel(
   application: Application
 ) : AndroidViewModel(application) {
@@ -872,7 +876,10 @@ class GroceryViewModel(
    *
    * Admin/vendor branching is unchanged — vendors still filter on shop_id.
    */
-  private suspend fun fetchOrdersInto(customerEmail: String, replace: Boolean) {
+  private suspend fun fetchOrdersInto(
+    customerEmail: String,
+    replace: Boolean
+  ) {
     val isAdmin = _userProfile.value.isAdmin
     val vendorShopId = _userProfile.value.shopId?.takeIf { it.isNotBlank() }
     val customerUserId = supabaseAuthService.currentUserId?.takeIf { it.isNotBlank() }
@@ -1273,16 +1280,17 @@ class GroceryViewModel(
         customerEmail = _userProfile.value.email,
         customerName = _userProfile.value.fullName,
         customerMobile = _userProfile.value.mobileNumber,
-        userId = supabaseAuthService.currentUserId,
         promoCode = appliedCode,
-        promoDiscount = promoDiscount,
         accessToken = supabaseAuthService.currentAccessToken
       ).onSuccess { serverFields ->
         // Server confirmed. Now — and only now — we commit local state:
         // add the order, clear cart, clear promo, notify, navigate.
+        // The total above was only ever a preview; the RPC recomputes it from
+        // live product prices, so take the server's figure as the real bill.
         val confirmed = newOrder.copy(
           orderNumber = serverFields.orderNumber ?: newOrder.orderNumber,
-          pickupToken = serverFields.pickupToken ?: newOrder.pickupToken
+          pickupToken = serverFields.pickupToken ?: newOrder.pickupToken,
+          totalAmount = serverFields.totalAmount ?: newOrder.totalAmount
         )
         _orders.update { listOf(confirmed) + it }
         _latestPlacedOrderId.value = confirmed.id

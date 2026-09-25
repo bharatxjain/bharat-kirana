@@ -90,9 +90,8 @@ fun ProfileScreen(
   onEditProfileClick: () -> Unit,
   onSavedAddressesClick: () -> Unit,
   onNotificationPreferencesClick: () -> Unit,
-  onKiranaWalletClick: () -> Unit,
   onHelpSupportClick: () -> Unit,
-  onVendorRegisterClick: () -> Unit,
+  onOpenVendorDashboard: () -> Unit = {},
   onAboutUsClick: () -> Unit,
   onAccountActionsClick: () -> Unit,
   onWishlistClick: () -> Unit = {},
@@ -255,13 +254,6 @@ fun ProfileScreen(
             modifier = Modifier.weight(1f)
           )
           QuickAccessTile(
-            icon = Icons.Default.AccountBalanceWallet,
-            label = "Flexi Wallet",
-            testTagName = "quick_kirana_wallet",
-            onClick = onKiranaWalletClick,
-            modifier = Modifier.weight(1f)
-          )
-          QuickAccessTile(
             icon = Icons.Default.SupportAgent,
             label = "Help & Support",
             testTagName = "quick_help_support",
@@ -330,10 +322,14 @@ fun ProfileScreen(
         }
       }
 
-      // ---- Register Your Shop CTA (only for non-admin, non-vendor) --------
-      // Placed after Account so accidental taps are unlikely, but before the
-      // legal/version section so it's still discoverable.
-      if (profileFetchComplete && !userProfile.isAdmin && !userProfile.isVendor) {
+      // ---- Manage My Shop CTA (only for verified vendors who also shop) ----
+      // The old surface had a "Register Your Shop" CTA that let a customer
+      // account convert itself into a vendor account. That was removed — role
+      // is now decided at signup only. This tile stays as a shortcut for
+      // vendors who landed on the customer surface (their orders / wallet /
+      // wishlist live here) so they can jump back to their vendor dashboard.
+      val hasShop = profileFetchComplete && userProfile.shopId != null && userProfile.serverRole == UserRole.VENDOR
+      if (hasShop) {
         item {
           Spacer(modifier = Modifier.height(16.dp))
           Card(
@@ -343,8 +339,8 @@ fun ProfileScreen(
             modifier = Modifier
               .fillMaxWidth()
               .padding(horizontal = 16.dp)
-              .clickable { onVendorRegisterClick() }
-              .testTag("profile_register_shop_row")
+              .clickable { onOpenVendorDashboard() }
+              .testTag("profile_manage_shop_row")
           ) {
             Row(
               modifier = Modifier
@@ -364,12 +360,12 @@ fun ProfileScreen(
               Spacer(modifier = Modifier.width(14.dp))
               Column(modifier = Modifier.weight(1f)) {
                 Text(
-                  text = "Register Your Shop",
+                  text = "Manage My Shop",
                   style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
                   color = BharatPurplePrimary
                 )
                 Text(
-                  text = "Start selling your groceries on BreakQ",
+                  text = "Switch to your vendor dashboard",
                   style = MaterialTheme.typography.bodySmall,
                   color = BharatTextSecondary
                 )

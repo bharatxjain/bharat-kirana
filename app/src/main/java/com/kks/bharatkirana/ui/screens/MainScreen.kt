@@ -273,6 +273,12 @@ fun MainScreen(
               // shopId used to route customers to VendorDashboard where the
               // lookup failed and they saw an infinite spinner.
               val isConfirmedVendor = user.serverRole == UserRole.VENDOR
+              // `role` is the choice made on the auth screen, mirrored to disk
+              // as pending_signup_role. It is only a hint for accounts the
+              // server hasn't classified yet — once the server says CUSTOMER,
+              // a stale local "vendor" must not drag them into shop
+              // registration, which has no way back.
+              val isConfirmedCustomer = user.serverRole == UserRole.CUSTOMER
               when {
                 isAdmin -> viewModel.navigateTo(AppScreen.AdminDashboard)
                 !user.profileCompleted -> {
@@ -280,7 +286,7 @@ fun MainScreen(
                   viewModel.navigateTo(AppScreen.CompleteProfile)
                 }
                 isConfirmedVendor -> viewModel.navigateTo(AppScreen.VendorDashboard)
-                role == UserRole.VENDOR -> {
+                role == UserRole.VENDOR && !isConfirmedCustomer -> {
                   viewModel.setPendingSignupRole(role)
                   viewModel.navigateTo(AppScreen.VendorRegistration)
                 }
@@ -745,13 +751,6 @@ fun MainScreen(
         )
       }
 
-      is AppScreen.KiranaWallet -> {
-        KiranaWalletScreen(
-          userProfile = userProfile,
-          onBackClick = { viewModel.navigateBack() }
-        )
-      }
-
       is AppScreen.HelpSupport -> {
         HelpSupportScreen(
           hasWhatsappSupport = supportWhatsappNumber.isNotBlank(),
@@ -861,7 +860,12 @@ fun MainScreen(
           onRegisterClick = { name, owner, addr, phone, category, lat, lng, years, shopPhoto, proof ->
             viewModel.registerVendorShop(name, owner, addr, phone, category, lat, lng, years, shopPhoto, proof)
           },
-          onBackClick = { viewModel.navigateBack() },
+          // This screen can be the first thing shown after login (a vendor with
+          // no shop yet), so the back stack may be empty. Without a fallback it
+          // becomes a dead end with no way out but reinstalling.
+          onBackClick = {
+            if (!viewModel.navigateBack()) viewModel.logout()
+          },
           uploadState = vendorUpload.name,
           uploadPercent = vendorUploadPct,
           uploadError = vendorUploadErr,
@@ -1439,9 +1443,8 @@ fun MainScreen(
                     onEditProfileClick = { viewModel.navigateTo(AppScreen.EditProfile) },
                     onSavedAddressesClick = { viewModel.navigateTo(AppScreen.SavedAddresses) },
                     onNotificationPreferencesClick = { viewModel.navigateTo(AppScreen.NotificationPreferences) },
-                    onKiranaWalletClick = { viewModel.navigateTo(AppScreen.KiranaWallet) },
                     onHelpSupportClick = { viewModel.navigateTo(AppScreen.HelpSupport) },
-                    onVendorRegisterClick = { viewModel.navigateTo(AppScreen.VendorRegistration) },
+                    onOpenVendorDashboard = { viewModel.navigateTo(AppScreen.VendorDashboard) },
                     onAboutUsClick = { viewModel.navigateTo(AppScreen.AboutUs) },
                     onAccountActionsClick = { viewModel.navigateTo(AppScreen.AccountActions) },
                     onWishlistClick = { viewModel.navigateTo(AppScreen.Wishlist) },

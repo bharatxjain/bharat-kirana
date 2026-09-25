@@ -537,7 +537,6 @@ sealed class AppScreen {
   data object SelectLocation : AppScreen()
   data class AddEditAddress(val addressId: String? = null) : AppScreen()
   data object NotificationPreferences : AppScreen()
-  data object KiranaWallet : AppScreen()
   data object HelpSupport : AppScreen()
   data object AboutUs : AppScreen()
   data object HowBreakQWorks : AppScreen()

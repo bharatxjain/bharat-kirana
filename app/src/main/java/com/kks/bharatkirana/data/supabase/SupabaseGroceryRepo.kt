@@ -882,41 +882,44 @@ class SupabaseGroceryRepo(
     }
 
   /** Values the BEFORE INSERT trigger assigns, which the client cannot know up front. */
-  data class OrderServerFields(val orderNumber: Int?, val pickupToken: String?)
+  data class OrderServerFields(
+    val orderNumber: Int?,
+    val pickupToken: String?,
+    val totalAmount: Int?,
+    val itemTotal: Int?,
+    val handlingFee: Int?,
+    val handlingDiscount: Int?,
+    val promoDiscount: Int?,
+    val promoCode: String?
+  )
 
   /**
    * Create the order and its line items in one Postgres transaction via the
    * `create_order_with_items` RPC. If the items INSERT fails for any reason,
    * the parent orders row is rolled back — no more partial persistence.
    *
-   * See ORDER_ATOMICITY_AND_RLS_CLEANUP.sql.
+   * The payload deliberately carries no prices, no totals and no user id: the
+   * RPC looks up every price from `products`, reserves stock, validates the
+   * promo code and derives the buyer from auth.uid(). See
+   * ORDER_SERVER_AUTHORITY.sql.
    */
   suspend fun insertOrder(
     order: Order,
     customerEmail: String,
     customerName: String,
     customerMobile: String,
-    userId: String?,
     promoCode: String? = null,
-    promoDiscount: Int = 0,
     accessToken: String? = null
   ): Result<OrderServerFields> =
     withContext(Dispatchers.IO) {
       runCatching {
         val itemsJsonArray = JSONArray().apply {
           order.items.forEach { ci ->
-            val imageUrl = ci.product.imageUrls.firstOrNull { it.isNotBlank() }
-              ?: ci.product.imageUrl
             put(
               JSONObject().apply {
                 put("product_id", ci.product.id)
-                put("product_name", ci.product.name)
-                put("brand", ci.product.brand)
-                put("image_url", imageUrl)
                 put("weight_label", ci.selectedWeight.label)
-                put("unit_price", ci.selectedWeight.price)
                 put("quantity", ci.quantity)
-                put("line_total", ci.selectedWeight.price * ci.quantity)
               }
             )
           }
@@ -927,17 +930,11 @@ class SupabaseGroceryRepo(
           put("customer_name", customerName)
           put("customer_email", customerEmail.trim().lowercase())
           put("customer_mobile", if (customerMobile.isNotBlank()) customerMobile else "")
-          put("total_amount", order.totalAmount)
           put("status", order.status.label)
           put("order_date", order.orderDate)
           put("qr_code_payload", order.qrCodePayload)
-          put("items_json", itemsJsonArray)
-          if (!userId.isNullOrBlank()) put("user_id", userId)
           if (order.shopId.isNotBlank() && order.shopId != "default_shop") put("shop_id", order.shopId)
-          if (!promoCode.isNullOrBlank()) {
-            put("promo_code", promoCode)
-            put("promo_discount", promoDiscount)
-          }
+          if (!promoCode.isNullOrBlank()) put("promo_code", promoCode)
         }
 
         val rpcPayload = JSONObject().apply {
@@ -966,7 +963,13 @@ class SupabaseGroceryRepo(
         val row = arr.getJSONObject(0)
         OrderServerFields(
           orderNumber = row.optInt("order_number", -1).takeIf { it > 0 },
-          pickupToken = row.optString("pickup_token", "").takeIf { it.isNotBlank() }
+          pickupToken = row.optString("pickup_token", "").takeIf { it.isNotBlank() },
+          totalAmount = row.optInt("total_amount", -1).takeIf { it >= 0 },
+          itemTotal = row.optInt("item_total", -1).takeIf { it >= 0 },
+          handlingFee = row.optInt("handling_fee", -1).takeIf { it >= 0 },
+          handlingDiscount = row.optInt("handling_discount", -1).takeIf { it >= 0 },
+          promoDiscount = row.optInt("promo_discount", -1).takeIf { it >= 0 },
+          promoCode = row.optString("promo_code", "").takeIf { it.isNotBlank() }
         )
       }
     }
