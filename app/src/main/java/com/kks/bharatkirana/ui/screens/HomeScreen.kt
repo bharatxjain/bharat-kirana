@@ -95,6 +95,9 @@ fun HomeScreen(
   onTrackOrderClick: (String) -> Unit = {},
   onShopClick: (com.kks.bharatkirana.data.model.Shop) -> Unit = {},
   onViewAllShopsClick: () -> Unit = {},
+  catalogError: String? = null,
+  onRetryCatalog: () -> Unit = {},
+  cartDiscount: Int = 0,
   modifier: Modifier = Modifier
 ) {
   val cartItemCount = cartItems.sumOf { it.quantity }
@@ -211,7 +214,20 @@ fun HomeScreen(
           modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
         )
       }
-      if (shops.isEmpty()) {
+      if (shops.isEmpty() && catalogError != null) {
+        item {
+          Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 24.dp)) {
+            Text(
+              text = catalogError,
+              style = MaterialTheme.typography.bodySmall,
+              color = BharatTextSecondary
+            )
+            TextButton(onClick = onRetryCatalog) {
+              Text("Retry", fontWeight = FontWeight.SemiBold)
+            }
+          }
+        }
+      } else if (shops.isEmpty()) {
         item {
           Text(
             text = "No shops available yet. Check back soon.",
@@ -236,7 +252,7 @@ fun HomeScreen(
     CartFloatingBanner(
       itemCount = cartItemCount,
       totalAmount = cartTotal,
-      discountApplied = if (cartTotal > 200) 15 else 0,
+      discountApplied = cartDiscount,
       onViewCartClick = onViewCartClick,
       modifier = Modifier
         .align(Alignment.BottomCenter)

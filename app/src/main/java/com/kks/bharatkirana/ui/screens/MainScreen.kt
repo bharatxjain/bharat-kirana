@@ -99,6 +99,10 @@ fun MainScreen(
   val notifications by viewModel.notifications.collectAsState()
   val unreadNotificationCount by viewModel.unreadNotificationCount.collectAsState()
   val cartShopSwitchAlert by viewModel.cartShopSwitchAlert.collectAsState()
+  val checkoutIssue by viewModel.checkoutIssue.collectAsState()
+  val userNotice by viewModel.userNotice.collectAsState()
+  val catalogError by viewModel.catalogError.collectAsState()
+  val realtimeConnected by viewModel.realtimeConnected.collectAsState()
 
   // Round 3: Remote Config-driven state
   val isMaintenanceMode by viewModel.isMaintenanceMode.collectAsState()
@@ -117,6 +121,16 @@ fun MainScreen(
   var updateDialogDismissed by rememberSaveable { mutableStateOf(false) }
 
   val totalCartCount = cartItems.sumOf { it.quantity }
+  // The same handling-fee discount rule the server bills with (app_settings).
+  val cartTotalValue = cartItems.sumOf { it.totalPrice }
+  val cartBannerDiscount = if (cartTotalValue > minOrderForFreeHandling) freeHandlingDiscount else 0
+
+  LaunchedEffect(userNotice) {
+    userNotice?.let {
+      android.widget.Toast.makeText(context, it, android.widget.Toast.LENGTH_SHORT).show()
+      viewModel.clearUserNotice()
+    }
+  }
 
   // Permission Launchers
   val locationPermissionLauncher = rememberLauncherForActivityResult(
@@ -163,6 +177,59 @@ fun MainScreen(
       }
       currentScreen != AppScreen.Main && currentScreen != AppScreen.VendorDashboard -> viewModel.navigateBack()
     }
+  }
+
+  // Checkout outcome that needs the customer: a changed total or a refusal.
+  when (val issue = checkoutIssue) {
+    is GroceryViewModel.CheckoutIssue.PriceChanged -> AlertDialog(
+      onDismissRequest = { viewModel.dismissCheckoutIssue() },
+      containerColor = Color.White,
+      shape = RoundedCornerShape(16.dp),
+      title = { Text("Your total has changed", fontWeight = FontWeight.Bold, color = BharatTextPrimary) },
+      text = {
+        Text(
+          text = buildString {
+            append("Prices or offers changed since you opened your cart. Your total is now ₹${issue.serverTotal} (was ₹${issue.shownTotal}).")
+            if (issue.promoDropped) append(" Your promo code no longer applies.")
+          },
+          fontSize = 13.sp,
+          color = BharatTextSecondary
+        )
+      },
+      confirmButton = {
+        Button(
+          onClick = { viewModel.confirmPriceChangeAndPlaceOrder() },
+          colors = ButtonDefaults.buttonColors(containerColor = BharatPurplePrimary),
+          shape = RoundedCornerShape(10.dp)
+        ) {
+          Text("Place order for ₹${issue.serverTotal}", color = Color.White, fontWeight = FontWeight.Bold)
+        }
+      },
+      dismissButton = {
+        TextButton(onClick = { viewModel.dismissCheckoutIssue() }) {
+          Text("Review cart", color = BharatPurplePrimary, fontWeight = FontWeight.SemiBold)
+        }
+      }
+    )
+    is GroceryViewModel.CheckoutIssue.Failed -> AlertDialog(
+      onDismissRequest = { viewModel.dismissCheckoutIssue() },
+      containerColor = Color.White,
+      shape = RoundedCornerShape(16.dp),
+      title = { Text("Couldn't place your order", fontWeight = FontWeight.Bold, color = BharatTextPrimary) },
+      text = {
+        Text(
+          text = "${issue.message} Your cart is still here.",
+          fontSize = 13.sp,
+          color = BharatTextSecondary
+        )
+      },
+      confirmButton = {
+        TextButton(onClick = { viewModel.dismissCheckoutIssue() }) {
+          Text("OK", color = BharatPurplePrimary, fontWeight = FontWeight.SemiBold)
+        }
+      }
+    )
+    null -> Unit
   }
 
   // Global cart-shop-switch confirmation. Sits at the top of MainScreen so any
@@ -441,7 +508,8 @@ fun MainScreen(
               viewModel.navigateTo(AppScreen.Main)
             },
             shopDistanceLabel = shopDistance,
-            shop = orderShop
+            shop = orderShop,
+            isLive = realtimeConnected
           )
         }
       }
@@ -794,6 +862,7 @@ fun MainScreen(
             products = shopProducts,
             cartItemCount = totalCartCount,
             cartTotal = cartItems.sumOf { it.totalPrice },
+            cartDiscount = cartBannerDiscount,
             onViewCartClick = { viewModel.navigateTo(AppScreen.Cart) },
             categories = categories,
             cartQuantityFor = { product ->
@@ -1234,7 +1303,10 @@ fun MainScreen(
                     activeOrder = null,
                     onTrackOrderClick = { orderId -> viewModel.navigateTo(AppScreen.OrderDetails(orderId)) },
                     onShopClick = { shop -> viewModel.navigateTo(AppScreen.ShopDetail(shop.id)) },
-                    onViewAllShopsClick = { viewModel.navigateTo(AppScreen.NearbyShops) }
+                    onViewAllShopsClick = { viewModel.navigateTo(AppScreen.NearbyShops) },
+                    catalogError = catalogError,
+                    onRetryCatalog = { viewModel.loadSupabaseData() },
+                    cartDiscount = cartBannerDiscount
                   )
                   ActiveOrderBottomSheet(
                     order = activeOrder,
@@ -1277,7 +1349,8 @@ fun MainScreen(
                     viewModel.updateCartQuantity(prodId, weightLabel, delta)
                   },
                   onViewCartClick = { viewModel.navigateTo(AppScreen.Cart) },
-                  isLoading = isLoading
+                  isLoading = isLoading,
+                  cartDiscount = cartBannerDiscount
                 )
               }
 
@@ -1293,15 +1366,30 @@ fun MainScreen(
                   },
                   onShopClick = { shop -> viewModel.navigateTo(AppScreen.ShopDetail(shop.id)) },
                   onAddToCart = { prod ->
-                    val defaultWeight = prod.weightOptions.firstOrNull()
-                    if (defaultWeight != null) viewModel.addToCart(prod, defaultWeight, 1)
+                    // Several shops sell this item: never pick one silently. Add
+                    // straight away only when the cart is already from this shop.
+                    val shopsSelling = products
+                      .filter {
+                        it.name.trim().equals(prod.name.trim(), ignoreCase = true) &&
+                          it.brand.trim().equals(prod.brand.trim(), ignoreCase = true)
+                      }
+                      .map { it.shopId }
+                      .distinct()
+                    val cartShopId = cartItems.firstOrNull()?.product?.shopId
+                    if (shopsSelling.size > 1 && prod.shopId != cartShopId) {
+                      viewModel.navigateTo(AppScreen.ShopsForProduct(prod.name))
+                    } else {
+                      val defaultWeight = prod.weightOptions.firstOrNull()
+                      if (defaultWeight != null) viewModel.addToCart(prod, defaultWeight, 1)
+                    }
                   },
                   onUpdateCartQty = { prodId, weightLabel, delta ->
                     viewModel.updateCartQuantity(prodId, weightLabel, delta)
                   },
                   onViewCartClick = { viewModel.navigateTo(AppScreen.Cart) },
                   suggestions = searchSuggestions,
-                  onSuggestionClick = { suggestion -> viewModel.onSuggestionSelected(suggestion) }
+                  onSuggestionClick = { suggestion -> viewModel.onSuggestionSelected(suggestion) },
+                  cartDiscount = cartBannerDiscount
                 )
               }
 

@@ -11,6 +11,9 @@ import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
 import com.kks.bharatkirana.MainActivity
 import com.kks.bharatkirana.R
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 
 class MyFirebaseMessagingService : FirebaseMessagingService() {
 
@@ -22,6 +25,10 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
         const val EXTRA_ORDER_ID = "notification_order_id"
         const val EXTRA_ROUTE = "notification_route"
         const val EXTRA_FROM_PUSH = "from_push_notification"
+
+        // A token Firebase rotates while the app is running; the ViewModel syncs it.
+        private val _tokenRefreshes = MutableSharedFlow<String>(extraBufferCapacity = 1)
+        val tokenRefreshes: SharedFlow<String> = _tokenRefreshes.asSharedFlow()
 
         // Idempotent — safe to call at every app start.
         fun ensureChannel(context: Context) {
@@ -70,9 +77,9 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
 
     override fun onNewToken(token: String) {
         super.onNewToken(token)
-        // Persist locally; ViewModel picks it up on next app open / login and
-        // PATCHes profiles.fcm_token via syncFcmTokenToServer().
+        // Persisted for the next launch; a running, signed-in app syncs it now.
         saveTokenLocally(token)
+        _tokenRefreshes.tryEmit(token)
     }
 
     private fun showNotification(title: String, message: String, orderId: String?, route: String?) {

@@ -70,6 +70,9 @@ create policy app_settings_read on public.app_settings
 alter table public.orders add column if not exists item_total        int;
 alter table public.orders add column if not exists handling_fee      int;
 alter table public.orders add column if not exists handling_discount int;
+-- The shop as it was when the order was placed (history must not change if it's renamed).
+alter table public.orders add column if not exists shop_name         text;
+alter table public.orders add column if not exists shop_address      text;
 
 
 -- -----------------------------------------------------------------------------
@@ -217,6 +220,11 @@ revoke all on function public.evaluate_promo(text, text, int, uuid) from public,
 --    this function, ownership is enforced explicitly below:
 --      - user_id is taken from auth.uid(), never from the payload
 --      - every product must belong to the shop the order is placed against
+--      - status, customer email/name/mobile, order_date and qr_code_payload
+--        are set here, not by the app (SECURITY_STEP1.sql)
+--      - blocked accounts cannot order
+--      - a retry with the same order id returns the existing order, and an
+--        expected_total that no longer matches is refused (STEP2_ORDER_RELIABILITY.sql)
 --    search_path is pinned so a rogue schema cannot shadow these tables.
 -- -----------------------------------------------------------------------------
 drop function if exists public.create_order_with_items(jsonb, jsonb);
@@ -262,6 +270,11 @@ declare
   v_promo_disc int := 0;
   v_promo_code text := null;
   v_total      int;
+  v_email      text;
+  v_name       text;
+  v_mobile     text;
+  v_expected   int := nullif(trim(coalesce(p_order->>'expected_total', '')), '')::int;
+  v_owner_uid  uuid;
 begin
   ---------------------------------------------------------------------------
   -- Identity and shape
@@ -271,8 +284,31 @@ begin
       using errcode = 'P0001';
   end if;
 
+  if public.is_current_user_blocked() then
+    raise exception 'This account has been blocked. Please contact BreakQ support.'
+      using errcode = 'P0001';
+  end if;
+
   if v_order_id is null then
     raise exception 'MISSING_ORDER_ID' using errcode = 'P0001';
+  end if;
+
+  -- A retry of the same checkout (e.g. the first response was lost) gets the
+  -- order that already exists, with no second stock hold or notification.
+  perform pg_advisory_xact_lock(hashtext('breakq_order:' || v_order_id));
+  select o.user_id into v_owner_uid from public.orders o where o.id = v_order_id;
+  if found then
+    if v_owner_uid is distinct from v_uid then
+      raise exception 'This order reference is already in use. Please try again.'
+        using errcode = 'P0001';
+    end if;
+    return query
+      select o.order_number::int, o.pickup_token::text, o.total_amount::int,
+             o.item_total::int, o.handling_fee::int, o.handling_discount::int,
+             o.promo_discount::int, o.promo_code::text
+        from public.orders o
+       where o.id = v_order_id;
+    return;
   end if;
 
   if v_shop_id is null then
@@ -284,6 +320,7 @@ begin
   end if;
 
   select s.id, s.name, s.status::text as status_text,
+         coalesce(s.address, '')            as address,
          coalesce(s.is_deleted, false)      as is_deleted,
          coalesce(s.accepting_orders, true) as accepting_orders
     into v_shop
@@ -434,31 +471,58 @@ begin
 
   v_total := greatest(v_items_sum + v_handling - v_hdiscount - v_promo_disc, 0);
 
+  -- The app sends the total the customer saw. If the server's figure differs
+  -- (price, fee or promo changed), nothing is created and the app asks again.
+  if v_expected is not null and v_expected <> v_total then
+    raise exception 'PRICE_CHANGED'
+      using errcode = 'P0001',
+            detail  = json_build_object(
+              'total',             v_total,
+              'item_total',        v_items_sum,
+              'handling_fee',      v_handling,
+              'handling_discount', v_hdiscount,
+              'promo_discount',    v_promo_disc,
+              'promo_code',        v_promo_code
+            )::text;
+  end if;
+
   ---------------------------------------------------------------------------
   -- Persist. The BEFORE INSERT trigger assigns order_number and pickup_token.
   ---------------------------------------------------------------------------
+  -- Who the vendor sees comes from the account, not the app. The payload
+  -- name/mobile are only used when the profile has none yet.
+  select lower(trim(u.email)) into v_email from auth.users u where u.id = v_uid;
+  select nullif(trim(p.full_name), ''), nullif(trim(p.mobile_number), '')
+    into v_name, v_mobile
+    from public.profiles p
+   where p.id = v_uid;
+
   insert into public.orders (
     id, customer_name, customer_email, customer_mobile,
     total_amount, item_total, handling_fee, handling_discount,
     status, order_date, qr_code_payload, items_json,
-    user_id, shop_id, promo_code, promo_discount
+    user_id, shop_id, promo_code, promo_discount,
+    shop_name, shop_address
   ) values (
     v_order_id,
-    coalesce(p_order->>'customer_name', ''),
-    lower(trim(coalesce(p_order->>'customer_email', ''))),
-    coalesce(p_order->>'customer_mobile', ''),
+    coalesce(v_name, nullif(trim(p_order->>'customer_name'), ''), ''),
+    coalesce(v_email, ''),
+    coalesce(v_mobile, nullif(trim(p_order->>'customer_mobile'), ''), ''),
     v_total,
     v_items_sum,
     v_handling,
     v_hdiscount,
-    coalesce(p_order->>'status', 'Order Placed'),
-    coalesce(p_order->>'order_date', ''),
-    coalesce(p_order->>'qr_code_payload', ''),
+    'Order Placed',
+    'Today, ' || to_char(now() at time zone 'Asia/Kolkata', 'FMHH12:MI AM'),
+    -- Same format as buildCustomerQrPayload() in the app.
+    'BREAKQ:USER:' || coalesce(nullif(v_email, ''), 'unknown') || ':REF:' || upper(right(v_order_id, 4)),
     v_priced,
     v_uid,
     v_shop_id,
     v_promo_code,
-    v_promo_disc
+    v_promo_disc,
+    v_shop.name,
+    v_shop.address
   );
 
   insert into public.order_items (

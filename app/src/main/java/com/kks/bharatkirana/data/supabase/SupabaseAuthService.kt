@@ -30,6 +30,84 @@ class SupabaseAuthService(
   var currentUserId: String? = null
     private set
 
+  @Volatile var accessTokenExpiresAtMillis: Long = 0L
+    private set
+
+  // Called after a refresh so the app can persist the rotated refresh token and
+  // hand the new access token to Realtime. May run on an OkHttp thread.
+  @Volatile var onSessionRefreshed: ((AuthSession) -> Unit)? = null
+
+  enum class RefreshOutcome { REFRESHED, FAILED, REJECTED }
+
+  // Refresh tokens are single-use: two concurrent refreshes would burn the
+  // session, so every refresh goes through this lock.
+  private val refreshLock = Any()
+
+  private fun rememberExpiry(obj: JSONObject) {
+    val expiresAt = obj.optLong("expires_at", 0L)
+    accessTokenExpiresAtMillis = if (expiresAt > 0) {
+      expiresAt * 1000
+    } else {
+      System.currentTimeMillis() + obj.optLong("expires_in", 3600L) * 1000
+    }
+  }
+
+  private fun refreshLocked(): RefreshOutcome {
+    val refreshToken = currentRefreshToken ?: return RefreshOutcome.REJECTED
+    val request = Request.Builder()
+      .url("${SupabaseConfig.authUrl}/token?grant_type=refresh_token")
+      .addHeader("apikey", SupabaseConfig.API_KEY)
+      .addHeader("Authorization", "Bearer ${SupabaseConfig.API_KEY}")
+      .addHeader("Content-Type", "application/json")
+      .post(JSONObject().put("refresh_token", refreshToken).toString().toRequestBody(jsonMediaType))
+      .build()
+    return try {
+      client.newCall(request).execute().use { response ->
+        val body = response.body?.string().orEmpty()
+        when {
+          response.isSuccessful -> {
+            val obj = JSONObject(body)
+            val accessToken = obj.optString("access_token")
+            val newRefreshToken = obj.optString("refresh_token")
+            if (accessToken.isBlank() || newRefreshToken.isBlank()) return RefreshOutcome.FAILED
+            currentAccessToken = accessToken
+            currentRefreshToken = newRefreshToken
+            rememberExpiry(obj)
+            onSessionRefreshed?.invoke(
+              AuthSession(
+                accessToken = accessToken,
+                refreshToken = newRefreshToken,
+                userId = currentUserId.orEmpty(),
+                email = currentUserEmail.orEmpty()
+              )
+            )
+            RefreshOutcome.REFRESHED
+          }
+          response.code == 400 || response.code == 401 -> RefreshOutcome.REJECTED
+          else -> RefreshOutcome.FAILED
+        }
+      }
+    } catch (_: Exception) {
+      RefreshOutcome.FAILED
+    }
+  }
+
+  /** Renews the session now (used by the proactive keep-alive). */
+  suspend fun refreshSession(): RefreshOutcome = withContext(Dispatchers.IO) {
+    synchronized(refreshLock) { refreshLocked() }
+  }
+
+  /**
+   * For a request that was refused with [staleAccessToken]: returns a usable
+   * access token (refreshing if nobody else already did), or null if the
+   * session can't be renewed. Blocking — call off the main thread.
+   */
+  fun refreshBlocking(staleAccessToken: String): String? = synchronized(refreshLock) {
+    val current = currentAccessToken ?: return null
+    if (current != staleAccessToken) return current
+    if (refreshLocked() == RefreshOutcome.REFRESHED) currentAccessToken else null
+  }
+
   /**
    * Sign up a new user with email and password
    */
@@ -67,6 +145,7 @@ class SupabaseAuthService(
           currentRefreshToken = refreshToken
           currentUserEmail = userEmail
           currentUserId = userId
+          rememberExpiry(obj)
         }
 
         AuthSession(
@@ -120,6 +199,7 @@ class SupabaseAuthService(
         currentRefreshToken = refreshToken
         currentUserEmail = userEmail
         currentUserId = userId
+        rememberExpiry(obj)
 
         AuthSession(
           accessToken = accessToken,
@@ -209,6 +289,7 @@ class SupabaseAuthService(
         currentRefreshToken = refreshToken
         currentUserEmail = userEmail
         currentUserId = userId
+        rememberExpiry(obj)
 
         AuthSession(
           accessToken = accessToken,
@@ -266,6 +347,7 @@ class SupabaseAuthService(
         currentRefreshToken = newRefreshToken
         currentUserEmail = userEmail
         currentUserId = userId
+        rememberExpiry(obj)
 
         AuthSession(
           accessToken = accessToken,
@@ -362,6 +444,7 @@ class SupabaseAuthService(
       currentRefreshToken = null
       currentUserEmail = null
       currentUserId = null
+      accessTokenExpiresAtMillis = 0L
     }
   }
 }

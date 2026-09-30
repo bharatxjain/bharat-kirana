@@ -107,7 +107,7 @@ fun VendorDashboardScreen(
 
   // Real Analytics Calculations
   val totalOrders = orders.size
-  val totalRevenue = orders.sumOf { it.totalAmount }
+  val totalRevenue = orders.filter { it.status == OrderStatus.COMPLETED }.sumOf { it.totalAmount }
   val activeProducts = products.size
   val lowStockCount = products.count { it.stockQty != null && it.stockQty <= 5 }
 
@@ -333,7 +333,7 @@ fun VendorDashboardScreen(
                         Spacer(modifier = Modifier.height(8.dp))
                         Text(text = "₹$totalRevenue", style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.Bold), color = Color.White)
                         Spacer(modifier = Modifier.height(8.dp))
-                        Text(text = "Verified settlements", fontSize = 12.sp, color = Color.White.copy(alpha = 0.9f))
+                        Text(text = "From completed orders", fontSize = 12.sp, color = Color.White.copy(alpha = 0.9f))
                       }
                       Box(modifier = Modifier.size(48.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.15f)), contentAlignment = Alignment.Center) {
                         Icon(Icons.Default.AccountBalanceWallet, contentDescription = null, tint = Color.White, modifier = Modifier.size(24.dp))

@@ -667,7 +667,7 @@ fun DailyEssentialCard(
 fun CartFloatingBanner(
   itemCount: Int,
   totalAmount: Int,
-  discountApplied: Int = 15,
+  discountApplied: Int = 0,
   onViewCartClick: () -> Unit,
   modifier: Modifier = Modifier
 ) {

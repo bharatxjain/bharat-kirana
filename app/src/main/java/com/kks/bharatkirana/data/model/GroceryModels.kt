@@ -191,7 +191,9 @@ data class UserProfile(
   val fcmToken: String? = null,
   // Populated from Supabase `profiles.role` after login. A UI hint only — real
   // authorization is enforced by Supabase RLS.
-  val serverRole: UserRole? = null
+  val serverRole: UserRole? = null,
+  // profiles.is_blocked — the server refuses a blocked account's writes too.
+  val isBlocked: Boolean = false
 ) {
   // Admin accounts are recognised only so the app can refuse them and point
   // them to the web admin panel.
@@ -452,8 +454,9 @@ data class Order(
   val orderDate: String, // e.g. "Today, 2:30 PM"
   val status: OrderStatus = OrderStatus.READY_FOR_PICKUP,
   val expectedPickupTime: String = "Today by 5:00 PM",
-  val storeName: String = "BreakQ Store",
-  val storeAddress: String = "Banjara Hills Rd 12, Hyderabad",
+  // The shop as it was when the order was placed (orders.shop_name/shop_address).
+  val storeName: String = "",
+  val storeAddress: String = "",
   val timeline: List<OrderTimelineItem> = emptyList(),
   val qrCodePayload: String = "",
   val backupCode: String = "123456",

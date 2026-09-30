@@ -55,6 +55,7 @@ fun ShopDetailScreen(
   onDecreaseQty: (Product) -> Unit,
   cartItemCount: Int = 0,
   cartTotal: Int = 0,
+  cartDiscount: Int = 0,
   onViewCartClick: () -> Unit = {},
   modifier: Modifier = Modifier
 ) {
@@ -98,7 +99,7 @@ fun ShopDetailScreen(
       CartFloatingBanner(
         itemCount = cartItemCount,
         totalAmount = cartTotal,
-        discountApplied = if (cartTotal > 200) 15 else 0,
+        discountApplied = cartDiscount,
         onViewCartClick = onViewCartClick
       )
     },

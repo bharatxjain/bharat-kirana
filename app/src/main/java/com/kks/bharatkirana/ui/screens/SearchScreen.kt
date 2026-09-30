@@ -75,6 +75,7 @@ fun SearchScreen(
   onShopClick: (Shop) -> Unit = {},
   suggestions: List<SearchSuggestion> = emptyList(),
   onSuggestionClick: (SearchSuggestion) -> Unit = {},
+  cartDiscount: Int = 0,
   modifier: Modifier = Modifier
 ) {
   val popularKeywords = listOf("Atta", "Basmati Rice", "Amul Milk", "Sunflower Oil", "Spinach", "Bread", "Tata Salt")
@@ -128,9 +129,13 @@ fun SearchScreen(
     }
   }
   // Dedupe by name+brand: tapping a card opens a "shops carrying this" list.
-  val displayProducts = filteredProducts.distinctBy {
-    "${it.name.trim().lowercase()}|${it.brand.trim().lowercase()}"
-  }
+  // Show the cart's own shop's copy when it sells the item, so the card's
+  // quantity and +/- act on the product actually in the cart.
+  val cartShopId = cartItems.firstOrNull()?.product?.shopId
+  val displayProducts = filteredProducts
+    .groupBy { "${it.name.trim().lowercase()}|${it.brand.trim().lowercase()}" }
+    .values
+    .map { group -> group.firstOrNull { it.shopId == cartShopId } ?: group.first() }
 
   val cartItemCount = cartItems.sumOf { it.quantity }
   val cartTotal = cartItems.sumOf { it.totalPrice }
@@ -345,7 +350,7 @@ fun SearchScreen(
     CartFloatingBanner(
       itemCount = cartItemCount,
       totalAmount = cartTotal,
-      discountApplied = if (cartTotal > 200) 15 else 0,
+      discountApplied = cartDiscount,
       onViewCartClick = onViewCartClick,
       modifier = Modifier
         .align(Alignment.BottomCenter)

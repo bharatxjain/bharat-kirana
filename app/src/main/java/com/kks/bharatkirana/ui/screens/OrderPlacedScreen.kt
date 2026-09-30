@@ -68,6 +68,7 @@ fun OrderPlacedScreen(
   onTrackOrderClick: () -> Unit = onViewOrdersClick,
   shopDistanceLabel: String? = null,
   shop: com.kks.bharatkirana.data.model.Shop? = null,
+  isLive: Boolean = true,
   modifier: Modifier = Modifier
 ) {
   Surface(
@@ -291,7 +292,7 @@ fun OrderPlacedScreen(
         ) {
           Column(modifier = Modifier.padding(16.dp)) {
             Text(
-              text = "Live Order Status",
+              text = if (isLive) "Live Order Status" else "Order Status · reconnecting…",
               style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
               color = BharatTextPrimary
             )

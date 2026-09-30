@@ -74,6 +74,7 @@ fun CategoriesScreen(
   onUpdateCartQty: (String, String, Int) -> Unit,
   onViewCartClick: () -> Unit,
   isLoading: Boolean = false,
+  cartDiscount: Int = 0,
   modifier: Modifier = Modifier
 ) {
   val currentCategory = selectedCategory ?: categories.firstOrNull()
@@ -273,7 +274,7 @@ fun CategoriesScreen(
     CartFloatingBanner(
       itemCount = cartItemCount,
       totalAmount = cartTotal,
-      discountApplied = if (cartTotal > 200) 15 else 0,
+      discountApplied = cartDiscount,
       onViewCartClick = onViewCartClick,
       modifier = Modifier
         .align(Alignment.BottomCenter)

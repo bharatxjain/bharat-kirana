@@ -112,14 +112,29 @@ class MainActivity : ComponentActivity(), PaymentResultWithDataListener {
 
   private fun handlePushIntent(intent: Intent?) {
     if (intent == null) return
-    if (!intent.getBooleanExtra(MyFirebaseMessagingService.EXTRA_FROM_PUSH, false)) return
-    val orderId = intent.getStringExtra(MyFirebaseMessagingService.EXTRA_ORDER_ID)
-    val route = intent.getStringExtra(MyFirebaseMessagingService.EXTRA_ROUTE)
-    viewModel.handleNotificationTap(orderId, route)
+    val fromOwnNotification = intent.getBooleanExtra(MyFirebaseMessagingService.EXTRA_FROM_PUSH, false)
+    // When the app is in the background or closed, Android shows the FCM
+    // notification itself and puts its data payload into the launch intent.
+    val fromSystemTray = !fromOwnNotification && intent.hasExtra("google.message_id")
+    if (!fromOwnNotification && !fromSystemTray) return
+    val orderId = if (fromOwnNotification) {
+      intent.getStringExtra(MyFirebaseMessagingService.EXTRA_ORDER_ID)
+    } else {
+      intent.getStringExtra("order_id")
+    }
+    val route = if (fromOwnNotification) {
+      intent.getStringExtra(MyFirebaseMessagingService.EXTRA_ROUTE)
+    } else {
+      intent.getStringExtra("route")
+    }
+    viewModel.handleNotificationTap(orderId?.takeIf { it.isNotBlank() }, route?.takeIf { it.isNotBlank() })
     // Consume the extras so orientation changes don't re-trigger routing.
     intent.removeExtra(MyFirebaseMessagingService.EXTRA_FROM_PUSH)
     intent.removeExtra(MyFirebaseMessagingService.EXTRA_ORDER_ID)
     intent.removeExtra(MyFirebaseMessagingService.EXTRA_ROUTE)
+    intent.removeExtra("google.message_id")
+    intent.removeExtra("order_id")
+    intent.removeExtra("route")
   }
 
   private fun openRazorpayCheckout(state: GroceryViewModel.CheckoutState.ReadyToPay) {

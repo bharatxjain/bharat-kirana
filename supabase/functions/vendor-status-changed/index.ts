@@ -11,7 +11,12 @@
 //
 // Secrets required:
 //   RESEND_API_KEY, FROM_EMAIL, APP_NAME, ADMIN_PANEL_URL,
-//   SUPABASE_URL (auto), SERVICE_ROLE_KEY
+//   SUPABASE_URL (auto), SERVICE_ROLE_KEY, WEBHOOK_SECRET
+//
+// Security: the webhook must send header x-webhook-secret = WEBHOOK_SECRET
+// (same secret notify-order-status uses). The shop is re-read from the
+// database and its real status must match the one announced. Shop text is
+// HTML-escaped.
 
 import { serve } from "https://deno.land/std@0.208.0/http/server.ts";
 
@@ -20,6 +25,7 @@ const FROM_EMAIL = Deno.env.get("FROM_EMAIL") ?? "onboarding@resend.dev";
 const APP_NAME = Deno.env.get("APP_NAME") ?? "BreakQ";
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE_KEY = Deno.env.get("SERVICE_ROLE_KEY")!;
+const WEBHOOK_SECRET = Deno.env.get("WEBHOOK_SECRET") ?? "";
 
 const PURPLE = "#6C00FF";
 const GREEN = "#059669";
@@ -41,9 +47,35 @@ interface WebhookPayload {
   old_record?: ShopRow;
 }
 
+function safeEqual(a: string, b: string): boolean {
+  const x = new TextEncoder().encode(a);
+  const y = new TextEncoder().encode(b);
+  let diff = x.length ^ y.length;
+  for (let i = 0; i < Math.max(x.length, y.length); i++) diff |= (x[i] ?? 0) ^ (y[i] ?? 0);
+  return diff === 0;
+}
+
+function esc(v: unknown): string {
+  return String(v ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+async function loadShop(id: string): Promise<ShopRow | null> {
+  const r = await fetch(
+    `${SUPABASE_URL}/rest/v1/shops?id=eq.${encodeURIComponent(id)}&select=*`,
+    { headers: { apikey: SERVICE_ROLE_KEY, Authorization: `Bearer ${SERVICE_ROLE_KEY}` } },
+  );
+  if (!r.ok) return null;
+  return (await r.json())?.[0] ?? null;
+}
+
 async function lookupOwnerEmail(ownerId: string): Promise<string | null> {
   const r = await fetch(
-    `${SUPABASE_URL}/auth/v1/admin/users/${ownerId}`,
+    `${SUPABASE_URL}/auth/v1/admin/users/${encodeURIComponent(ownerId)}`,
     { headers: { apikey: SERVICE_ROLE_KEY, Authorization: `Bearer ${SERVICE_ROLE_KEY}` } },
   );
   if (!r.ok) return null;
@@ -90,8 +122,8 @@ function shell(body: string, accent: string): string {
 function approvedBody(shop: ShopRow): string {
   return shell(`
     <h2 style="margin:0 0 12px;color:${GREEN}">Your shop is approved 🎉</h2>
-    <p>Hi ${shop.owner_name ?? "there"},</p>
-    <p><b>${shop.name}</b> is now live on ${APP_NAME}. Customers in your area
+    <p>Hi ${esc(shop.owner_name ?? "there")},</p>
+    <p><b>${esc(shop.name)}</b> is now live on ${APP_NAME}. Customers in your area
        can find your shop, browse your products, and place pickup orders.</p>
     <p>Open the ${APP_NAME} app to add products, set stock levels, and start
        receiving orders.</p>`, GREEN);
@@ -101,11 +133,11 @@ function rejectedBody(shop: ShopRow): string {
   const reason = shop.rejection_reason?.trim();
   return shell(`
     <h2 style="margin:0 0 12px;color:${RED}">Registration not approved</h2>
-    <p>Hi ${shop.owner_name ?? "there"},</p>
-    <p>We couldn't approve <b>${shop.name}</b> at this time.</p>
+    <p>Hi ${esc(shop.owner_name ?? "there")},</p>
+    <p>We couldn't approve <b>${esc(shop.name)}</b> at this time.</p>
     ${reason ? `<p style="background:#FEF2F2;padding:12px 16px;border-radius:8px;
                           border-left:3px solid ${RED}">
-                 <b>Reason:</b> ${reason}</p>` : ""}
+                 <b>Reason:</b> ${esc(reason)}</p>` : ""}
     <p>You can update your registration details in the ${APP_NAME} app and
        submit again, or reply to this email if you have questions.</p>`, RED);
 }
@@ -113,26 +145,40 @@ function rejectedBody(shop: ShopRow): string {
 function suspendedBody(shop: ShopRow): string {
   return shell(`
     <h2 style="margin:0 0 12px;color:${RED}">Your shop is suspended</h2>
-    <p>Hi ${shop.owner_name ?? "there"},</p>
-    <p><b>${shop.name}</b> has been temporarily suspended and is not visible
+    <p>Hi ${esc(shop.owner_name ?? "there")},</p>
+    <p><b>${esc(shop.name)}</b> has been temporarily suspended and is not visible
        to customers.</p>
     <p>Please reply to this email so we can help resolve the issue.</p>`, RED);
 }
 
 serve(async (req) => {
+  if (req.method !== "POST") return new Response("POST only", { status: 405 });
+  if (!WEBHOOK_SECRET) {
+    console.error("vendor-status-changed: WEBHOOK_SECRET not configured — refusing");
+    return new Response("Not configured", { status: 500 });
+  }
+  if (!safeEqual(req.headers.get("x-webhook-secret") || "", WEBHOOK_SECRET)) {
+    return new Response("Unauthorized", { status: 401 });
+  }
+
   try {
     const p: WebhookPayload = await req.json();
-    if (p.table !== "shops" || p.type !== "UPDATE" || !p.record || !p.old_record) {
+    if (p.table !== "shops" || p.type !== "UPDATE" || !p.record?.id || !p.old_record) {
       return new Response("Ignored", { status: 200 });
     }
 
-    const newStatus = p.record.status;
+    const announced = p.record.status;
     const oldStatus = p.old_record.status;
-    if (!newStatus || newStatus === oldStatus) {
+    if (!announced || announced === oldStatus) {
       return new Response("No status change", { status: 200 });
     }
 
-    const shop = p.record;
+    // Trust the database, not the request body.
+    const shop = await loadShop(String(p.record.id));
+    if (!shop) return new Response("Shop not found", { status: 200 });
+    const newStatus = shop.status;
+    if (newStatus !== announced) return new Response("Stale event", { status: 200 });
+
     let subject: string;
     let html: string;
     let notificationTitle: string;
@@ -170,7 +216,7 @@ serve(async (req) => {
 
     return new Response("OK", { status: 200 });
   } catch (e) {
-    console.error(e);
-    return new Response(`Error: ${e}`, { status: 500 });
+    console.error("vendor-status-changed failed:", e instanceof Error ? e.message : e);
+    return new Response("Error", { status: 500 });
   }
 });

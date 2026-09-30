@@ -13,7 +13,11 @@
 //
 // Secrets required:
 //   RESEND_API_KEY, ADMIN_EMAIL, FROM_EMAIL, APP_NAME, ADMIN_PANEL_URL,
-//   SUPABASE_URL (auto), SERVICE_ROLE_KEY
+//   SUPABASE_URL (auto), SERVICE_ROLE_KEY, WEBHOOK_SECRET
+//
+// Security: the webhook must send header x-webhook-secret = WEBHOOK_SECRET
+// (same secret notify-order-status uses). The shop is re-read from the
+// database; the request body only says which shop. Shop text is HTML-escaped.
 
 import { serve } from "https://deno.land/std@0.208.0/http/server.ts";
 
@@ -24,6 +28,7 @@ const APP_NAME = Deno.env.get("APP_NAME") ?? "BreakQ";
 const ADMIN_PANEL_URL = Deno.env.get("ADMIN_PANEL_URL")!;
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE_KEY = Deno.env.get("SERVICE_ROLE_KEY")!;
+const WEBHOOK_SECRET = Deno.env.get("WEBHOOK_SECRET") ?? "";
 
 const PURPLE = "#6C00FF";
 
@@ -45,9 +50,39 @@ interface WebhookPayload {
   old_record?: ShopRow;
 }
 
+function safeEqual(a: string, b: string): boolean {
+  const x = new TextEncoder().encode(a);
+  const y = new TextEncoder().encode(b);
+  let diff = x.length ^ y.length;
+  for (let i = 0; i < Math.max(x.length, y.length); i++) diff |= (x[i] ?? 0) ^ (y[i] ?? 0);
+  return diff === 0;
+}
+
+function esc(v: unknown): string {
+  return String(v ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function oneLine(v: unknown): string {
+  return String(v ?? "").replace(/[\r\n]+/g, " ").slice(0, 120);
+}
+
+async function loadShop(id: string): Promise<ShopRow | null> {
+  const r = await fetch(
+    `${SUPABASE_URL}/rest/v1/shops?id=eq.${encodeURIComponent(id)}&select=*`,
+    { headers: { apikey: SERVICE_ROLE_KEY, Authorization: `Bearer ${SERVICE_ROLE_KEY}` } },
+  );
+  if (!r.ok) return null;
+  return (await r.json())?.[0] ?? null;
+}
+
 async function lookupOwnerEmail(ownerId: string): Promise<string | null> {
   const r = await fetch(
-    `${SUPABASE_URL}/auth/v1/admin/users/${ownerId}`,
+    `${SUPABASE_URL}/auth/v1/admin/users/${encodeURIComponent(ownerId)}`,
     { headers: { apikey: SERVICE_ROLE_KEY, Authorization: `Bearer ${SERVICE_ROLE_KEY}` } },
   );
   if (!r.ok) return null;
@@ -96,14 +131,14 @@ function shell(body: string): string {
 function vendorEmailBody(shop: ShopRow): string {
   return shell(`
     <h2 style="margin:0 0 12px;color:${PURPLE}">Registration received</h2>
-    <p>Hi ${shop.owner_name ?? "there"},</p>
-    <p>We've received your registration for <b>${shop.name}</b>. Our team will
+    <p>Hi ${esc(shop.owner_name ?? "there")},</p>
+    <p>We've received your registration for <b>${esc(shop.name)}</b>. Our team will
        review your details and get back to you within 24 to 48 hours.</p>
     <p>You can keep the ${APP_NAME} app open — you'll see the update the moment
        your shop is approved.</p>
     <p style="color:#6B7280;font-size:12px;margin-top:24px">
-       Shop: ${shop.name}<br>Phone: ${shop.phone ?? "—"}<br>
-       Address: ${shop.address ?? "—"}</p>`);
+       Shop: ${esc(shop.name)}<br>Phone: ${esc(shop.phone ?? "—")}<br>
+       Address: ${esc(shop.address ?? "—")}</p>`);
 }
 
 function adminEmailBody(shop: ShopRow, vendorEmail: string | null): string {
@@ -111,31 +146,42 @@ function adminEmailBody(shop: ShopRow, vendorEmail: string | null): string {
     <h2 style="margin:0 0 12px;color:${PURPLE}">New vendor registration</h2>
     <p>A new shop is waiting for your review.</p>
     <table style="border-collapse:collapse;margin:16px 0;font-size:14px">
-      <tr><td style="padding:6px 12px 6px 0;color:#6B7280">Shop</td><td><b>${shop.name}</b></td></tr>
-      <tr><td style="padding:6px 12px 6px 0;color:#6B7280">Owner</td><td>${shop.owner_name ?? "—"}</td></tr>
-      <tr><td style="padding:6px 12px 6px 0;color:#6B7280">Email</td><td>${vendorEmail ?? "—"}</td></tr>
-      <tr><td style="padding:6px 12px 6px 0;color:#6B7280">Phone</td><td>${shop.phone ?? "—"}</td></tr>
-      <tr><td style="padding:6px 12px 6px 0;color:#6B7280">Address</td><td>${shop.address ?? "—"}</td></tr>
-      <tr><td style="padding:6px 12px 6px 0;color:#6B7280">Category</td><td>${shop.primary_category ?? "—"}</td></tr>
+      <tr><td style="padding:6px 12px 6px 0;color:#6B7280">Shop</td><td><b>${esc(shop.name)}</b></td></tr>
+      <tr><td style="padding:6px 12px 6px 0;color:#6B7280">Owner</td><td>${esc(shop.owner_name ?? "—")}</td></tr>
+      <tr><td style="padding:6px 12px 6px 0;color:#6B7280">Email</td><td>${esc(vendorEmail ?? "—")}</td></tr>
+      <tr><td style="padding:6px 12px 6px 0;color:#6B7280">Phone</td><td>${esc(shop.phone ?? "—")}</td></tr>
+      <tr><td style="padding:6px 12px 6px 0;color:#6B7280">Address</td><td>${esc(shop.address ?? "—")}</td></tr>
+      <tr><td style="padding:6px 12px 6px 0;color:#6B7280">Category</td><td>${esc(shop.primary_category ?? "—")}</td></tr>
     </table>
-    <p><a href="${ADMIN_PANEL_URL}" style="display:inline-block;background:${PURPLE};color:#fff;
+    <p><a href="${esc(ADMIN_PANEL_URL)}" style="display:inline-block;background:${PURPLE};color:#fff;
        padding:12px 20px;border-radius:8px;text-decoration:none;font-weight:600">
        Review in Admin Panel</a></p>`);
 }
 
 serve(async (req) => {
+  if (req.method !== "POST") return new Response("POST only", { status: 405 });
+  if (!WEBHOOK_SECRET) {
+    console.error("vendor-registered: WEBHOOK_SECRET not configured — refusing");
+    return new Response("Not configured", { status: 500 });
+  }
+  if (!safeEqual(req.headers.get("x-webhook-secret") || "", WEBHOOK_SECRET)) {
+    return new Response("Unauthorized", { status: 401 });
+  }
+
   try {
     const p: WebhookPayload = await req.json();
-    if (p.table !== "shops" || p.type !== "INSERT" || !p.record) {
+    if (p.table !== "shops" || p.type !== "INSERT" || !p.record?.id) {
       return new Response("Ignored", { status: 200 });
     }
-    const shop = p.record;
+    // Trust the database, not the request body.
+    const shop = await loadShop(String(p.record.id));
+    if (!shop) return new Response("Shop not found", { status: 200 });
     const vendorEmail = shop.owner_id ? await lookupOwnerEmail(shop.owner_id) : null;
 
     // Fire and forget three writes. If any one fails we still want the others
     // attempted — a missing vendor email should not block the admin notification.
     await Promise.allSettled([
-      sendMail(ADMIN_EMAIL, `[${APP_NAME}] New vendor: ${shop.name}`, adminEmailBody(shop, vendorEmail)),
+      sendMail(ADMIN_EMAIL, `[${APP_NAME}] New vendor: ${oneLine(shop.name)}`, adminEmailBody(shop, vendorEmail)),
       vendorEmail
         ? sendMail(vendorEmail, `Your ${APP_NAME} registration is being reviewed`, vendorEmailBody(shop))
         : Promise.resolve(),
@@ -146,7 +192,7 @@ serve(async (req) => {
 
     return new Response("OK", { status: 200 });
   } catch (e) {
-    console.error(e);
-    return new Response(`Error: ${e}`, { status: 500 });
+    console.error("vendor-registered failed:", e instanceof Error ? e.message : e);
+    return new Response("Error", { status: 500 });
   }
 });

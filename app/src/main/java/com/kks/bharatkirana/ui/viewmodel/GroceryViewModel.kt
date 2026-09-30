@@ -15,9 +15,12 @@ import com.kks.bharatkirana.data.supabase.SupabaseAuthService
 import com.kks.bharatkirana.data.supabase.SupabaseGroceryRepo
 import com.kks.bharatkirana.data.supabase.SupabaseRealtimeClient
 import com.kks.bharatkirana.data.supabase.DuplicateProductException
+import com.kks.bharatkirana.data.supabase.PriceChangedException
 import com.kks.bharatkirana.data.model.CustomerAddress
+import com.kks.bharatkirana.service.MyFirebaseMessagingService
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -43,8 +46,11 @@ class GroceryViewModel(
 
   private val repository: GroceryRepository = GroceryRepository()
   val supabaseAuthService: SupabaseAuthService = SupabaseAuthService()
-  val supabaseGroceryRepo: SupabaseGroceryRepo = SupabaseGroceryRepo()
+  val supabaseGroceryRepo: SupabaseGroceryRepo = SupabaseGroceryRepo(
+    tokenRefresher = { stale -> supabaseAuthService.refreshBlocking(stale) }
+  )
   private val supabaseRealtime: SupabaseRealtimeClient = SupabaseRealtimeClient()
+  val realtimeConnected: StateFlow<Boolean> = supabaseRealtime.connected
 
   private val prefs = application.getSharedPreferences("bharat_kirana_prefs", Context.MODE_PRIVATE)
   private val fusedLocationClient = LocationServices.getFusedLocationProviderClient(application)
@@ -166,6 +172,27 @@ class GroceryViewModel(
 
   private val _isOrderPlacing = MutableStateFlow(false)
   val isOrderPlacing: StateFlow<Boolean> = _isOrderPlacing.asStateFlow()
+
+  sealed class CheckoutIssue {
+    data class PriceChanged(val shownTotal: Int, val serverTotal: Int, val promoDropped: Boolean) : CheckoutIssue()
+    data class Failed(val message: String) : CheckoutIssue()
+  }
+
+  private val _checkoutIssue = MutableStateFlow<CheckoutIssue?>(null)
+  val checkoutIssue: StateFlow<CheckoutIssue?> = _checkoutIssue.asStateFlow()
+  fun dismissCheckoutIssue() { _checkoutIssue.value = null }
+
+  // Short one-off messages (e.g. "out of stock") shown as a toast.
+  private val _userNotice = MutableStateFlow<String?>(null)
+  val userNotice: StateFlow<String?> = _userNotice.asStateFlow()
+  fun clearUserNotice() { _userNotice.value = null }
+
+  // Set when shops/products couldn't be loaded, so an empty list isn't mistaken for "no shops".
+  private val _catalogError = MutableStateFlow<String?>(null)
+  val catalogError: StateFlow<String?> = _catalogError.asStateFlow()
+
+  private var sessionKeepAliveJob: Job? = null
+  private var shopsLoadSeq = 0
 
   // Guards vendor status transitions against rapid double taps, screen
   // recomposition storms and Realtime replays. Order id in the set == a
@@ -451,6 +478,11 @@ class GroceryViewModel(
   fun setVendorInitialTab(tab: Int) { _vendorInitialTab.value = tab }
 
   init {
+    supabaseAuthService.onSessionRefreshed = { session ->
+      // A refresh finishing just after logout must not re-save the session.
+      if (!prefs.getString("user_email", null).isNullOrBlank()) persistRefreshToken(session.refreshToken)
+      supabaseRealtime.setAccessToken(session.accessToken)
+    }
     loadSavedSession()
     loadSupabaseData()
     fetchUserLocation()
@@ -458,6 +490,33 @@ class GroceryViewModel(
     loadRemoteConfig()
     startRealtimeCollector()
     startPromoRevalidation()
+    viewModelScope.launch {
+      MyFirebaseMessagingService.tokenRefreshes.collect { token ->
+        _userProfile.update { it.copy(fcmToken = token) }
+        if (supabaseAuthService.currentUserId != null) syncFcmTokenToServer(token)
+      }
+    }
+  }
+
+  // Renews the access token a few minutes before it expires, so a session left
+  // open for hours (a vendor's dashboard) keeps working, Realtime included.
+  private fun startSessionKeepAlive() {
+    sessionKeepAliveJob?.cancel()
+    sessionKeepAliveJob = viewModelScope.launch {
+      while (isActive) {
+        val dueIn = supabaseAuthService.accessTokenExpiresAtMillis - System.currentTimeMillis() - 5 * 60_000L
+        delay(dueIn.coerceAtLeast(30_000L))
+        when (supabaseAuthService.refreshSession()) {
+          SupabaseAuthService.RefreshOutcome.REFRESHED -> Unit
+          SupabaseAuthService.RefreshOutcome.FAILED -> delay(60_000L)
+          SupabaseAuthService.RefreshOutcome.REJECTED -> {
+            logout()
+            _authStatusMessage.value = "Your session has expired. Please sign in again."
+            return@launch
+          }
+        }
+      }
+    }
   }
 
   private fun startRealtimeCollector() {
@@ -466,6 +525,15 @@ class GroceryViewModel(
         if (change.table == "orders") applyOrderChange(change)
         if (change.table == "notifications" && change.type == "INSERT") applyNewNotification(change)
         if (change.table == "products" && change.type == "UPDATE") applyProductChange(change)
+      }
+    }
+    // Events sent while the socket was down are lost; re-read after reconnecting.
+    viewModelScope.launch {
+      supabaseRealtime.connected.drop(1).collect { up ->
+        if (up && supabaseAuthService.currentUserId != null) {
+          refreshOrders()
+          loadNotifications()
+        }
       }
     }
   }
@@ -479,15 +547,28 @@ class GroceryViewModel(
     _products.update { list ->
       list.map { product ->
         if (product.id != productId) return@map product
+        val newPrice = record.optInt("current_price", product.currentPrice)
+        // Single-size products charge the size price, which the server keeps equal
+        // to current_price (trg_sync_single_variant_price) — mirror that here.
+        val weights = if (product.weightOptions.size == 1 && newPrice != product.currentPrice) {
+          listOf(product.weightOptions[0].copy(price = newPrice))
+        } else product.weightOptions
         product.copy(
           inStock = record.optBoolean("in_stock", product.inStock),
           stockQty = if (record.has("stock_qty")) {
             if (record.isNull("stock_qty")) null else record.optInt("stock_qty")
           } else product.stockQty,
-          currentPrice = record.optInt("current_price", product.currentPrice)
+          currentPrice = newPrice,
+          weightOptions = weights
         )
       }
     }
+  }
+
+  private fun withShopSnapshot(order: Order): Order {
+    if (order.storeName.isNotBlank()) return order
+    val shop = _shops.value.firstOrNull { it.id == order.shopId } ?: return order
+    return order.copy(storeName = shop.name, storeAddress = order.storeAddress.ifBlank { shop.address })
   }
 
   private fun applyOrderChange(change: SupabaseRealtimeClient.RealtimeChange) {
@@ -510,21 +591,10 @@ class GroceryViewModel(
         // insert already put it in _orders on their device.
         if (_orders.value.any { it.id == orderId }) return
 
-        val timeline = buildOrderTimeline(
-          currentStatus = OrderStatus.PLACED,
-          orderDate = record.optString("order_date", "Today"),
-          nowLabel = record.optString("order_date", "Today")
-        )
-        val newOrder = Order(
-          id = orderId,
-          shopId = recordShopId ?: "default_shop",
-          items = emptyList(),
-          totalAmount = record.optInt("total_amount", 0),
-          orderDate = record.optString("order_date", "Today"),
-          status = status ?: OrderStatus.PLACED,
-          expectedPickupTime = "Awaiting shop confirmation",
-          qrCodePayload = record.optString("qr_code_payload", "ORDER:$orderId"),
-          timeline = timeline
+        // The payload is the full orders row: customer name/phone, order number,
+        // server timestamps and the items_json snapshot all come from the server.
+        val newOrder = withShopSnapshot(
+          supabaseGroceryRepo.parseOrderRow(record).copy(expectedPickupTime = "Awaiting shop confirmation")
         )
         _orders.update { listOf(newOrder) + it }
 
@@ -533,21 +603,22 @@ class GroceryViewModel(
         // when the app is closed. Firing a local notification here as well
         // would double-notify on foreground.
 
-        // The Realtime payload only carries the parent row; fetch the line
-        // items so the UI shows the full product breakdown right away.
-        viewModelScope.launch {
-          supabaseGroceryRepo.fetchOrderItems(orderId, supabaseAuthService.currentAccessToken)
-            .onSuccess { fetchedItems ->
-              if (fetchedItems.isNotEmpty()) {
-                _orders.update { list ->
-                  list.map { if (it.id == orderId) it.copy(items = fetchedItems) else it }
+        if (newOrder.items.isEmpty()) {
+          viewModelScope.launch {
+            supabaseGroceryRepo.fetchOrderItems(orderId, supabaseAuthService.currentAccessToken)
+              .onSuccess { fetchedItems ->
+                if (fetchedItems.isNotEmpty()) {
+                  _orders.update { list ->
+                    list.map { if (it.id == orderId) it.copy(items = fetchedItems) else it }
+                  }
                 }
               }
-            }
+          }
         }
       }
       "UPDATE" -> {
         if (status == null) return
+        val server = supabaseGroceryRepo.parseOrderRow(record)
         val timeFormat = SimpleDateFormat("h:mm a", Locale.getDefault())
         val now = timeFormat.format(Date())
         _orders.update { list ->
@@ -566,7 +637,20 @@ class GroceryViewModel(
               val shop = _shops.value.firstOrNull { it.id == order.shopId }
               computePickupEta(shop?.packingTime ?: 15)
             } else order.expectedPickupTime
-            order.copy(status = status, timeline = rebuilt, expectedPickupTime = nextPickup)
+            // Keep the server's per-status timestamps: the tracker timeline and
+            // the pickup ETA are computed from them.
+            order.copy(
+              status = status,
+              timeline = rebuilt,
+              expectedPickupTime = nextPickup,
+              confirmedAt = server.confirmedAt ?: order.confirmedAt,
+              preparingAt = server.preparingAt ?: order.preparingAt,
+              readyAt = server.readyAt ?: order.readyAt,
+              completedAt = server.completedAt ?: order.completedAt,
+              cancelledAt = server.cancelledAt ?: order.cancelledAt,
+              orderNumber = server.orderNumber ?: order.orderNumber,
+              pickupToken = server.pickupToken ?: order.pickupToken
+            )
           }
         }
         // Customer status pushes (Confirmed, Preparing, Ready, Completed,
@@ -789,6 +873,8 @@ class GroceryViewModel(
       // Cart is per-account — never let the next person to sign in inherit it.
       .remove("cart_items")
       .remove("active_shop_id")
+      .remove("pending_checkout_id")
+      .remove("pending_checkout_fp")
       .apply()
   }
 
@@ -849,12 +935,13 @@ class GroceryViewModel(
 
   fun loadSupabaseData() {
     viewModelScope.launch {
+      _catalogError.value = null
       // Sync live products. Overwrite unconditionally — an isNotEmpty guard
       // would leave demo products in place forever whenever the server truly is
       // empty, which is exactly the state a fresh install lives in.
-      supabaseGroceryRepo.fetchProducts(supabaseAuthService.currentAccessToken).onSuccess { liveProducts ->
-        _products.value = liveProducts
-      }
+      supabaseGroceryRepo.fetchProducts(supabaseAuthService.currentAccessToken)
+        .onSuccess { liveProducts -> _products.value = liveProducts }
+        .onFailure { _catalogError.value = "Couldn't load shops and products. Check your connection and try again." }
       // Catalog is in memory now, so a cart saved before the process died can be
       // rebuilt against current prices/stock.
       restoreCartFromPrefs()
@@ -868,20 +955,39 @@ class GroceryViewModel(
         }
         .onFailure { android.util.Log.w("BreakQ", "app_settings fetch failed: ${it.message}") }
 
-      // Sync live shops (Round 2)
-      // Round 6.1: overwrite even when server returns empty so a stale seed shop
-      // doesn't linger in the UI after the DB was cleared. Empty list = empty UI.
-      supabaseGroceryRepo.fetchShops(supabaseAuthService.currentAccessToken).onSuccess { liveShops ->
-        _shops.value = liveShops
-        _userLocation.value?.let { updateShopDistances(it) }
-        syncShopOperationsFromDb()
-      }
+      reloadShops()
 
       // Sync orders. Skip entirely if we don't know who the user is yet — a
       // transient empty response during session restore would otherwise wipe
       // the customer's own just-placed local order from the UI.
       fetchOrdersInto(_userProfile.value.email, replace = false)
     }
+  }
+
+  /**
+   * Approved shops, plus — for a vendor — their own shop whatever its status,
+   * so a pending or rejected vendor keeps their status screen after a restart.
+   * Only the newest request may write, so a slow call started before login
+   * can't overwrite the vendor-aware list.
+   */
+  private suspend fun reloadShops() {
+    val seq = ++shopsLoadSeq
+    val ownShopId = _userProfile.value.shopId
+      ?.takeIf { it.isNotBlank() && _userProfile.value.serverRole == UserRole.VENDOR }
+    supabaseGroceryRepo.fetchShops(supabaseAuthService.currentAccessToken, ownShopId)
+      .onSuccess { liveShops ->
+        if (seq != shopsLoadSeq) return@onSuccess
+        // Round 6.1: overwrite even when server returns empty so a stale seed shop
+        // doesn't linger in the UI after the DB was cleared. Empty list = empty UI.
+        _shops.value = liveShops
+        _userLocation.value?.let { updateShopDistances(it) }
+        syncShopOperationsFromDb()
+      }
+      .onFailure {
+        if (seq == shopsLoadSeq) {
+          _catalogError.value = "Couldn't load shops and products. Check your connection and try again."
+        }
+      }
   }
 
   /**
@@ -920,12 +1026,14 @@ class GroceryViewModel(
       accessToken = token
     ).onSuccess { liveOrders ->
       _ordersError.value = null
+      val serverOrders = liveOrders.map { withShopSnapshot(it) }
       _orders.value = if (replace) {
-        liveOrders
+        serverOrders
       } else {
-        val serverIds = liveOrders.map { it.id }.toSet()
-        _orders.value.filter { it.id !in serverIds } + liveOrders
+        val serverIds = serverOrders.map { it.id }.toSet()
+        _orders.value.filter { it.id !in serverIds } + serverOrders
       }
+      reconcilePendingCheckout(serverOrders)
     }.onFailure { err ->
       // Previously swallowed: a failed fetch left _orders empty and the history
       // screen rendered "no orders yet", which is why past orders looked deleted.
@@ -1027,6 +1135,8 @@ class GroceryViewModel(
   }
 
   fun addToCart(product: Product, weightOption: WeightOption, quantity: Int = 1) {
+    if (quantity > 0 && !canAddToCart(product.id, product, quantity)) return
+
     // Enforce one-shop-per-cart: if the cart already has items from a
     // different shop, expose a state the UI can render as a confirmation
     // dialog. Do NOT silently merge or drop.
@@ -1076,7 +1186,24 @@ class GroceryViewModel(
 
   fun dismissCartShopSwitchAlert() { _cartShopSwitchAlert.value = null }
 
+  // Checked against the latest catalog; checkout re-checks stock on the server anyway.
+  private fun canAddToCart(productId: String, fallback: Product?, adding: Int): Boolean {
+    val latest = _products.value.firstOrNull { it.id == productId } ?: fallback ?: return true
+    if (!latest.inStock || latest.stockQty == 0) {
+      _userNotice.value = "${latest.name} is out of stock."
+      return false
+    }
+    val cap = latest.stockQty ?: return true
+    val inCart = _cartItems.value.filter { it.product.id == productId }.sumOf { it.quantity }
+    if (inCart + adding > cap) {
+      _userNotice.value = "Only $cap of ${latest.name} available."
+      return false
+    }
+    return true
+  }
+
   fun updateCartQuantity(productId: String, weightLabel: String, delta: Int) {
+    if (delta > 0 && !canAddToCart(productId, null, delta)) return
     _cartItems.update { currentList ->
       val mutable = currentList.toMutableList()
       val index = mutable.indexOfFirst {
@@ -1223,89 +1350,90 @@ class GroceryViewModel(
     }
   }
 
-  fun placeOrder(): Order? {
-    if (_isOrderPlacing.value) return null
-    val items = _cartItems.value
-    if (items.isEmpty()) return null
-
-    val itemTotal = items.sumOf { it.totalPrice }
-    val minForFree = _minOrderFreeHandling.value
-    val handlingFee = _handlingFee.value
-    val discount = if (itemTotal > minForFree) _freeHandlingDiscount.value else 0
-    val promo = _appliedPromo.value
-    val promoDiscount = promo?.discountRupees ?: 0
-    val totalAmount = (itemTotal + handlingFee - discount - promoDiscount).coerceAtLeast(0)
-
-    // Timestamp-based id so two orders placed a few seconds apart on the same
-    // device can never collide on the (1000..9999) random space we used to use.
-    // Customer-facing sequential number still comes from orders.order_number
-    // (server-side trigger) and shows via order.displayNumber.
-    val orderId = "KIR-" + System.currentTimeMillis().toString() +
-      "-" + (1000..9999).random()
-
-    val timeFormat = SimpleDateFormat("h:mm a", Locale.getDefault())
-    val currentTime = timeFormat.format(Date())
-
-    // Use the shopId of the first cart item as the order's shopId (RLS requires
-    // this so the vendor of that shop can see the order). If no items had a
-    // shopId, refuse to place — the order would otherwise land on
-    // "default_shop" and no vendor would ever see it.
-    val shopId = items.firstOrNull()?.product?.shopId?.takeIf { it.isNotBlank() && it != "default_shop" }
-    if (shopId == null) {
-      _authStatusMessage.value = "Couldn't place order: no shop selected. Open a shop and re-add items."
-      return null
-    }
-
-    // Snapshot the shop's real name/address from the shops list at order time
-    // so History and OrderDetails always show the correct shop, even if the
-    // customer never routed through the shop screen (activeStore may be blank).
-    val liveShop = _shops.value.firstOrNull { it.id == shopId }
-    val snapshotStoreName = liveShop?.name?.takeIf { it.isNotBlank() }
-      ?: _userProfile.value.activeStore.takeIf { it.isNotBlank() }
-      ?: "Your shop"
-    val snapshotStoreAddress = liveShop?.address?.takeIf { it.isNotBlank() }
-      ?: _userProfile.value.activeStoreAddress
-
-    val newOrder = Order(
-      id = orderId,
-      shopId = shopId,
-      items = items,
-      totalAmount = totalAmount,
-      orderDate = "Today, $currentTime",
-      status = OrderStatus.PLACED,
-      expectedPickupTime = "Awaiting shop confirmation",
-      storeName = snapshotStoreName,
-      storeAddress = snapshotStoreAddress,
-      timeline = buildOrderTimeline(
-        currentStatus = OrderStatus.PLACED,
-        orderDate = "Today, $currentTime",
-        nowLabel = "Today, $currentTime"
-      ),
-      qrCodePayload = buildCustomerQrPayload(_userProfile.value.email, orderId)
-    )
-
-    val appliedCode = promo?.code
+  /**
+   * [acceptedTotal] is the server total the customer agreed to in the
+   * "your total has changed" dialog; otherwise the total shown in the cart is
+   * sent, and the server refuses the order if its own total differs.
+   */
+  fun placeOrder(acceptedTotal: Int? = null) {
+    if (_isOrderPlacing.value) return
+    if (_cartItems.value.isEmpty()) return
     _isOrderPlacing.value = true
 
     viewModelScope.launch {
+      // A promo re-check still running would leave a stale discount in the total.
+      promoCheckJob?.join()
+
+      val items = _cartItems.value
+      // Use the shopId of the first cart item as the order's shopId (RLS requires
+      // this so the vendor of that shop can see the order). If no items had a
+      // shopId, refuse to place — the order would otherwise land on
+      // "default_shop" and no vendor would ever see it.
+      val shopId = items.firstOrNull()?.product?.shopId?.takeIf { it.isNotBlank() && it != "default_shop" }
+      if (items.isEmpty() || shopId == null) {
+        if (items.isNotEmpty()) {
+          _checkoutIssue.value = CheckoutIssue.Failed("No shop is selected for this cart. Open a shop and add the items again.")
+        }
+        _isOrderPlacing.value = false
+        return@launch
+      }
+
+      val itemTotal = items.sumOf { it.totalPrice }
+      val discount = if (itemTotal > _minOrderFreeHandling.value) _freeHandlingDiscount.value else 0
+      val promo = _appliedPromo.value
+      val shownTotal = (itemTotal + _handlingFee.value - discount - (promo?.discountRupees ?: 0)).coerceAtLeast(0)
+
+      val orderId = checkoutIdFor(items, shopId, promo?.code)
+
+      val timeFormat = SimpleDateFormat("h:mm a", Locale.getDefault())
+      val currentTime = timeFormat.format(Date())
+
+      // Snapshot the shop's real name/address from the shops list at order time
+      // so History and OrderDetails always show the correct shop, even if the
+      // customer never routed through the shop screen (activeStore may be blank).
+      val liveShop = _shops.value.firstOrNull { it.id == shopId }
+      val snapshotStoreName = liveShop?.name?.takeIf { it.isNotBlank() }
+        ?: _userProfile.value.activeStore.takeIf { it.isNotBlank() }
+        ?: "Your shop"
+      val snapshotStoreAddress = liveShop?.address?.takeIf { it.isNotBlank() }
+        ?: _userProfile.value.activeStoreAddress
+
+      val newOrder = Order(
+        id = orderId,
+        shopId = shopId,
+        items = items,
+        totalAmount = acceptedTotal ?: shownTotal,
+        orderDate = "Today, $currentTime",
+        status = OrderStatus.PLACED,
+        expectedPickupTime = "Awaiting shop confirmation",
+        storeName = snapshotStoreName,
+        storeAddress = snapshotStoreAddress,
+        timeline = buildOrderTimeline(
+          currentStatus = OrderStatus.PLACED,
+          orderDate = "Today, $currentTime",
+          nowLabel = "Today, $currentTime"
+        ),
+        qrCodePayload = buildCustomerQrPayload(_userProfile.value.email, orderId)
+      )
+
       supabaseGroceryRepo.insertOrder(
         order = newOrder,
         customerEmail = _userProfile.value.email,
         customerName = _userProfile.value.fullName,
         customerMobile = _userProfile.value.mobileNumber,
-        promoCode = appliedCode,
+        promoCode = promo?.code,
+        expectedTotal = acceptedTotal ?: shownTotal,
         accessToken = supabaseAuthService.currentAccessToken
       ).onSuccess { serverFields ->
         // Server confirmed. Now — and only now — we commit local state:
         // add the order, clear cart, clear promo, notify, navigate.
-        // The total above was only ever a preview; the RPC recomputes it from
-        // live product prices, so take the server's figure as the real bill.
+        clearPendingCheckout()
         val confirmed = newOrder.copy(
           orderNumber = serverFields.orderNumber ?: newOrder.orderNumber,
           pickupToken = serverFields.pickupToken ?: newOrder.pickupToken,
           totalAmount = serverFields.totalAmount ?: newOrder.totalAmount
         )
-        _orders.update { listOf(confirmed) + it }
+        _orders.update { list -> listOf(confirmed) + list.filter { it.id != confirmed.id } }
         _latestPlacedOrderId.value = confirmed.id
         _cartItems.value = emptyList()
         persistCart()
@@ -1319,16 +1447,92 @@ class GroceryViewModel(
           orderId = confirmed.id
         )
         navigateTo(AppScreen.OrderPlaced(confirmed.id))
+        // Replace the local copy with the server's line prices and snapshot.
+        refreshOrders()
       }.onFailure { err ->
-        android.util.Log.e("GroceryViewModel", "insertOrder failed for ${newOrder.id}: ${err.message}", err)
+        android.util.Log.w("GroceryViewModel", "insertOrder failed for ${newOrder.id}: ${err.message}")
         // Cart is intentionally NOT cleared — the user can retry the same
         // checkout without re-adding items.
-        _authStatusMessage.value = "Couldn't place order: ${err.localizedMessage ?: "network error"}. Your cart is still here — please try again."
+        if (err is PriceChangedException) {
+          _checkoutIssue.value = CheckoutIssue.PriceChanged(
+            shownTotal = acceptedTotal ?: shownTotal,
+            serverTotal = err.serverTotal,
+            promoDropped = promo != null && err.promoCode == null
+          )
+          supabaseGroceryRepo.fetchProducts(supabaseAuthService.currentAccessToken)
+            .onSuccess { _products.value = it; repriceCartFromCatalog() }
+        } else {
+          _checkoutIssue.value = CheckoutIssue.Failed(
+            err.message?.takeIf { it.isNotBlank() && err !is java.io.IOException }
+              ?: "Couldn't reach BreakQ. Check your connection and try again."
+          )
+          // The order may have gone through even though the reply was lost.
+          refreshOrders()
+        }
       }
       _isOrderPlacing.value = false
     }
+  }
 
-    return newOrder
+  fun confirmPriceChangeAndPlaceOrder() {
+    val issue = _checkoutIssue.value as? CheckoutIssue.PriceChanged ?: return
+    _checkoutIssue.value = null
+    placeOrder(acceptedTotal = issue.serverTotal)
+  }
+
+  // Same shop + items + promo = the same checkout, so a retry after a lost
+  // response reuses the order id and the server hands back the existing order.
+  private fun cartFingerprint(items: List<CartItem>, shopId: String, promoCode: String?): String =
+    buildString {
+      append(shopId).append('|').append(promoCode.orEmpty())
+      items.sortedBy { it.product.id + "|" + it.selectedWeight.label }.forEach {
+        append('|').append(it.product.id).append(':').append(it.selectedWeight.label).append(':').append(it.quantity)
+      }
+    }
+
+  private fun checkoutIdFor(items: List<CartItem>, shopId: String, promoCode: String?): String {
+    val fingerprint = cartFingerprint(items, shopId, promoCode)
+    val savedId = prefs.getString("pending_checkout_id", null)
+    if (savedId != null && prefs.getString("pending_checkout_fp", null) == fingerprint) return savedId
+    val newId = "KIR-" + System.currentTimeMillis() + "-" + (1000..9999).random()
+    prefs.edit()
+      .putString("pending_checkout_id", newId)
+      .putString("pending_checkout_fp", fingerprint)
+      .apply()
+    return newId
+  }
+
+  private fun clearPendingCheckout() {
+    prefs.edit().remove("pending_checkout_id").remove("pending_checkout_fp").apply()
+  }
+
+  // A checkout that "failed" on the phone may have been created on the server
+  // (reply lost, app killed). Once it shows up, don't let that cart be ordered twice.
+  private fun reconcilePendingCheckout(serverOrders: List<Order>) {
+    val pendingId = prefs.getString("pending_checkout_id", null) ?: return
+    if (serverOrders.none { it.id == pendingId }) return
+    val pendingFingerprint = prefs.getString("pending_checkout_fp", null)
+    clearPendingCheckout()
+    val items = _cartItems.value
+    val shopId = items.firstOrNull()?.product?.shopId ?: return
+    if (pendingFingerprint == cartFingerprint(items, shopId, _appliedPromo.value?.code)) {
+      _cartItems.value = emptyList()
+      persistCart()
+      clearPromoCode()
+    }
+  }
+
+  // Re-point cart lines at the latest catalog so the cart shows current prices.
+  private fun repriceCartFromCatalog() {
+    val catalog = _products.value.associateBy { it.id }
+    _cartItems.update { items ->
+      items.map { item ->
+        val product = catalog[item.product.id] ?: return@map item
+        val weight = product.weightOptions.firstOrNull { it.label == item.selectedWeight.label } ?: item.selectedWeight
+        item.copy(product = product, selectedWeight = weight)
+      }
+    }
+    persistCart()
   }
 
   fun applyPromoCode(code: String) {
@@ -1729,6 +1933,9 @@ class GroceryViewModel(
    * signout because it isn't scoped to a user.
    */
   private fun resetUserScopedState() {
+    sessionKeepAliveJob?.cancel()
+    sessionKeepAliveJob = null
+    _checkoutIssue.value = null
     _userProfile.value = UserProfile()
     _profileFetchComplete.value = false
     _profileSyncPending.value = false
@@ -1817,14 +2024,17 @@ class GroceryViewModel(
     // Kick off the Realtime subscription with the user's JWT so RLS lets them
     // receive their own orders' postgres_changes stream.
     supabaseRealtime.connect(supabaseAuthService.currentAccessToken)
+    startSessionKeepAlive()
 
     // Fetch server-side profile (role, real name/mobile/shop_id). The server role
     // is the sole source of truth for routing from here on.
     viewModelScope.launch {
       val userId = supabaseAuthService.currentUserId
+      var accountBlocked = false
       if (!userId.isNullOrBlank()) {
         supabaseGroceryRepo.fetchProfile(userId, supabaseAuthService.currentAccessToken)
           .onSuccess { serverProfile ->
+            accountBlocked = serverProfile.isBlocked
             _userProfile.update { local ->
               // Trust the server's shopId literally. If the server says null,
               // clear any local stale value — a leftover shopId from a prior
@@ -1852,6 +2062,12 @@ class GroceryViewModel(
       // Flip regardless of success/failure — the UI just needs to know "we tried".
       _profileFetchComplete.value = true
 
+      if (accountBlocked) {
+        logout()
+        _authStatusMessage.value = "This account has been blocked. Please contact BreakQ support."
+        return@launch
+      }
+
       // Admin lives on the web panel only. Stop before any navigation, token
       // sync or data load, sign out, and say where to go instead.
       if (_userProfile.value.isAdmin) {
@@ -1864,6 +2080,10 @@ class GroceryViewModel(
       // row still doesn't reflect that (RLS blocked, was offline, etc), push it
       // now that we're authenticated. Silent — no user-facing spinner.
       retryProfileSyncIfNeeded()
+
+      // A vendor's own shop may be pending or rejected, which the public list
+      // leaves out; load it before routing so they land on their status screen.
+      if (_userProfile.value.serverRole == UserRole.VENDOR) reloadShops()
 
       // Only decide profile-completeness-dependent navigation once the server's
       // profile_completed value has actually loaded — reading _userProfile.value

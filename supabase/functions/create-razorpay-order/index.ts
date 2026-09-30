@@ -10,6 +10,10 @@
 // Flow: app POSTs { shop_id, tier_id } with the user's JWT → we look up the
 // tier price server-side (so a tampered client can't buy Pro for ₹1), create a
 // Razorpay order, record it as 'created', and return the order id.
+//
+// Security: the caller's JWT is resolved to a user server-side and that user
+// must own shop_id. "Verify JWT" alone is not enough — the public anon key is
+// also a valid JWT.
 
 import { serve } from "https://deno.land/std@0.208.0/http/server.ts";
 
@@ -37,24 +41,58 @@ async function db(path: string, init?: RequestInit) {
   return res;
 }
 
+function json(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
+}
+
+function isId(v: unknown): v is string {
+  return typeof v === "string" && /^[A-Za-z0-9_-]{1,80}$/.test(v);
+}
+
+// The user behind the caller's JWT, or null for the anon key / an expired token.
+async function callerId(req: Request): Promise<string | null> {
+  const authHeader = req.headers.get("Authorization") ?? "";
+  if (!authHeader.startsWith("Bearer ")) return null;
+  const r = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
+    headers: { apikey: SERVICE_ROLE_KEY, Authorization: authHeader },
+  });
+  if (!r.ok) return null;
+  const u = await r.json().catch(() => null);
+  return typeof u?.id === "string" ? u.id : null;
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
+  if (req.method !== "POST") return json({ error: "POST only" }, 405);
 
   try {
-    const { shop_id, tier_id } = await req.json();
-    if (!shop_id || !tier_id) {
-      return new Response(JSON.stringify({ error: "shop_id and tier_id are required" }), {
-        status: 400,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+    const uid = await callerId(req);
+    if (!uid) return json({ error: "Please sign in again." }, 401);
+
+    const { shop_id, tier_id } = await req.json().catch(() => ({}));
+    if (!isId(shop_id) || !isId(tier_id)) {
+      return json({ error: "shop_id and tier_id are required" }, 400);
+    }
+
+    const shops = await (await db(
+      `shops?id=eq.${encodeURIComponent(shop_id)}&select=owner_id`,
+    )).json();
+    if (!shops.length || shops[0].owner_id !== uid) {
+      return json({ error: "You can only buy a plan for your own shop." }, 403);
     }
 
     // Price comes from the DB, never from the client.
-    const tierRes = await db(`subscription_tiers?id=eq.${tier_id}&select=price_rupees,display_name`);
-    const tiers = await tierRes.json();
-    if (!tiers.length) throw new Error(`Unknown tier ${tier_id}`);
-    const priceRupees: number = tiers[0].price_rupees;
-    if (priceRupees <= 0) throw new Error("This plan is free — no payment required.");
+    const tiers = await (await db(
+      `subscription_tiers?id=eq.${encodeURIComponent(tier_id)}&is_active=eq.true&select=price_rupees`,
+    )).json();
+    if (!tiers.length) return json({ error: "That plan is not available." }, 400);
+    const priceRupees = Number(tiers[0].price_rupees);
+    if (!Number.isInteger(priceRupees) || priceRupees <= 0) {
+      return json({ error: "This plan is free — no payment required." }, 400);
+    }
 
     const amountPaise = priceRupees * 100;
 
@@ -71,7 +109,10 @@ serve(async (req) => {
       }),
     });
     const rzpBody = await rzpRes.json();
-    if (!rzpRes.ok) throw new Error(`Razorpay: ${JSON.stringify(rzpBody)}`);
+    if (!rzpRes.ok) {
+      console.error("create-razorpay-order: Razorpay refused", rzpRes.status, rzpBody?.error?.description);
+      return json({ error: "Could not start payment. Please try again." }, 502);
+    }
 
     // Record the intent so verify-razorpay-payment can match it later.
     await db("subscription_payments", {
@@ -86,20 +127,14 @@ serve(async (req) => {
       }),
     });
 
-    return new Response(
-      JSON.stringify({
-        order_id: rzpBody.id,
-        amount: amountPaise,
-        currency: "INR",
-        key_id: RAZORPAY_KEY_ID,
-      }),
-      { headers: { ...corsHeaders, "Content-Type": "application/json" } },
-    );
-  } catch (e) {
-    console.error(">>> create-razorpay-order failed:", e);
-    return new Response(JSON.stringify({ error: String(e) }), {
-      status: 500,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    return json({
+      order_id: rzpBody.id,
+      amount: amountPaise,
+      currency: "INR",
+      key_id: RAZORPAY_KEY_ID,
     });
+  } catch (e) {
+    console.error("create-razorpay-order failed:", e instanceof Error ? e.message : e);
+    return json({ error: "Could not start payment. Please try again." }, 500);
   }
 });

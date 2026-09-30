@@ -58,12 +58,36 @@ class DuplicateProductException(
   val catalogRef: String?
 ) : Exception("This product is already listed in your shop.")
 
+/** create_order_with_items refused because its total differs from the one the customer saw. */
+class PriceChangedException(
+  val serverTotal: Int,
+  val promoCode: String?
+) : Exception("The total for this order is now ₹$serverTotal.")
+
 class SupabaseGroceryRepo(
-  private val client: OkHttpClient = OkHttpClient.Builder()
+  baseClient: OkHttpClient = OkHttpClient.Builder()
     .connectTimeout(15, TimeUnit.SECONDS)
     .readTimeout(15, TimeUnit.SECONDS)
-    .build()
+    .build(),
+  // Given the access token a request was refused with, returns a renewed one
+  // (or null if the session can't be renewed).
+  private val tokenRefresher: ((String) -> String?)? = null
 ) {
+  // A request refused with 401 because the access token expired is retried
+  // once with a refreshed token. The server never executed the refused call,
+  // so the retry is safe even for writes.
+  private val client: OkHttpClient = baseClient.newBuilder()
+    .authenticator { _, response ->
+      val refresher = tokenRefresher ?: return@authenticator null
+      if (response.priorResponse != null) return@authenticator null
+      val sent = response.request.header("Authorization")?.removePrefix("Bearer ")?.trim()
+      if (sent.isNullOrBlank() || sent == SupabaseConfig.API_KEY) return@authenticator null
+      val fresh = refresher(sent)
+      if (fresh.isNullOrBlank() || fresh == sent) return@authenticator null
+      response.request.newBuilder().header("Authorization", "Bearer $fresh").build()
+    }
+    .build()
+
   private val jsonMediaType = "application/json; charset=utf-8".toMediaType()
 
   private fun baseRequestBuilder(url: String, accessToken: String? = null): Request.Builder {
@@ -695,75 +719,85 @@ class SupabaseGroceryRepo(
         val orderList = mutableListOf<Order>()
 
         for (i in 0 until array.length()) {
-          val obj = array.getJSONObject(i)
-          val id = obj.optString("id")
-          val totalAmount = obj.optInt("total_amount", 0)
-          val orderDate = obj.optString("order_date", "Today")
-          val statusStr = obj.optString("status", "Order Placed")
-          val qrCodePayload = obj.optString("qr_code_payload", "ORDER:$id")
-          val shopIdField = obj.optString("shop_id").takeIf { it.isNotBlank() } ?: "default_shop"
-          val customerName = obj.optString("customer_name", "")
-          val customerMobile = obj.optString("customer_mobile", "")
-          val createdAt = obj.optString("created_at", "")
-          val orderNumber = obj.optInt("order_number", -1).takeIf { it > 0 }
-          val pickupToken = obj.optString("pickup_token", "").takeIf { it.isNotBlank() }
-
-          val status = when (statusStr) {
-            OrderStatus.CONFIRMED.label -> OrderStatus.CONFIRMED
-            OrderStatus.PREPARING.label -> OrderStatus.PREPARING
-            OrderStatus.READY_FOR_PICKUP.label -> OrderStatus.READY_FOR_PICKUP
-            OrderStatus.COMPLETED.label -> OrderStatus.COMPLETED
-            OrderStatus.CANCELLED.label -> OrderStatus.CANCELLED
-            else -> OrderStatus.PLACED
-          }
-
-          val timeline = com.kks.bharatkirana.data.model.buildOrderTimeline(
-            currentStatus = status,
-            orderDate = orderDate,
-            nowLabel = orderDate
-          )
-
-          // Prefer the relational embed; fall back to the JSONB snapshot on
-          // orders.items_json if the relational rows are missing (e.g. an
-          // insert failed silently, or the migration hasn't been applied).
-          val embeddedItems = obj.optJSONArray("order_items")
-          val items = when {
-            embeddedItems != null && embeddedItems.length() > 0 -> parseOrderItems(embeddedItems)
-            else -> {
-              val jsonSnapshot = obj.optJSONArray("items_json")
-              if (jsonSnapshot != null) parseOrderItems(jsonSnapshot) else emptyList()
-            }
-          }
-
-          orderList.add(
-            Order(
-              id = id,
-              shopId = shopIdField,
-              items = items,
-              totalAmount = totalAmount,
-              orderDate = orderDate,
-              status = status,
-              // Placeholder — the ViewModel/UI derives the real ETA from
-              // (confirmed_at + shop.packingTime) at render time.
-              expectedPickupTime = "",
-              qrCodePayload = qrCodePayload,
-              timeline = timeline,
-              customerName = customerName,
-              customerMobile = customerMobile,
-              createdAt = createdAt,
-              confirmedAt = if (obj.isNull("confirmed_at")) null else obj.optString("confirmed_at").takeIf { it.isNotBlank() },
-              preparingAt = if (obj.isNull("preparing_at")) null else obj.optString("preparing_at").takeIf { it.isNotBlank() },
-              readyAt     = if (obj.isNull("ready_at"))     null else obj.optString("ready_at").takeIf { it.isNotBlank() },
-              completedAt = if (obj.isNull("completed_at")) null else obj.optString("completed_at").takeIf { it.isNotBlank() },
-              cancelledAt = if (obj.isNull("cancelled_at")) null else obj.optString("cancelled_at").takeIf { it.isNotBlank() },
-              orderNumber = orderNumber,
-              pickupToken = pickupToken
-            )
-          )
+          orderList.add(parseOrderRow(array.getJSONObject(i)))
         }
         orderList
       }
     }
+
+  /**
+   * One `orders` row (REST or Realtime payload) to an [Order]. Items come from
+   * the `order_items` embed when present, else the `items_json` snapshot.
+   */
+  fun parseOrderRow(obj: JSONObject): Order {
+    fun optNullable(key: String): String? =
+      if (obj.isNull(key)) null else obj.optString(key).takeIf { it.isNotBlank() }
+
+    val id = obj.optString("id")
+    val totalAmount = obj.optInt("total_amount", 0)
+    val orderDate = obj.optString("order_date", "Today")
+    val statusStr = obj.optString("status", "Order Placed")
+    val qrCodePayload = obj.optString("qr_code_payload", "ORDER:$id")
+    val shopIdField = obj.optString("shop_id").takeIf { it.isNotBlank() } ?: "default_shop"
+    val customerName = obj.optString("customer_name", "")
+    val customerMobile = obj.optString("customer_mobile", "")
+    val createdAt = obj.optString("created_at", "")
+    val orderNumber = obj.optInt("order_number", -1).takeIf { it > 0 }
+    val pickupToken = obj.optString("pickup_token", "").takeIf { it.isNotBlank() }
+
+    val status = when (statusStr) {
+      OrderStatus.CONFIRMED.label -> OrderStatus.CONFIRMED
+      OrderStatus.PREPARING.label -> OrderStatus.PREPARING
+      OrderStatus.READY_FOR_PICKUP.label -> OrderStatus.READY_FOR_PICKUP
+      OrderStatus.COMPLETED.label -> OrderStatus.COMPLETED
+      OrderStatus.CANCELLED.label -> OrderStatus.CANCELLED
+      else -> OrderStatus.PLACED
+    }
+
+    val timeline = com.kks.bharatkirana.data.model.buildOrderTimeline(
+      currentStatus = status,
+      orderDate = orderDate,
+      nowLabel = orderDate
+    )
+
+    // Prefer the relational embed; fall back to the JSONB snapshot on
+    // orders.items_json if the relational rows are missing (e.g. an
+    // insert failed silently, or the migration hasn't been applied).
+    val embeddedItems = obj.optJSONArray("order_items")
+    val items = when {
+      embeddedItems != null && embeddedItems.length() > 0 -> parseOrderItems(embeddedItems)
+      else -> {
+        val jsonSnapshot = obj.optJSONArray("items_json")
+        if (jsonSnapshot != null) parseOrderItems(jsonSnapshot) else emptyList()
+      }
+    }
+
+    return Order(
+      id = id,
+      shopId = shopIdField,
+      items = items,
+      totalAmount = totalAmount,
+      orderDate = orderDate,
+      status = status,
+      // Placeholder — the ViewModel/UI derives the real ETA from
+      // (confirmed_at + shop.packingTime) at render time.
+      expectedPickupTime = "",
+      storeName = optNullable("shop_name").orEmpty(),
+      storeAddress = optNullable("shop_address").orEmpty(),
+      qrCodePayload = qrCodePayload,
+      timeline = timeline,
+      customerName = customerName,
+      customerMobile = customerMobile,
+      createdAt = createdAt,
+      confirmedAt = optNullable("confirmed_at"),
+      preparingAt = optNullable("preparing_at"),
+      readyAt = optNullable("ready_at"),
+      completedAt = optNullable("completed_at"),
+      cancelledAt = optNullable("cancelled_at"),
+      orderNumber = orderNumber,
+      pickupToken = pickupToken
+    )
+  }
 
   /**
    * Convert embedded `order_items` JSON rows into UI-shaped [CartItem]s.
@@ -864,6 +898,7 @@ class SupabaseGroceryRepo(
     customerName: String,
     customerMobile: String,
     promoCode: String? = null,
+    expectedTotal: Int? = null,
     accessToken: String? = null
   ): Result<OrderServerFields> =
     withContext(Dispatchers.IO) {
@@ -890,6 +925,7 @@ class SupabaseGroceryRepo(
           put("qr_code_payload", order.qrCodePayload)
           if (order.shopId.isNotBlank() && order.shopId != "default_shop") put("shop_id", order.shopId)
           if (!promoCode.isNullOrBlank()) put("promo_code", promoCode)
+          if (expectedTotal != null) put("expected_total", expectedTotal)
         }
 
         val rpcPayload = JSONObject().apply {
@@ -907,7 +943,19 @@ class SupabaseGroceryRepo(
         val response = client.newCall(request).execute()
         val body = response.body?.string() ?: ""
         if (!response.isSuccessful) {
-          throw Exception("Failed to create order: HTTP ${response.code} — ${body.take(300)}")
+          val err = try { JSONObject(body) } catch (_: Exception) { null }
+          if (err?.optString("message") == "PRICE_CHANGED") {
+            val detail = try { JSONObject(err.optString("details")) } catch (_: Exception) { null }
+            if (detail != null) {
+              throw PriceChangedException(
+                serverTotal = detail.optInt("total"),
+                promoCode = if (detail.isNull("promo_code")) null else detail.optString("promo_code").takeIf { it.isNotBlank() }
+              )
+            }
+          }
+          // P0001 messages are written for customers ("Only 2 left of Milk.").
+          val readable = err?.takeIf { it.optString("code") == "P0001" }?.optString("message")?.takeIf { it.isNotBlank() }
+          throw Exception(readable ?: "Couldn't place the order (HTTP ${response.code}). Please try again.")
         }
 
         // RPC returns a rowset; PostgREST wraps it as a JSON array.
@@ -1258,7 +1306,8 @@ class SupabaseGroceryRepo(
           shopId = if (obj.isNull("shop_id")) null else obj.optString("shop_id").takeIf { it.isNotBlank() },
           profileCompleted = obj.optBoolean("profile_completed", false),
           phoneVerified = obj.optBoolean("phone_verified", false),
-          serverRole = serverRole
+          serverRole = serverRole,
+          isBlocked = obj.optBoolean("is_blocked", false)
         )
       }
     }
@@ -1266,13 +1315,19 @@ class SupabaseGroceryRepo(
   /**
    * Fetch all shops from Supabase and map to the Shop domain model.
    */
-  suspend fun fetchShops(accessToken: String? = null): Result<List<Shop>> =
+  suspend fun fetchShops(accessToken: String? = null, ownShopId: String? = null): Result<List<Shop>> =
     withContext(Dispatchers.IO) {
       runCatching {
         // status filter keeps pending/rejected/suspended shops off the customer
-        // home screen. Vendors see their own shop through profile.shop_id, not
-        // this call, so the filter does not hide it from them.
-        val url = "${SupabaseConfig.restUrl}/shops?status=eq.approved&select=*"
+        // home screen. A vendor's own shop is added back whatever its status, so
+        // a pending or rejected vendor still gets their status screen; RLS lets
+        // only the owner (or an admin) read a non-approved shop.
+        val filter = if (ownShopId.isNullOrBlank()) {
+          "status=eq.approved"
+        } else {
+          "or=(status.eq.approved,id.eq.$ownShopId)"
+        }
+        val url = "${SupabaseConfig.restUrl}/shops?$filter&select=*"
         val request = baseRequestBuilder(url, accessToken).get().build()
         val response = client.newCall(request).execute()
         val body = response.body?.string() ?: ""

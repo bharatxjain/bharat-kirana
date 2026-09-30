@@ -6,8 +6,11 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
@@ -37,12 +40,22 @@ class SupabaseRealtimeClient(
 ) {
 
   private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
-  private var webSocket: WebSocket? = null
+  @Volatile private var webSocket: WebSocket? = null
   private var heartbeatJob: Job? = null
-  private var accessToken: String? = null
+  private var reconnectJob: Job? = null
+  @Volatile private var accessToken: String? = null
   private var refCounter = 0
-  private var wantsConnection = false
-  private var isConnected = false
+  @Volatile private var wantsConnection = false
+  @Volatile private var generation = 0
+
+  private val _connected = MutableStateFlow(false)
+  val connected: StateFlow<Boolean> = _connected.asStateFlow()
+
+  private val topics = listOf(
+    "realtime:public:orders" to "orders",
+    "realtime:public:notifications" to "notifications",
+    "realtime:public:products" to "products"
+  )
 
   private val _changes = MutableSharedFlow<RealtimeChange>(extraBufferCapacity = 32)
   val changes: SharedFlow<RealtimeChange> = _changes.asSharedFlow()
@@ -64,8 +77,8 @@ class SupabaseRealtimeClient(
     accessToken = token
     val ws = webSocket ?: return
     token ?: return
-    if (!isConnected) return
-    for (topic in listOf("realtime:public:orders", "realtime:public:notifications")) {
+    if (!_connected.value) return
+    for ((topic, _) in topics) {
       val msg = JSONObject().apply {
         put("topic", topic)
         put("event", "access_token")
@@ -78,11 +91,14 @@ class SupabaseRealtimeClient(
 
   fun disconnect() {
     wantsConnection = false
+    generation++
+    reconnectJob?.cancel()
+    reconnectJob = null
     heartbeatJob?.cancel()
     heartbeatJob = null
     webSocket?.close(1000, "bye")
     webSocket = null
-    isConnected = false
+    _connected.value = false
   }
 
   private fun open() {
@@ -91,27 +107,42 @@ class SupabaseRealtimeClient(
       .replace("http://", "ws://")
     val url = "$wsUrl/realtime/v1/websocket?apikey=${SupabaseConfig.API_KEY}&vsn=1.0.0"
     val request = Request.Builder().url(url).build()
+    val gen = ++generation
     webSocket?.close(1000, "reopen")
-    webSocket = httpClient.newWebSocket(request, listener)
+    webSocket = httpClient.newWebSocket(request, SocketListener(gen))
   }
 
   private fun nextRef(): String = (++refCounter).toString()
 
-  private val listener = object : WebSocketListener() {
+  // Any drop — network failure or a clean close from the server — is followed
+  // by a reconnect while the app still wants one.
+  private fun onSocketLost(gen: Int) {
+    if (gen != generation) return
+    _connected.value = false
+    heartbeatJob?.cancel()
+    heartbeatJob = null
+    if (!wantsConnection || reconnectJob?.isActive == true) return
+    reconnectJob = scope.launch {
+      delay(5_000)
+      if (wantsConnection) open()
+    }
+  }
+
+  // One listener per socket; `gen` tells callbacks of a replaced socket apart
+  // from the live one (onOpen can fire before newWebSocket() even returns).
+  private inner class SocketListener(private val gen: Int) : WebSocketListener() {
     override fun onOpen(webSocket: WebSocket, response: Response) {
-      isConnected = true
+      if (gen != generation) return
       // The JWT must be attached to the phx_join payload itself so RLS applies to
       // the subscription from the start — sending it as a follow-up "access_token"
       // event afterward (as this used to do, and only for the orders topic) left
       // both channels running as the anon role, so no postgres_changes ever passed
       // row-level security and neither orders updates nor notification inserts
-      // ever reached the client.
-      joinChannel(webSocket, "realtime:public:orders", "orders")
-      joinChannel(webSocket, "realtime:public:notifications", "notifications")
-      // So a customer browsing the catalog sees a shopkeeper's stock toggle
-      // without needing to pull-to-refresh.
-      joinChannel(webSocket, "realtime:public:products", "products")
+      // ever reached the client. The products channel lets a customer browsing
+      // the catalog see a shopkeeper's stock toggle without a pull-to-refresh.
+      for ((topic, table) in topics) joinChannel(webSocket, topic, table)
       startHeartbeat(webSocket)
+      _connected.value = true
     }
 
     override fun onMessage(webSocket: WebSocket, text: String) {
@@ -131,21 +162,11 @@ class SupabaseRealtimeClient(
     }
 
     override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-      isConnected = false
-      heartbeatJob?.cancel()
-      heartbeatJob = null
-      if (wantsConnection) {
-        scope.launch {
-          delay(5_000)
-          if (wantsConnection) open()
-        }
-      }
+      onSocketLost(gen)
     }
 
     override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-      isConnected = false
-      heartbeatJob?.cancel()
-      heartbeatJob = null
+      onSocketLost(gen)
     }
   }
 
