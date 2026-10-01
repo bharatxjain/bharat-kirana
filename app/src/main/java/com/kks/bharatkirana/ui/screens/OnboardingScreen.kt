@@ -65,7 +65,7 @@ fun OnboardingScreen(
     OnboardingPage(
       imageRes = R.drawable.img_welcome_hero,
       title = "Skip the Queue with Counter Pickup",
-      description = "Order your daily essentials online and pick them up instantly from the counter at your convenience."
+      description = "Order your daily essentials online and pick them up from the counter once the shop has them ready."
     )
   )
 

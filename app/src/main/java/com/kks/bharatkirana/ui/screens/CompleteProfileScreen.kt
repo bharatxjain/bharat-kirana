@@ -191,12 +191,14 @@ fun CompleteProfileScreen(
           
           Spacer(modifier = Modifier.height(16.dp))
           
+          // The sign-in email; changing it here would only change the profile copy, not the login.
           AuthTextFieldSimple(
             value = email,
             onValueChange = { email = it },
-            label = "Email Address",
+            label = if (userProfile.email.isNotBlank()) "Email Address (your sign-in email)" else "Email Address",
             placeholder = "john@example.com",
-            icon = Icons.Default.Email
+            icon = Icons.Default.Email,
+            readOnly = userProfile.email.isNotBlank()
           )
           
           Spacer(modifier = Modifier.height(16.dp))
@@ -316,7 +318,8 @@ fun AuthTextFieldSimple(
   onValueChange: (String) -> Unit,
   label: String,
   placeholder: String,
-  icon: androidx.compose.ui.graphics.vector.ImageVector
+  icon: androidx.compose.ui.graphics.vector.ImageVector,
+  readOnly: Boolean = false
 ) {
   Column(modifier = Modifier.fillMaxWidth()) {
     Text(text = label, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = BharatTextPrimary)
@@ -324,6 +327,7 @@ fun AuthTextFieldSimple(
     OutlinedTextField(
       value = value,
       onValueChange = onValueChange,
+      readOnly = readOnly,
       placeholder = { Text(placeholder, color = BharatTextMuted) },
       leadingIcon = { Icon(imageVector = icon, contentDescription = null, tint = BharatTextSecondary, modifier = Modifier.size(18.dp)) },
       singleLine = true,

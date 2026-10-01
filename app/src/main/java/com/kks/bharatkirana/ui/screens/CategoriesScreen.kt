@@ -74,30 +74,28 @@ fun CategoriesScreen(
   onUpdateCartQty: (String, String, Int) -> Unit,
   onViewCartClick: () -> Unit,
   isLoading: Boolean = false,
+  catalogError: String? = null,
+  onRetryCatalog: () -> Unit = {},
   cartDiscount: Int = 0,
   modifier: Modifier = Modifier
 ) {
   val currentCategory = selectedCategory ?: categories.firstOrNull()
   var sortMode by remember { mutableStateOf(ProductSort.RELEVANCE) }
-  var minRating by remember { mutableStateOf(0f) }
-  // Reset filters when the category changes so a previous filter doesn't hide
-  // everything in a newly-picked category.
+  // Reset the sort when the category changes so a previous choice doesn't carry over.
   androidx.compose.runtime.LaunchedEffect(currentCategory?.id) {
     sortMode = ProductSort.RELEVANCE
-    minRating = 0f
   }
-  val filteredProducts = remember(products, currentCategory?.id, sortMode, minRating) {
+  val filteredProducts = remember(products, currentCategory?.id, sortMode) {
     val base = if (currentCategory != null) {
       products.filter { it.categoryId == currentCategory.id }
     } else {
       products
     }
-    val rated = if (minRating > 0f) base.filter { it.rating >= minRating } else base
     when (sortMode) {
-      ProductSort.RELEVANCE -> rated
-      ProductSort.PRICE_LOW_HIGH -> rated.sortedBy { it.currentPrice }
-      ProductSort.PRICE_HIGH_LOW -> rated.sortedByDescending { it.currentPrice }
-      ProductSort.DISCOUNT_HIGH_LOW -> rated.sortedByDescending { it.discountPercent }
+      ProductSort.RELEVANCE -> base
+      ProductSort.PRICE_LOW_HIGH -> base.sortedBy { it.defaultPrice }
+      ProductSort.PRICE_HIGH_LOW -> base.sortedByDescending { it.defaultPrice }
+      ProductSort.DISCOUNT_HIGH_LOW -> base.sortedByDescending { it.displayDiscountPercent }
     }
   }
 
@@ -188,13 +186,10 @@ fun CategoriesScreen(
           )
         }
 
-        // Sort + rating filter chip row. Filters real-time; no bottom sheets or
-        // backend calls — everything computes from the local product list.
+        // Sort row. Everything computes from the local product list.
         CategoryFilterBar(
           sortMode = sortMode,
-          onSortChange = { sortMode = it },
-          minRating = minRating,
-          onRatingChange = { minRating = it }
+          onSortChange = { sortMode = it }
         )
 
         if (isLoading && filteredProducts.isEmpty()) {
@@ -207,6 +202,22 @@ fun CategoriesScreen(
           ) {
             items(6) {
               ShimmerProductCard(modifier = Modifier.fillMaxWidth())
+            }
+          }
+        } else if (filteredProducts.isEmpty() && products.isEmpty() && catalogError != null) {
+          Column(
+            modifier = Modifier.fillMaxSize(),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+          ) {
+            Text(
+              text = catalogError,
+              style = MaterialTheme.typography.bodyMedium,
+              color = BharatTextSecondary,
+              textAlign = androidx.compose.ui.text.style.TextAlign.Center
+            )
+            TextButton(onClick = onRetryCatalog) {
+              Text("Retry", fontWeight = FontWeight.SemiBold)
             }
           }
         } else if (filteredProducts.isEmpty()) {
@@ -290,25 +301,13 @@ enum class ProductSort(val label: String) {
   DISCOUNT_HIGH_LOW("Discount (high to low)")
 }
 
-private data class RatingOption(val value: Float, val label: String)
-
-private val RatingOptions = listOf(
-  RatingOption(0f,  "Any"),
-  RatingOption(3f,  "3+ stars"),
-  RatingOption(4f,  "4+ stars"),
-  RatingOption(4.5f, "4.5+ stars")
-)
-
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 private fun CategoryFilterBar(
   sortMode: ProductSort,
-  onSortChange: (ProductSort) -> Unit,
-  minRating: Float,
-  onRatingChange: (Float) -> Unit
+  onSortChange: (ProductSort) -> Unit
 ) {
   var showSortSheet by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
-  var showRatingSheet by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
 
   Row(
     modifier = Modifier
@@ -321,14 +320,6 @@ private fun CategoryFilterBar(
       label = "Sort by",
       value = sortMode.label,
       onClick = { showSortSheet = true },
-      modifier = Modifier.weight(1f)
-    )
-    val ratingCurrent = RatingOptions.firstOrNull { kotlin.math.abs(it.value - minRating) < 0.01f }
-      ?: RatingOptions.first()
-    FilterDropdownPill(
-      label = "Rating",
-      value = ratingCurrent.label,
-      onClick = { showRatingSheet = true },
       modifier = Modifier.weight(1f)
     )
   }
@@ -355,35 +346,6 @@ private fun CategoryFilterBar(
           onClick = {
             onSortChange(mode)
             showSortSheet = false
-          }
-        )
-      }
-      Spacer(modifier = Modifier.height(16.dp))
-    }
-  }
-
-  if (showRatingSheet) {
-    ModalBottomSheet(
-      onDismissRequest = { showRatingSheet = false },
-      containerColor = Color.White,
-      dragHandle = { BottomSheetDefaults.DragHandle() }
-    ) {
-      Text(
-        text = "Rating",
-        fontWeight = FontWeight.ExtraBold,
-        fontSize = 18.sp,
-        color = BharatTextPrimary,
-        modifier = Modifier.padding(start = 20.dp, top = 4.dp, bottom = 8.dp)
-      )
-      HorizontalDivider(color = Color(0xFFF1F5F9))
-      RatingOptions.forEach { opt ->
-        val selected = kotlin.math.abs(opt.value - minRating) < 0.01f
-        RadioOptionRow(
-          label = opt.label,
-          selected = selected,
-          onClick = {
-            onRatingChange(opt.value)
-            showRatingSheet = false
           }
         )
       }

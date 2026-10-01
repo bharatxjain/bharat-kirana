@@ -47,7 +47,8 @@ fun VendorOrderDetailsScreen(
   order: Order,
   onBackClick: () -> Unit,
   onAdvanceStatus: (OrderStatus) -> Unit,
-  onCancelOrder: () -> Unit,
+  onCancelOrder: (reason: String) -> Unit,
+  onVerifyPickup: () -> Unit,
   modifier: Modifier = Modifier
 ) {
   val context = LocalContext.current
@@ -58,30 +59,13 @@ fun VendorOrderDetailsScreen(
   val extras = if (hasDelta) (order.totalAmount - subtotal).coerceAtLeast(0) else 0
 
   if (showCancelDialog) {
-    AlertDialog(
-      onDismissRequest = { showCancelDialog = false },
-      containerColor = Color.White,
-      title = { Text("Cancel this order?", fontWeight = FontWeight.Bold, color = BharatTextPrimary) },
-      text = {
-        Text(
-          text = "Order ${order.displayNumber} will be cancelled and the customer will be notified.",
-          color = BharatTextSecondary
-        )
+    VendorCancelOrderDialog(
+      orderLabel = order.displayNumber,
+      onConfirm = { reason ->
+        showCancelDialog = false
+        onCancelOrder(reason)
       },
-      confirmButton = {
-        Button(
-          onClick = {
-            showCancelDialog = false
-            onCancelOrder()
-          },
-          colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626))
-        ) { Text("Yes, cancel", color = Color.White, fontWeight = FontWeight.Bold) }
-      },
-      dismissButton = {
-        TextButton(onClick = { showCancelDialog = false }) {
-          Text("Keep order", color = BharatPurplePrimary)
-        }
-      }
+      onDismiss = { showCancelDialog = false }
     )
   }
 
@@ -163,9 +147,10 @@ fun VendorOrderDetailsScreen(
           onCancel = { showCancelDialog = true }
         )
         OrderStatus.READY_FOR_PICKUP -> ActionBar(
-          primaryLabel = "Mark Completed",
+          // Completion needs the customer's pickup code, checked on the server.
+          primaryLabel = "Verify Pickup",
           primaryColor = Color(0xFF16A34A),
-          onPrimary = { onAdvanceStatus(OrderStatus.COMPLETED) },
+          onPrimary = onVerifyPickup,
           onCancel = null
         )
         OrderStatus.COMPLETED, OrderStatus.CANCELLED -> {
@@ -241,7 +226,13 @@ private fun StatusBanner(order: Order) {
     )
     OrderStatus.CANCELLED -> HeaderState(
       "Order cancelled",
-      "No further action needed.",
+      when (order.cancelledBy) {
+        "vendor" -> order.cancelReason?.takeIf { it.isNotBlank() }?.let { "You cancelled it: $it" } ?: "You cancelled this order."
+        "customer" -> "The customer cancelled this order."
+        "system" -> "Cancelled automatically — it wasn't accepted in time."
+        "admin" -> "Cancelled by BreakQ support" + (order.cancelReason?.takeIf { it.isNotBlank() }?.let { ": $it" } ?: ".")
+        else -> "No further action needed."
+      },
       Color(0xFFDC2626),
       Icons.Default.Close
     )
@@ -275,6 +266,58 @@ private data class HeaderState(
   val tint: Color,
   val icon: androidx.compose.ui.graphics.vector.ImageVector
 )
+
+/** Asks the vendor why they're cancelling; the reason is shown to the customer. */
+@Composable
+fun VendorCancelOrderDialog(
+  orderLabel: String,
+  onConfirm: (reason: String) -> Unit,
+  onDismiss: () -> Unit
+) {
+  val quickReasons = listOf("Items out of stock", "Shop is closing", "Too busy to prepare")
+  var reason by remember { mutableStateOf("") }
+  AlertDialog(
+    onDismissRequest = onDismiss,
+    containerColor = Color.White,
+    title = { Text("Cancel order $orderLabel?", fontWeight = FontWeight.Bold, color = BharatTextPrimary) },
+    text = {
+      Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text("The customer will see this reason.", color = BharatTextSecondary, fontSize = 13.sp)
+        quickReasons.forEach { option ->
+          val selected = reason == option
+          Surface(
+            onClick = { reason = option },
+            shape = RoundedCornerShape(10.dp),
+            color = if (selected) BharatPurpleContainer else Color(0xFFF8FAFC),
+            border = BorderStroke(1.dp, if (selected) BharatPurplePrimary else Color(0xFFE2E8F0)),
+            modifier = Modifier.fillMaxWidth()
+          ) {
+            Text(option, color = BharatTextPrimary, fontSize = 13.sp, modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp))
+          }
+        }
+        OutlinedTextField(
+          value = reason,
+          onValueChange = { reason = it.take(200) },
+          placeholder = { Text("Or type a reason", color = BharatTextMuted) },
+          singleLine = true,
+          modifier = Modifier.fillMaxWidth()
+        )
+      }
+    },
+    confirmButton = {
+      Button(
+        onClick = { onConfirm(reason.trim()) },
+        enabled = reason.trim().length >= 3,
+        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626))
+      ) { Text("Cancel order", color = Color.White, fontWeight = FontWeight.Bold) }
+    },
+    dismissButton = {
+      TextButton(onClick = onDismiss) {
+        Text("Keep order", color = BharatPurplePrimary)
+      }
+    }
+  )
+}
 
 @Composable
 private fun CustomerCard(name: String, phone: String, onCallCustomer: (String) -> Unit) {
@@ -389,7 +432,16 @@ private fun ItemsCard(order: Order, subtotal: Int, extras: Int) {
       HorizontalDivider(color = Color(0xFFF1F5F9))
       Spacer(modifier = Modifier.height(12.dp))
 
-      if (subtotal > 0) {
+      val storedBill = order.billLines
+      if (storedBill != null) {
+        storedBill.forEachIndexed { index, (label, amount) ->
+          if (index > 0) Spacer(modifier = Modifier.height(4.dp))
+          BillLine(label, if (amount < 0) "−₹${-amount}" else "₹$amount")
+        }
+        Spacer(modifier = Modifier.height(8.dp))
+        HorizontalDivider(color = Color(0xFFF1F5F9))
+        Spacer(modifier = Modifier.height(8.dp))
+      } else if (subtotal > 0) {
         BillLine("Subtotal", "\u20b9$subtotal")
         if (extras > 0) {
           Spacer(modifier = Modifier.height(4.dp))

@@ -31,7 +31,6 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -56,12 +55,11 @@ fun AccountActionsScreen(
   userEmail: String,
   onBackClick: () -> Unit,
   onLogout: () -> Unit,
-  onDeleteAccount: () -> Unit,
+  onRequestDeletion: () -> Unit,
   modifier: Modifier = Modifier
 ) {
   var showLogoutConfirm by remember { mutableStateOf(false) }
-  // 0 = closed, 1 = first prompt, 2 = final confirmation.
-  var deleteStep by remember { mutableIntStateOf(0) }
+  var showDeleteInfo by remember { mutableStateOf(false) }
 
   Column(
     modifier = modifier
@@ -121,10 +119,10 @@ fun AccountActionsScreen(
 
     // Delete account is intentionally styled as a subtle centered text \u2014 the
     // destructive action must remain reachable but never look like the primary
-    // choice. The two-step confirmation flow below is unchanged.
+    // choice.
     Spacer(modifier = Modifier.weight(1f))
     Text(
-      text = "Delete account permanently",
+      text = "Request account deletion",
       fontSize = 12.sp,
       color = BharatTextMuted,
       textAlign = androidx.compose.ui.text.style.TextAlign.Center,
@@ -132,7 +130,7 @@ fun AccountActionsScreen(
         .fillMaxWidth()
         .padding(horizontal = 24.dp, vertical = 20.dp)
         .testTag("profile_delete_account_row")
-        .clickable { deleteStep = 1 }
+        .clickable { showDeleteInfo = true }
     )
   }
 
@@ -166,57 +164,30 @@ fun AccountActionsScreen(
     )
   }
 
-  if (deleteStep == 1) {
+  if (showDeleteInfo) {
     AlertDialog(
-      onDismissRequest = { deleteStep = 0 },
+      onDismissRequest = { showDeleteInfo = false },
       title = { Text("Delete your account?", fontWeight = FontWeight.Bold) },
       text = {
         Text(
-          "This action may permanently remove your account data.",
-          color = BharatTextSecondary
-        )
-      },
-      confirmButton = {
-        Button(
-          onClick = { deleteStep = 2 },
-          colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626)),
-          modifier = Modifier.testTag("delete_account_step1_continue")
-        ) {
-          Text("Continue", color = Color.White, fontWeight = FontWeight.Bold)
-        }
-      },
-      dismissButton = {
-        TextButton(onClick = { deleteStep = 0 }) {
-          Text("Cancel", color = BharatTextSecondary)
-        }
-      }
-    )
-  }
-
-  if (deleteStep == 2) {
-    AlertDialog(
-      onDismissRequest = { deleteStep = 0 },
-      title = { Text("Are you absolutely sure?", fontWeight = FontWeight.Bold) },
-      text = {
-        Text(
-          "This action cannot be undone. All your profile data will be permanently deleted.",
+          "Account deletion is handled by the BreakQ team. We'll open an email to our privacy team with your account details filled in \u2014 send it to ask for your account and data to be deleted.\n\nYou stay signed in until then. Order history may be kept for the shops' records, as the Privacy Policy explains.",
           color = BharatTextSecondary
         )
       },
       confirmButton = {
         Button(
           onClick = {
-            deleteStep = 0
-            onDeleteAccount()
+            showDeleteInfo = false
+            onRequestDeletion()
           },
           colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626)),
-          modifier = Modifier.testTag("delete_account_final_confirm")
+          modifier = Modifier.testTag("delete_account_step1_continue")
         ) {
-          Text("Delete Account", color = Color.White, fontWeight = FontWeight.Bold)
+          Text("Open email", color = Color.White, fontWeight = FontWeight.Bold)
         }
       },
       dismissButton = {
-        TextButton(onClick = { deleteStep = 0 }) {
+        TextButton(onClick = { showDeleteInfo = false }) {
           Text("Cancel", color = BharatTextSecondary)
         }
       }

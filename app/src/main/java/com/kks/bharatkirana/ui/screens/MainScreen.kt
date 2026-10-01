@@ -23,6 +23,7 @@ import androidx.compose.material.icons.filled.Dashboard
 import androidx.compose.material.icons.filled.ShoppingBag
 import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material3.*
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
@@ -63,6 +64,7 @@ private data class AddProductAttempt(
   val scannedImage: String
 )
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MainScreen(
   viewModel: GroceryViewModel,
@@ -102,7 +104,9 @@ fun MainScreen(
   val checkoutIssue by viewModel.checkoutIssue.collectAsState()
   val userNotice by viewModel.userNotice.collectAsState()
   val catalogError by viewModel.catalogError.collectAsState()
+  val catalogLoading by viewModel.catalogLoading.collectAsState()
   val realtimeConnected by viewModel.realtimeConnected.collectAsState()
+  val isRefreshing by viewModel.isRefreshing.collectAsState()
 
   // Round 3: Remote Config-driven state
   val isMaintenanceMode by viewModel.isMaintenanceMode.collectAsState()
@@ -133,12 +137,49 @@ fun MainScreen(
   }
 
   // Permission Launchers
+  var locationDenied by remember { mutableStateOf(false) }
   val locationPermissionLauncher = rememberLauncherForActivityResult(
     ActivityResultContracts.RequestMultiplePermissions()
   ) { permissions ->
     val granted = permissions.getOrDefault(Manifest.permission.ACCESS_FINE_LOCATION, false) ||
                   permissions.getOrDefault(Manifest.permission.ACCESS_COARSE_LOCATION, false)
+    locationDenied = !granted
     if (granted) viewModel.fetchUserLocation()
+  }
+  // Ask again while Android still allows it; after a permanent denial only app settings can grant it.
+  val enableLocation: () -> Unit = {
+    val activity = context as? Activity
+    if (activity != null && androidx.core.app.ActivityCompat.shouldShowRequestPermissionRationale(
+        activity, Manifest.permission.ACCESS_FINE_LOCATION
+      )
+    ) {
+      locationPermissionLauncher.launch(arrayOf(
+        Manifest.permission.ACCESS_FINE_LOCATION,
+        Manifest.permission.ACCESS_COARSE_LOCATION
+      ))
+    } else {
+      runCatching {
+        context.startActivity(
+          android.content.Intent(
+            android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+            Uri.fromParts("package", context.packageName, null)
+          )
+        )
+      }
+    }
+  }
+  val lifecycleOwner = androidx.compose.ui.platform.LocalLifecycleOwner.current
+  DisposableEffect(lifecycleOwner) {
+    val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+      if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME && locationDenied &&
+        ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+      ) {
+        locationDenied = false
+        viewModel.fetchUserLocation()
+      }
+    }
+    lifecycleOwner.lifecycle.addObserver(observer)
+    onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
   }
 
   val vendorPermissionsLauncher = rememberLauncherForActivityResult(
@@ -417,14 +458,29 @@ fun MainScreen(
 
       is AppScreen.ProductDetail -> {
         // Same empty-list hazard as VendorDashboard: a deep link or push can open
-        // this before products have loaded.
-        val product = products.find { it.id == screen.productId } ?: selectedProduct ?: products.firstOrNull()
+        // this before products have loaded. Never stand in a different product.
+        val product = products.find { it.id == screen.productId }
+          ?: selectedProduct?.takeIf { it.id == screen.productId }
         if (product == null) {
           Box(
             modifier = Modifier.fillMaxSize().background(Color.White),
             contentAlignment = Alignment.Center
           ) {
-            CircularProgressIndicator(color = BharatPurplePrimary, strokeWidth = 3.dp)
+            if (catalogLoading) {
+              CircularProgressIndicator(color = BharatPurplePrimary, strokeWidth = 3.dp)
+            } else {
+              Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(24.dp)) {
+                Text(
+                  text = catalogError ?: "This product isn't available anymore.",
+                  color = BharatTextSecondary,
+                  textAlign = TextAlign.Center
+                )
+                if (catalogError != null) {
+                  TextButton(onClick = { viewModel.loadSupabaseData() }) { Text("Retry") }
+                }
+                TextButton(onClick = { viewModel.navigateBack() }) { Text("Go back") }
+              }
+            }
           }
         } else {
         val recommendations = products.filter { it.id != product.id }.take(4)
@@ -457,9 +513,11 @@ fun MainScreen(
       }
 
       is AppScreen.Cart -> {
+        val cartShopId = cartItems.firstOrNull()?.product?.shopId
         CartScreen(
           userProfile = userProfile,
           cartItems = cartItems,
+          pickupShop = shops.firstOrNull { it.id == cartShopId },
           onBackClick = { viewModel.navigateBack() },
           onUpdateQuantity = { prodId, weightLabel, delta ->
             viewModel.updateCartQuantity(prodId, weightLabel, delta)
@@ -538,8 +596,8 @@ fun MainScreen(
             order = order,
             onBackClick = { viewModel.navigateBack() },
             onReorder = { ord -> viewModel.reorder(ord) },
-            onRateShop = { shopId, orderId, rating, review ->
-              viewModel.rateShop(shopId, orderId, rating, review)
+            onRateShop = { shopId, orderId, rating, review, onDone ->
+              viewModel.rateShop(shopId, orderId, rating, review, onDone)
             },
             onCancelOrder = { orderId -> viewModel.cancelOrder(orderId) },
             hasAlreadyRated = ratedIds.contains(order.id),
@@ -574,7 +632,8 @@ fun MainScreen(
             order = order,
             onBackClick = { viewModel.navigateBack() },
             onAdvanceStatus = { next -> viewModel.updateOrderStatus(order.id, next) },
-            onCancelOrder = { viewModel.cancelOrder(order.id) }
+            onCancelOrder = { reason -> viewModel.cancelOrderAsVendor(order.id, reason) },
+            onVerifyPickup = { viewModel.navigateTo(AppScreen.VendorPickup) }
           )
         } else {
           OrderNotFoundScreen(
@@ -679,13 +738,20 @@ fun MainScreen(
       is AppScreen.Wishlist -> {
         val wishlistIds by viewModel.wishlistIds.collectAsState()
         val wishlistProducts = products.filter { it.id in wishlistIds }
+        // Saved ids whose product isn't in the catalog: still loading, failed to load, or delisted.
+        val unavailableIds = wishlistIds.filter { id -> products.none { it.id == id } }
         WishlistScreen(
           products = wishlistProducts,
+          unavailableCount = unavailableIds.size,
+          isCatalogLoading = catalogLoading,
+          catalogError = catalogError,
+          onRemoveUnavailable = { unavailableIds.forEach { viewModel.removeFromWishlist(it) } },
+          isRefreshing = isRefreshing,
+          onRefresh = { viewModel.pullToRefresh(GroceryViewModel.RefreshTarget.WISHLIST) },
           onBackClick = { viewModel.navigateBack() },
           onProductClick = { prod -> viewModel.selectProduct(prod) },
           onAddToCart = { prod ->
-            val defaultWeight = prod.weightOptions.firstOrNull()
-            if (defaultWeight != null) viewModel.addToCart(prod, defaultWeight, 1)
+            viewModel.addToCart(prod, prod.weightOptions.firstOrNull() ?: com.kks.bharatkirana.data.model.WeightOption(prod.unit, prod.currentPrice), 1)
           },
           onRemove = { id -> viewModel.removeFromWishlist(id) },
           onExploreClick = {
@@ -698,12 +764,17 @@ fun MainScreen(
       is AppScreen.OrderHistory -> {
         // Orders were previously fetched only once at login; a single failed
         // fetch left the history empty for the whole session.
-        LaunchedEffect(Unit) { viewModel.refreshOrders() }
+        LaunchedEffect(Unit) {
+          viewModel.refreshOrders()
+          viewModel.hydrateAllEmptyOrderItems()
+        }
         OrdersScreen(
           orders = orders,
           isLoading = ordersLoading,
           errorMessage = ordersError,
           onRetry = { viewModel.refreshOrders() },
+          isRefreshing = isRefreshing,
+          onRefresh = { viewModel.pullToRefresh(GroceryViewModel.RefreshTarget.ORDERS) },
           onOrderClick = { order -> viewModel.navigateTo(AppScreen.OrderDetails(order.id)) },
           onReorder = { order -> viewModel.reorder(order) },
           onExploreClick = {
@@ -733,14 +804,16 @@ fun MainScreen(
         SelectLocationScreen(
           addresses = addresses,
           isLoading = addressesLoading,
+          errorMessage = addressError,
+          onRetry = { viewModel.loadAddresses() },
           onBackClick = { viewModel.navigateBack() },
           onUseCurrentLocation = {
             viewModel.fetchUserLocation()
             viewModel.navigateTo(
-              AppScreen.AddEditAddress(null)
+              AppScreen.AddEditAddress(null, locateOnOpen = true)
             )
           },
-          onAddNewAddress = { _, _ -> viewModel.navigateTo(AppScreen.AddEditAddress(null)) },
+          onAddNewAddress = { lat, lng -> viewModel.navigateTo(AppScreen.AddEditAddress(null, lat, lng)) },
           onSelectAddress = { address ->
             viewModel.selectAddress(address.id)
             viewModel.navigateBack()
@@ -753,12 +826,14 @@ fun MainScreen(
         SelectLocationScreen(
           addresses = addresses,
           isLoading = addressesLoading,
+          errorMessage = addressError,
+          onRetry = { viewModel.loadAddresses() },
           onBackClick = { viewModel.navigateBack() },
           onUseCurrentLocation = {
             viewModel.fetchUserLocation()
-            viewModel.navigateTo(AppScreen.AddEditAddress(null))
+            viewModel.navigateTo(AppScreen.AddEditAddress(null, locateOnOpen = true))
           },
-          onAddNewAddress = { _, _ -> viewModel.navigateTo(AppScreen.AddEditAddress(null)) },
+          onAddNewAddress = { lat, lng -> viewModel.navigateTo(AppScreen.AddEditAddress(null, lat, lng)) },
           onSelectAddress = { address ->
             viewModel.selectAddress(address.id)
             viewModel.navigateBack()
@@ -771,6 +846,9 @@ fun MainScreen(
         val editing = screen.addressId?.let { id -> addresses.find { it.id == id } }
         AddEditAddressScreen(
           existing = editing,
+          presetLat = screen.presetLat,
+          presetLng = screen.presetLng,
+          locateOnOpen = screen.locateOnOpen,
           userProfile = userProfile,
           userLocation = userLocation,
           isSaving = addressSaving,
@@ -827,7 +905,7 @@ fun MainScreen(
           userEmail = userProfile.email,
           onBackClick = { viewModel.navigateBack() },
           onLogout = { viewModel.logout() },
-          onDeleteAccount = { viewModel.deleteAccount() }
+          onRequestDeletion = { viewModel.requestAccountDeletion() }
         )
       }
 
@@ -863,6 +941,10 @@ fun MainScreen(
             cartItemCount = totalCartCount,
             cartTotal = cartItems.sumOf { it.totalPrice },
             cartDiscount = cartBannerDiscount,
+            isCatalogLoading = catalogLoading,
+            catalogError = catalogError,
+            isRefreshing = isRefreshing,
+            onRefresh = { viewModel.pullToRefresh(GroceryViewModel.RefreshTarget.CATALOG) },
             onViewCartClick = { viewModel.navigateTo(AppScreen.Cart) },
             categories = categories,
             cartQuantityFor = { product ->
@@ -977,13 +1059,15 @@ fun MainScreen(
           onBackClick = { },
           onUpdateShop = { id, shop -> viewModel.updateShopDetails(id, shop) },
           onUpdateOrderStatus = { orderId, newStatus -> viewModel.updateOrderStatus(orderId, newStatus) },
-          onCancelOrder = { orderId -> viewModel.cancelOrder(orderId) },
+          onCancelOrder = { orderId, reason -> viewModel.cancelOrderAsVendor(orderId, reason) },
           onUpdateProductStock = { prodId, inStock -> viewModel.updateProductStock(prodId, inStock) },
           onUpdateProductPrice = { prodId, price -> viewModel.updateProductPrice(prodId, price) },
           onUpdateProductQty = { prodId, qty -> viewModel.updateProductQty(prodId, qty) },
           onDeleteProduct = { prodId -> viewModel.deleteProduct(prodId) },
           onSupportClick = { viewModel.openSupportWhatsApp() },
           onRefreshStatus = { viewModel.loadSupabaseData() },
+          isRefreshing = isRefreshing,
+          onPullRefresh = { viewModel.pullToRefresh(GroceryViewModel.RefreshTarget.VENDOR) },
           onManagePlan = { viewModel.navigateTo(AppScreen.Subscription) },
           onOpenProfile = { viewModel.navigateTo(AppScreen.VendorProfile) },
           onOpenNotifications = { viewModel.navigateTo(AppScreen.Notifications) },
@@ -1265,7 +1349,11 @@ fun MainScreen(
                   .filter { it.status != com.kks.bharatkirana.data.model.OrderStatus.COMPLETED &&
                             it.status != com.kks.bharatkirana.data.model.OrderStatus.CANCELLED }
                   .maxByOrNull { it.createdAt.ifBlank { it.orderDate } }
-                Box(modifier = Modifier.fillMaxSize()) {
+                PullToRefreshBox(
+                  isRefreshing = isRefreshing,
+                  onRefresh = { viewModel.pullToRefresh(GroceryViewModel.RefreshTarget.CATALOG) },
+                  modifier = Modifier.fillMaxSize()
+                ) {
                   HomeScreen(
                     userProfile = userProfile,
                     categories = categories,
@@ -1306,6 +1394,11 @@ fun MainScreen(
                     onViewAllShopsClick = { viewModel.navigateTo(AppScreen.NearbyShops) },
                     catalogError = catalogError,
                     onRetryCatalog = { viewModel.loadSupabaseData() },
+                    isCatalogLoading = catalogLoading,
+                    // Only nag when nothing else gives distances: no permission and no pinned address.
+                    showLocationPrompt = locationDenied &&
+                      (selectedAddress?.lat == null || selectedAddress?.lng == null),
+                    onEnableLocation = enableLocation,
                     cartDiscount = cartBannerDiscount
                   )
                   ActiveOrderBottomSheet(
@@ -1334,24 +1427,32 @@ fun MainScreen(
               }
 
               MainTab.CATEGORIES -> {
-                CategoriesScreen(
-                  categories = categories,
-                  products = products,
-                  selectedCategory = selectedCategory,
-                  cartItems = cartItems,
-                  onSelectCategory = { cat -> viewModel.selectCategory(cat) },
-                  onProductClick = { prod -> viewModel.selectProduct(prod) },
-                  onAddToCart = { prod ->
-                    val defaultWeight = prod.weightOptions.firstOrNull()
-                    if (defaultWeight != null) viewModel.addToCart(prod, defaultWeight, 1)
-                  },
-                  onUpdateCartQty = { prodId, weightLabel, delta ->
-                    viewModel.updateCartQuantity(prodId, weightLabel, delta)
-                  },
-                  onViewCartClick = { viewModel.navigateTo(AppScreen.Cart) },
-                  isLoading = isLoading,
-                  cartDiscount = cartBannerDiscount
-                )
+                PullToRefreshBox(
+                  isRefreshing = isRefreshing,
+                  onRefresh = { viewModel.pullToRefresh(GroceryViewModel.RefreshTarget.CATALOG) },
+                  modifier = Modifier.fillMaxSize()
+                ) {
+                  CategoriesScreen(
+                    categories = categories,
+                    products = products,
+                    selectedCategory = selectedCategory,
+                    cartItems = cartItems,
+                    onSelectCategory = { cat -> viewModel.selectCategory(cat) },
+                    onProductClick = { prod -> viewModel.selectProduct(prod) },
+                    onAddToCart = { prod ->
+                      val defaultWeight = prod.weightOptions.firstOrNull()
+                      if (defaultWeight != null) viewModel.addToCart(prod, defaultWeight, 1)
+                    },
+                    onUpdateCartQty = { prodId, weightLabel, delta ->
+                      viewModel.updateCartQuantity(prodId, weightLabel, delta)
+                    },
+                    onViewCartClick = { viewModel.navigateTo(AppScreen.Cart) },
+                    isLoading = isLoading || catalogLoading,
+                    catalogError = catalogError,
+                    onRetryCatalog = { viewModel.loadSupabaseData() },
+                    cartDiscount = cartBannerDiscount
+                  )
+                }
               }
 
               MainTab.SEARCH -> {
@@ -1389,6 +1490,9 @@ fun MainScreen(
                   onViewCartClick = { viewModel.navigateTo(AppScreen.Cart) },
                   suggestions = searchSuggestions,
                   onSuggestionClick = { suggestion -> viewModel.onSuggestionSelected(suggestion) },
+                  isCatalogLoading = catalogLoading,
+                  catalogError = catalogError,
+                  onRetryCatalog = { viewModel.loadSupabaseData() },
                   cartDiscount = cartBannerDiscount
                 )
               }

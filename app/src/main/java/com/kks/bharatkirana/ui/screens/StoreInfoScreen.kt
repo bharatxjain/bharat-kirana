@@ -98,15 +98,14 @@ fun StoreInfoScreen(
   modifier: Modifier = Modifier
 ) {
   val context = LocalContext.current
-  val storeName = shop?.name?.takeIf { it.isNotBlank() } ?: "BreakQ Store"
-  val storePhone = shop?.phone?.takeIf { it.isNotBlank() } ?: "+91 9876543210"
-  val storeAddress = shop?.address?.takeIf { it.isNotBlank() } ?: "Banjara Hills Rd 12, Hyderabad, TS 500034"
-  val storeHours = if (shop != null) "${shop.openTime} – ${shop.closeTime}" else "7:00 AM – 10:30 PM"
+  val storeName = shop?.name?.takeIf { it.isNotBlank() } ?: "Shop details unavailable"
+  val storePhone = shop?.phone?.takeIf { it.isNotBlank() }
+  val storeAddress = shop?.address?.takeIf { it.isNotBlank() } ?: "Address not available"
   val hasCoords = shop != null && (shop.lat != 0.0 || shop.lng != 0.0)
 
   // Helper to open Google Maps
   val openMaps = {
-    onOpenDirections(storeAddress, shop?.lat ?: 0.0, shop?.lng ?: 0.0)
+    if (shop != null) onOpenDirections(storeAddress, shop.lat, shop.lng)
   }
 
   Scaffold(
@@ -231,7 +230,11 @@ fun StoreInfoScreen(
           icon = Icons.Default.Storefront,
           title = storeName,
           subtitle = storeAddress,
-          badge = if (shop?.isCurrentlyOpen() != false) "Open Now" else "Closed"
+          badge = when {
+            shop == null -> null
+            shop.isCurrentlyOpen() -> "Open Now"
+            else -> "Closed"
+          }
         )
       }
 
@@ -376,27 +379,8 @@ fun StoreInfoScreen(
         }
       }
 
-      // Hours Card
-      item {
-        Card(
-          shape = RoundedCornerShape(20.dp),
-          colors = CardDefaults.cardColors(containerColor = Color.White),
-          border = BorderStroke(1.dp, Color(0xFFF1F5F9)),
-          modifier = Modifier.fillMaxWidth()
-        ) {
-          Row(
-            modifier = Modifier.padding(16.dp),
-            verticalAlignment = Alignment.CenterVertically
-          ) {
-            Icon(Icons.Default.Schedule, contentDescription = null, tint = BharatPurplePrimary)
-            Spacer(modifier = Modifier.width(12.dp))
-            Column {
-              Text(text = "Operating Hours", fontWeight = FontWeight.Bold, color = BharatTextPrimary)
-              Text(text = storeHours, color = BharatTextSecondary, fontSize = 14.sp)
-            }
-          }
-        }
-      }
+      // Opening hours aren't shown: vendors can't set them yet, so the stored
+      // values are only defaults. The badge above reflects whether orders are open.
 
       // View Catalog CTA
       item {
@@ -419,9 +403,12 @@ fun StoreInfoScreen(
           // Call Store Button
           Button(
             onClick = {
-              val intent = Intent(Intent.ACTION_DIAL, Uri.parse("tel:$storePhone"))
-              context.startActivity(intent)
+              if (storePhone != null) {
+                val intent = Intent(Intent.ACTION_DIAL, Uri.parse("tel:$storePhone"))
+                context.startActivity(intent)
+              }
             },
+            enabled = storePhone != null,
             modifier = Modifier
               .weight(1f)
               .height(56.dp),
@@ -445,6 +432,7 @@ fun StoreInfoScreen(
           // Directions Button
           OutlinedButton(
             onClick = openMaps,
+            enabled = shop != null,
             modifier = Modifier
               .weight(1f)
               .height(56.dp),
@@ -546,7 +534,7 @@ fun StoreDetailCard(
   icon: ImageVector,
   title: String,
   subtitle: String,
-  badge: String
+  badge: String?
 ) {
   Card(
     shape = RoundedCornerShape(20.dp),
@@ -581,18 +569,21 @@ fun StoreDetailCard(
             color = BharatTextPrimary
           )
           Spacer(modifier = Modifier.width(8.dp))
-          Box(
-            modifier = Modifier
-              .clip(RoundedCornerShape(6.dp))
-              .background(BharatGreen.copy(alpha = 0.1f))
-              .padding(horizontal = 6.dp, vertical = 2.dp)
-          ) {
-            Text(
-              text = badge,
-              color = BharatGreen,
-              fontSize = 10.sp,
-              fontWeight = FontWeight.Bold
-            )
+          if (badge != null) {
+            val badgeColor = if (badge == "Closed") Color(0xFFDC2626) else BharatGreen
+            Box(
+              modifier = Modifier
+                .clip(RoundedCornerShape(6.dp))
+                .background(badgeColor.copy(alpha = 0.1f))
+                .padding(horizontal = 6.dp, vertical = 2.dp)
+            ) {
+              Text(
+                text = badge,
+                color = badgeColor,
+                fontSize = 10.sp,
+                fontWeight = FontWeight.Bold
+              )
+            }
           }
         }
         Text(

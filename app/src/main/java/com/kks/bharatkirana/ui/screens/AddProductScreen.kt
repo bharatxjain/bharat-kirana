@@ -155,6 +155,13 @@ fun AddProductScreen(
         if (weightValue.isBlank()) add("weight/quantity")
         if (sellingPrice.isBlank()) add("selling price")
       }
+      val priceValue = sellingPrice.toIntOrNull() ?: 0
+      val mrpValue = mrp.toIntOrNull() ?: 0
+      val invalidFields = buildList {
+        if (weightValue.isNotBlank() && (weightValue.toDoubleOrNull() ?: 0.0) <= 0.0) add("weight must be more than 0")
+        if (sellingPrice.isNotBlank() && priceValue <= 0) add("selling price must be more than ₹0")
+        if (mrpValue > 0 && priceValue > 0 && mrpValue < priceValue) add("MRP can't be lower than the selling price")
+      }
       Surface(
         color = Color.White,
         shadowElevation = 8.dp,
@@ -173,14 +180,22 @@ fun AddProductScreen(
               modifier = Modifier.padding(bottom = 8.dp)
             )
           }
+          if (invalidFields.isNotEmpty() && !isUploading) {
+            Text(
+              text = "Please fix: ${invalidFields.joinToString("; ")}",
+              fontSize = 12.sp,
+              color = Color(0xFFDC2626),
+              modifier = Modifier.padding(bottom = 8.dp)
+            )
+          }
           Button(
             onClick = {
               onListProduct(
                 productName,
                 category,
                 weightValue + weightUnit,
-                sellingPrice.toIntOrNull() ?: 0,
-                mrp.toIntOrNull() ?: 0,
+                priceValue,
+                mrpValue,
                 description,
                 inStock,
                 stockQty.toIntOrNull(),
@@ -193,7 +208,8 @@ fun AddProductScreen(
               productName.isNotBlank() &&
               category != "Select Category" &&
               weightValue.isNotBlank() &&
-              sellingPrice.isNotBlank(),
+              sellingPrice.isNotBlank() &&
+              invalidFields.isEmpty(),
             modifier = Modifier
               .fillMaxWidth()
               .height(56.dp),

@@ -21,6 +21,9 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.ShoppingBag
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.*
+import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults
+import androidx.compose.material3.pulltorefresh.pullToRefresh
+import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -57,10 +60,15 @@ fun ShopDetailScreen(
   cartTotal: Int = 0,
   cartDiscount: Int = 0,
   onViewCartClick: () -> Unit = {},
+  isCatalogLoading: Boolean = false,
+  catalogError: String? = null,
+  isRefreshing: Boolean = false,
+  onRefresh: (() -> Unit)? = null,
   modifier: Modifier = Modifier
 ) {
   var query by remember { mutableStateOf("") }
   var selectedCategoryId by remember { mutableStateOf<String?>(null) }
+  val pullState = rememberPullToRefreshState()
 
   // Only category tiles that this shop actually stocks — no dead chips.
   val shopCategoryIds = remember(products) { products.map { it.categoryId }.toSet() }
@@ -103,7 +111,9 @@ fun ShopDetailScreen(
         onViewCartClick = onViewCartClick
       )
     },
-    modifier = modifier.fillMaxSize()
+    modifier = modifier
+      .fillMaxSize()
+      .pullToRefresh(isRefreshing = isRefreshing, state = pullState, enabled = onRefresh != null, onRefresh = { onRefresh?.invoke() })
   ) { padding ->
     LazyColumn(
       state = rememberLazyListState(),
@@ -134,6 +144,15 @@ fun ShopDetailScreen(
                 contentAlignment = Alignment.Center
               ) {
                 Icon(Icons.Default.ShoppingBag, contentDescription = null, tint = BharatPurplePrimary, modifier = Modifier.size(26.dp))
+                // The vendor's own photo; if it's missing or fails to load, the neutral icon underneath shows.
+                if (shop.imageUrl.isNotBlank()) {
+                  coil.compose.AsyncImage(
+                    model = shop.imageUrl,
+                    contentDescription = shop.name,
+                    contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                    modifier = Modifier.matchParentSize()
+                  )
+                }
               }
               Spacer(modifier = Modifier.width(12.dp))
               Column(modifier = Modifier.weight(1f)) {
@@ -144,7 +163,12 @@ fun ShopDetailScreen(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                   Icon(Icons.Default.Star, contentDescription = null, tint = Color(0xFFF59E0B), modifier = Modifier.size(14.dp))
                   Spacer(modifier = Modifier.width(2.dp))
-                  Text(String.format("%.1f", shop.rating), fontWeight = FontWeight.Bold, fontSize = 12.sp, color = BharatTextPrimary)
+                  Text(
+                    text = if (shop.hasRatings) String.format("%.1f", shop.rating) else "New",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 12.sp,
+                    color = BharatTextPrimary
+                  )
                 }
                 Text("${products.size} items", fontSize = 11.sp, color = BharatTextSecondary)
               }
@@ -247,7 +271,12 @@ fun ShopDetailScreen(
             }
             Spacer(modifier = Modifier.height(12.dp))
             Text(
-              text = if (query.isNotBlank()) "No matches for \"$query\"" else "No products in this category yet",
+              text = when {
+                products.isEmpty() && isCatalogLoading -> "Loading products…"
+                products.isEmpty() && catalogError != null -> "Couldn't load this shop's products. Pull down to try again."
+                query.isNotBlank() -> "No matches for \"$query\""
+                else -> "No products in this category yet"
+              },
               fontWeight = FontWeight.Bold,
               color = BharatTextPrimary,
               fontSize = 14.sp,
@@ -279,6 +308,12 @@ fun ShopDetailScreen(
             }
           }
         }
+      }
+    }
+    // Scaffold stacks body children, so this sits over the list just below the top bar.
+    if (onRefresh != null) {
+      Box(modifier = Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.TopCenter) {
+        PullToRefreshDefaults.Indicator(state = pullState, isRefreshing = isRefreshing)
       }
     }
   }

@@ -117,7 +117,7 @@ fun HelpSupportScreen(
               iconTint = BharatPurplePrimary,
               iconBackground = BharatPurpleContainer,
               title = "Issue with an order?",
-              subtitle = "Open your order to raise it directly with the shop",
+              subtitle = "Open your order to see its details or call the shop",
               enabled = true,
               onClick = onOpenOrders
             )
@@ -172,7 +172,7 @@ fun HelpSupportScreen(
             Spacer(modifier = Modifier.height(10.dp))
             FaqRow(
               question = "How long does an order take?",
-              answer = "Most shops mark orders ready within 10–20 minutes. You'll get a notification the moment yours is ready for pickup."
+              answer = "Each shop sets its own packing time, shown on the shop and in your cart. You'll get a notification when your order is ready for pickup."
             )
             Spacer(modifier = Modifier.height(8.dp))
             FaqRow(

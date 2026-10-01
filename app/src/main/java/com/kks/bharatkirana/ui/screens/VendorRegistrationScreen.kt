@@ -69,7 +69,6 @@ fun VendorRegistrationScreen(
   var showMapPicker by remember { mutableStateOf(false) }
 
   // Step 3: Verification
-  var gstNumber by remember { mutableStateOf("") }
   var shopPhotoUri by remember { mutableStateOf<Uri?>(null) }
   var businessProofUri by remember { mutableStateOf<Uri?>(null) }
 
@@ -373,17 +372,7 @@ fun VendorRegistrationScreen(
 
               Spacer(modifier = Modifier.height(16.dp))
 
-              OutlinedTextField(
-                value = gstNumber,
-                onValueChange = { gstNumber = it },
-                label = { Text("GSTIN (Optional)") },
-                placeholder = { Text("22AAAAA0000A1Z5") },
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(12.dp),
-                colors = OutlinedTextFieldDefaults.colors(focusedTextColor = BharatTextPrimary, unfocusedTextColor = BharatTextPrimary, focusedBorderColor = BharatPurplePrimary, unfocusedBorderColor = Color(0xFFE5E7EB))
-              )
-              
-              Spacer(modifier = Modifier.height(16.dp))
+              // GSTIN field removed: it was never saved. Re-add once there's a column for it.
 
               // Business Proof (optional)
               Text(text = "Business Proof (Utility bill / License) (Optional)", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = BharatTextPrimary)

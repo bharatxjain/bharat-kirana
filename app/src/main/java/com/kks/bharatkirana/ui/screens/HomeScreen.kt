@@ -97,6 +97,9 @@ fun HomeScreen(
   onViewAllShopsClick: () -> Unit = {},
   catalogError: String? = null,
   onRetryCatalog: () -> Unit = {},
+  isCatalogLoading: Boolean = false,
+  showLocationPrompt: Boolean = false,
+  onEnableLocation: () -> Unit = {},
   cartDiscount: Int = 0,
   modifier: Modifier = Modifier
 ) {
@@ -139,6 +142,33 @@ fun HomeScreen(
 
       // Nearby-shops map moved to its own bottom-nav tab (MainTab.SHOPS).
       // Home stays focused on active order + search + categories + products.
+
+      if (showLocationPrompt) {
+        item {
+          Surface(
+            shape = RoundedCornerShape(12.dp),
+            color = Color(0xFFFFF7ED),
+            modifier = Modifier
+              .fillMaxWidth()
+              .padding(horizontal = 12.dp, vertical = 4.dp)
+          ) {
+            Row(
+              modifier = Modifier.padding(start = 12.dp, end = 4.dp, top = 6.dp, bottom = 6.dp),
+              verticalAlignment = Alignment.CenterVertically
+            ) {
+              Text(
+                text = "Location is off, so distances to shops can't be shown.",
+                fontSize = 12.sp,
+                color = BharatTextPrimary,
+                modifier = Modifier.weight(1f)
+              )
+              TextButton(onClick = onEnableLocation) {
+                Text("Turn on", fontWeight = FontWeight.SemiBold)
+              }
+            }
+          }
+        }
+      }
 
       // Promo banner from Firebase Remote Config (F.promo_banner_text/enabled).
       // Change text/toggle from the Firebase console — no app update needed.
@@ -227,6 +257,25 @@ fun HomeScreen(
             }
           }
         }
+      } else if (shops.isEmpty() && isCatalogLoading) {
+        item {
+          Row(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 24.dp),
+            verticalAlignment = Alignment.CenterVertically
+          ) {
+            androidx.compose.material3.CircularProgressIndicator(
+              modifier = Modifier.size(16.dp),
+              strokeWidth = 2.dp,
+              color = BharatPurplePrimary
+            )
+            Spacer(modifier = Modifier.width(10.dp))
+            Text(
+              text = "Loading shops…",
+              style = MaterialTheme.typography.bodySmall,
+              color = BharatTextSecondary
+            )
+          }
+        }
       } else if (shops.isEmpty()) {
         item {
           Text(
@@ -292,6 +341,15 @@ private fun NearbyShopRowCard(
           tint = BharatPurplePrimary,
           modifier = Modifier.size(28.dp)
         )
+        // The vendor's own photo; if it's missing or fails to load, the neutral icon underneath shows.
+        if (shop.imageUrl.isNotBlank()) {
+          coil.compose.AsyncImage(
+            model = shop.imageUrl,
+            contentDescription = shop.name,
+            contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+            modifier = Modifier.matchParentSize()
+          )
+        }
       }
       Spacer(modifier = Modifier.width(12.dp))
       Column(modifier = Modifier.weight(1f)) {
@@ -318,13 +376,15 @@ private fun NearbyShopRowCard(
             )
           }
         }
-        Spacer(modifier = Modifier.height(2.dp))
-        Text(
-          text = shop.address.ifBlank { "Nearby" },
-          fontSize = 12.sp,
-          color = BharatTextSecondary,
-          maxLines = 2
-        )
+        if (shop.address.isNotBlank()) {
+          Spacer(modifier = Modifier.height(2.dp))
+          Text(
+            text = shop.address,
+            fontSize = 12.sp,
+            color = BharatTextSecondary,
+            maxLines = 2
+          )
+        }
         if (shop.distance.isNotBlank() && shop.distance != "---") {
           Spacer(modifier = Modifier.height(2.dp))
           Text(

@@ -59,17 +59,17 @@ fun HowBreakQWorksScreen(
     )
     SupportStepCard(
       steps = listOf(
-        "1. Browse nearby shops" to "Home shows shops around your delivery address. Distance and open/close hours are updated live.",
+        "1. Browse nearby shops" to "Home lists the shops on BreakQ. Distances are measured from your selected saved address, or from your phone's location. Pull down to refresh.",
         "2. Add items to your cart" to "Each cart is scoped to one shop at a time. If you switch shops, we'll ask before clearing your cart.",
-        "3. Place your order" to "Confirm the address and place the order. You'll get a notification the moment the shop accepts it.",
-        "4. Track progress" to "Order goes through Placed → Confirmed → Preparing → Ready for Pickup. You'll get a push at each step.",
+        "3. Place your order" to "Review your cart and place the order. You'll get a notification when the shop accepts it.",
+        "4. Track progress" to "Order goes through Placed → Confirmed → Preparing → Ready for Pickup. Keep notifications on to hear about each step, or open the order to see its status.",
         "5. Show the pickup QR" to "When the status turns Ready for Pickup, open the order and show the QR at the shop counter to collect."
       )
     )
     SupportIntroCard(
       icon = Icons.Default.CheckCircle,
       accent = BharatGreen,
-      text = "No delivery, no wait, no cash counter fumbling. Just a scannable code and your order."
+      text = "No delivery and no waiting in line. Pick up your order when it's ready and pay at the counter."
     )
   }
 }
@@ -96,7 +96,7 @@ fun CustomerGuidelinesScreen(
       title = "Payments",
       bullets = listOf(
         "Payments are handled at the shop counter unless the app explicitly says otherwise.",
-        "Digital receipts appear in the app after the shop marks the order Completed.",
+        "Your order's items and total stay available under My Orders in the app.",
         "Never share your pickup QR with someone who isn't collecting the order for you."
       )
     )
@@ -150,6 +150,14 @@ fun CancellationPolicyScreen(
       status = "Completed",
       allowed = false,
       description = "The order is already picked up. If something is wrong with the items, contact the shop directly or reach us via Help & Support."
+    )
+    SupportBulletCard(
+      title = "Other cancellations",
+      bullets = listOf(
+        "The shop can cancel an order it can't fulfil, for example when items are out of stock. You'll see the shop's reason on the order.",
+        "If the shop doesn't accept your order in time, it's cancelled automatically.",
+        "BreakQ orders are paid at the shop counter, so nothing is charged in the app when an order is cancelled."
+      )
     )
   }
 }

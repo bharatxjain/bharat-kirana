@@ -20,6 +20,9 @@ import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.automirrored.filled.ReceiptLong
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
+import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults
+import androidx.compose.material3.pulltorefresh.pullToRefresh
+import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -53,13 +56,15 @@ fun VendorDashboardScreen(
   onBackClick: () -> Unit,
   onUpdateShop: (String, Shop) -> Unit = { _, _ -> },
   onUpdateOrderStatus: (String, OrderStatus) -> Unit = { _, _ -> },
-  onCancelOrder: (String) -> Unit = {},
+  onCancelOrder: (orderId: String, reason: String) -> Unit = { _, _ -> },
   onUpdateProductStock: (String, Boolean) -> Unit = { _, _ -> },
   onUpdateProductPrice: (String, Int) -> Unit = { _, _ -> },
   onUpdateProductQty: (String, Int?) -> Unit = { _, _ -> },
   onDeleteProduct: (String) -> Unit = {},
   onSupportClick: () -> Unit = {},
   onRefreshStatus: () -> Unit = {},
+  isRefreshing: Boolean = false,
+  onPullRefresh: () -> Unit = {},
   onManagePlan: () -> Unit = {},
   onOpenProfile: () -> Unit = {},
   onOpenNotifications: () -> Unit = {},
@@ -91,6 +96,18 @@ fun VendorDashboardScreen(
   var inventorySearch by remember { mutableStateOf("") }
   var inventoryFilter by remember { mutableStateOf("All") }
   var pendingDeleteProductId by remember { mutableStateOf<String?>(null) }
+  var cancelTarget by remember { mutableStateOf<Order?>(null) }
+
+  cancelTarget?.let { target ->
+    VendorCancelOrderDialog(
+      orderLabel = target.displayNumber,
+      onConfirm = { reason ->
+        cancelTarget = null
+        onCancelOrder(target.id, reason)
+      },
+      onDismiss = { cancelTarget = null }
+    )
+  }
 
   // Open the edit dialog automatically when the caller pre-selected a product
   // (used by the duplicate-alert "Update Stock" action).
@@ -218,7 +235,15 @@ fun VendorDashboardScreen(
         onLogout = onLogout
       )
     } else {
-      Box(modifier = Modifier.fillMaxSize().padding(paddingValues)) {
+      // Pull-to-refresh on Overview and Orders only; Inventory has inline edits and Plan has nothing live.
+      val pullState = rememberPullToRefreshState()
+      val pullEnabled = selectedTab == 0 || selectedTab == 2
+      Box(
+        modifier = Modifier
+          .fillMaxSize()
+          .padding(paddingValues)
+          .pullToRefresh(isRefreshing = isRefreshing, state = pullState, enabled = pullEnabled, onRefresh = onPullRefresh)
+      ) {
         when (selectedTab) {
           0 -> {
             LazyColumn(
@@ -229,7 +254,7 @@ fun VendorDashboardScreen(
               item {
                 Column {
                   Text(text = "Overview", style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.Bold), color = BharatTextPrimary)
-                  Text(text = "Today's shop performance", style = MaterialTheme.typography.bodyMedium, color = BharatTextSecondary)
+                  Text(text = "All-time totals from your orders", style = MaterialTheme.typography.bodyMedium, color = BharatTextSecondary)
                 }
               }
 
@@ -395,8 +420,7 @@ fun VendorDashboardScreen(
                     Spacer(modifier = Modifier.height(16.dp))
                     
                     OperationToggleRow(title = "Accepting Orders", subtitle = if (shop.isOpen) "Shop is currently open" else "Shop is closed", checked = shop.isOpen, onCheckedChange = { onUpdateShop(shop.id, shop.copy(isOpen = it)) }, color = BharatGreen)
-                    HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp), color = Color(0xFFF1F5F9))
-                    OperationToggleRow(title = "Auto-Accept Orders", subtitle = "Instantly confirm new orders", checked = shop.autoConfirm, onCheckedChange = { onUpdateShop(shop.id, shop.copy(autoConfirm = it)) }, color = BharatPurplePrimary)
+                    // Auto-accept is hidden until the server actually confirms orders for shops that turn it on.
                     HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp), color = Color(0xFFF1F5F9))
                     OperationToggleRow(title = "Promoted Placement", subtitle = "Coming soon \u2014 pay to appear at the top of nearby shops", checked = false, onCheckedChange = {}, color = Color(0xFFD97706), isAd = true, enabled = false)
                   }
@@ -572,7 +596,7 @@ fun VendorDashboardScreen(
                     primaryLabel = "Confirm Order",
                     primaryColor = BharatGreen,
                     onPrimary = { onUpdateOrderStatus(order.id, OrderStatus.CONFIRMED) },
-                    onCancel = { onCancelOrder(order.id) },
+                    onCancel = { cancelTarget = order },
                     onOpen = { onOpenOrderDetails(order.id) }
                   )
                 }
@@ -585,7 +609,7 @@ fun VendorDashboardScreen(
                     primaryLabel = "Start Preparing",
                     primaryColor = Color(0xFF0284C7),
                     onPrimary = { onUpdateOrderStatus(order.id, OrderStatus.PREPARING) },
-                    onCancel = { onCancelOrder(order.id) },
+                    onCancel = { cancelTarget = order },
                     onOpen = { onOpenOrderDetails(order.id) }
                   )
                 }
@@ -598,7 +622,7 @@ fun VendorDashboardScreen(
                     primaryLabel = "Mark Ready for Pickup",
                     primaryColor = BharatPurplePrimary,
                     onPrimary = { onUpdateOrderStatus(order.id, OrderStatus.READY_FOR_PICKUP) },
-                    onCancel = { onCancelOrder(order.id) },
+                    onCancel = { cancelTarget = order },
                     onOpen = { onOpenOrderDetails(order.id) }
                   )
                 }
@@ -608,9 +632,9 @@ fun VendorDashboardScreen(
                 items(ready, key = { it.id }) { order ->
                   VendorOrderActionCard(
                     order = order,
-                    primaryLabel = "Mark Completed",
+                    primaryLabel = "Verify Pickup",
                     primaryColor = BharatPurpleDark,
-                    onPrimary = { onUpdateOrderStatus(order.id, OrderStatus.COMPLETED) },
+                    onPrimary = onOpenPickup,
                     onCancel = null,
                     onOpen = { onOpenOrderDetails(order.id) }
                   )
@@ -755,6 +779,13 @@ fun VendorDashboardScreen(
               }
             }
           }
+        }
+        if (pullEnabled) {
+          PullToRefreshDefaults.Indicator(
+            state = pullState,
+            isRefreshing = isRefreshing,
+            modifier = Modifier.align(Alignment.TopCenter)
+          )
         }
       }
     }
@@ -1276,6 +1307,22 @@ private fun VendorStatusPendingContent(
         color = BharatTextSecondary,
         textAlign = TextAlign.Center
       )
+
+      if (shop.status == VendorStatus.REJECTED && shop.rejectionReason.isNotBlank()) {
+        Spacer(Modifier.height(12.dp))
+        Surface(
+          shape = RoundedCornerShape(12.dp),
+          color = Color(0xFFFEF2F2),
+          modifier = Modifier.fillMaxWidth()
+        ) {
+          Text(
+            text = "Reason: ${shop.rejectionReason}",
+            color = Color(0xFF991B1B),
+            fontSize = 13.sp,
+            modifier = Modifier.padding(12.dp)
+          )
+        }
+      }
 
       Spacer(Modifier.height(24.dp))
 
@@ -1842,7 +1889,7 @@ private fun orderStatusVisuals(status: OrderStatus): OrderStatusVisuals = when (
     accent = Color(0xFF16A34A),
     chipBg = Color(0xFFF0FDF4),
     chipText = Color(0xFF166534),
-    actionLabel = "Mark completed"
+    actionLabel = "Verify pickup"
   )
   OrderStatus.COMPLETED -> OrderStatusVisuals(
     accent = Color(0xFF64748B),

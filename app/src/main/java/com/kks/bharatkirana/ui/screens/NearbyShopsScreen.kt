@@ -599,10 +599,18 @@ fun NearbyShopCard(shop: Shop, onClick: () -> Unit) {
           )
         } else {
           Box(modifier = Modifier.fillMaxSize().background(Color(0xFFF5F3FF)))
+          // The vendor's own photo; the plain panel underneath shows if it's missing or fails.
+          if (shop.imageUrl.isNotBlank()) {
+            coil.compose.AsyncImage(
+              model = shop.imageUrl,
+              contentDescription = shop.name,
+              modifier = Modifier.fillMaxSize(),
+              contentScale = ContentScale.Crop
+            )
+          }
         }
 
-        // Open/Closed badge (top-start): reads shop.isCurrentlyOpen() which combines
-        // the manual accepting-orders toggle with the current time vs open/close hours.
+        // Open/Closed badge (top-start): the vendor's accepting-orders switch, same rule as checkout.
         val open = shop.isCurrentlyOpen()
         Surface(
           shape = RoundedCornerShape(8.dp),
@@ -636,7 +644,11 @@ fun NearbyShopCard(shop: Shop, onClick: () -> Unit) {
           ) {
             Icon(Icons.Default.Star, contentDescription = null, tint = Color(0xFFFFB800), modifier = Modifier.size(14.dp))
             Spacer(modifier = Modifier.width(4.dp))
-            Text(text = shop.rating.toString(), fontWeight = FontWeight.Bold, fontSize = 12.sp)
+            Text(
+              text = if (shop.hasRatings) "%.1f".format(shop.rating) else "New",
+              fontWeight = FontWeight.Bold,
+              fontSize = 12.sp
+            )
             if (shop.ratingCount > 0) {
               Text(text = " (${shop.ratingCount})", fontSize = 11.sp, color = BharatTextSecondary)
             }
@@ -650,32 +662,30 @@ fun NearbyShopCard(shop: Shop, onClick: () -> Unit) {
           style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
           color = BharatTextPrimary
         )
-        Row(verticalAlignment = Alignment.CenterVertically) {
-          Text(
-            text = shop.primaryCategory,
-            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
-            color = BharatPurplePrimary
-          )
-          Spacer(modifier = Modifier.width(8.dp))
-          Text(
-            text = "• Fresh Produce & Daily Needs",
-            style = MaterialTheme.typography.bodyMedium,
-            color = BharatTextSecondary
-          )
-        }
+        Text(
+          text = shop.primaryCategory,
+          style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
+          color = BharatPurplePrimary
+        )
 
         Spacer(modifier = Modifier.height(16.dp))
 
         Row(verticalAlignment = Alignment.CenterVertically) {
+          // The vendor's own packing time; a pickup app has no delivery time.
           Icon(Icons.Default.Schedule, contentDescription = null, tint = BharatPurplePrimary, modifier = Modifier.size(16.dp))
           Spacer(modifier = Modifier.width(6.dp))
-          Text(text = shop.deliveryTime, style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold), color = BharatTextPrimary)
-          
-          Spacer(modifier = Modifier.width(16.dp))
-          
-          Icon(Icons.Default.LocationOn, contentDescription = null, tint = BharatTextSecondary, modifier = Modifier.size(16.dp))
-          Spacer(modifier = Modifier.width(6.dp))
-          Text(text = shop.distance, style = MaterialTheme.typography.bodySmall, color = BharatTextSecondary)
+          Text(
+            text = "~${shop.packingTime.coerceIn(5, 180)} min to pack",
+            style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold),
+            color = BharatTextPrimary
+          )
+
+          if (shop.distance.isNotBlank() && shop.distance != "---") {
+            Spacer(modifier = Modifier.width(16.dp))
+            Icon(Icons.Default.LocationOn, contentDescription = null, tint = BharatTextSecondary, modifier = Modifier.size(16.dp))
+            Spacer(modifier = Modifier.width(6.dp))
+            Text(text = shop.distance, style = MaterialTheme.typography.bodySmall, color = BharatTextSecondary)
+          }
         }
       }
     }

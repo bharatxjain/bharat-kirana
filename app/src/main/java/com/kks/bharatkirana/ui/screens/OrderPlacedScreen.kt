@@ -47,7 +47,6 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.kks.bharatkirana.data.model.Order
-import com.kks.bharatkirana.ui.components.CustomQrCodePattern
 import com.kks.bharatkirana.ui.components.QrCode
 import com.kks.bharatkirana.ui.components.OrderTimelineView
 import com.kks.bharatkirana.ui.theme.BharatBackground
@@ -150,6 +149,11 @@ fun OrderPlacedScreen(
           elevation = CardDefaults.cardElevation(defaultElevation = 3.dp),
           modifier = Modifier.fillMaxWidth()
         ) {
+          // Same rule as Track Order: the vendor can only complete a Ready order,
+          // so the scannable code appears then and never as a decorative stand-in.
+          val token = order.pickupToken
+          val showQr = order.status == com.kks.bharatkirana.data.model.OrderStatus.READY_FOR_PICKUP && !token.isNullOrBlank()
+          val isCancelled = order.status == com.kks.bharatkirana.data.model.OrderStatus.CANCELLED
           Column(
             modifier = Modifier
               .fillMaxWidth()
@@ -157,7 +161,11 @@ fun OrderPlacedScreen(
             horizontalAlignment = Alignment.CenterHorizontally
           ) {
             Text(
-              text = "Pickup Verification QR Code",
+              text = when {
+                showQr -> "Pickup Verification QR Code"
+                isCancelled -> "Order cancelled"
+                else -> "Pickup QR Code"
+              },
               style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
               color = BharatTextPrimary
             )
@@ -165,30 +173,29 @@ fun OrderPlacedScreen(
             Spacer(modifier = Modifier.height(4.dp))
 
             Text(
-              text = "Show this QR code at the store counter.",
+              text = when {
+                showQr -> "Show this QR code at the store counter."
+                isCancelled -> "This order was cancelled, so there's nothing to pick up."
+                else -> "Your QR code appears here when the shop marks the order ready for pickup."
+              },
               style = MaterialTheme.typography.bodySmall,
               color = BharatTextSecondary,
               textAlign = TextAlign.Center
             )
 
-            Spacer(modifier = Modifier.height(16.dp))
+            if (showQr) {
+              Spacer(modifier = Modifier.height(16.dp))
 
-            Box(
-              modifier = Modifier
-                .size(190.dp)
-                .clip(RoundedCornerShape(16.dp))
-                .border(2.dp, BharatPurpleContainer, RoundedCornerShape(16.dp))
-                .background(Color.White)
-                .padding(14.dp),
-              contentAlignment = Alignment.Center
-            ) {
-              // Encode the server-issued pickup token. The decorative pattern is
-              // only a placeholder for the brief window before the insert returns.
-              val token = order.pickupToken
-              if (!token.isNullOrBlank()) {
-                QrCode(content = token, size = 160.dp, darkColor = BharatPurpleDark)
-              } else {
-                CustomQrCodePattern(tint = BharatPurpleDark)
+              Box(
+                modifier = Modifier
+                  .size(190.dp)
+                  .clip(RoundedCornerShape(16.dp))
+                  .border(2.dp, BharatPurpleContainer, RoundedCornerShape(16.dp))
+                  .background(Color.White)
+                  .padding(14.dp),
+                contentAlignment = Alignment.Center
+              ) {
+                QrCode(content = token.orEmpty(), size = 160.dp, darkColor = BharatPurpleDark)
               }
             }
 
@@ -204,18 +211,20 @@ fun OrderPlacedScreen(
             )
             
             Text(
-              text = "Show this number if the QR won't scan",
+              text = if (showQr) "Show this number if the QR won't scan" else "Your order number",
               style = MaterialTheme.typography.labelSmall,
               color = BharatTextSecondary
             )
 
-            Spacer(modifier = Modifier.height(8.dp))
+            if (showQr && order.storeName.isNotBlank()) {
+              Spacer(modifier = Modifier.height(8.dp))
 
-            Text(
-              text = "Valid for Counter Pickup • ${order.storeName}",
-              style = MaterialTheme.typography.labelSmall,
-              color = BharatTextMuted
-            )
+              Text(
+                text = "Valid for Counter Pickup • ${order.storeName}",
+                style = MaterialTheme.typography.labelSmall,
+                color = BharatTextMuted
+              )
+            }
           }
         }
 
@@ -297,7 +306,7 @@ fun OrderPlacedScreen(
               color = BharatTextPrimary
             )
             Spacer(modifier = Modifier.height(12.dp))
-            OrderTimelineView(timeline = order.timeline)
+            OrderTimelineView(timeline = com.kks.bharatkirana.data.model.buildOrderTimelineFor(order))
           }
         }
 

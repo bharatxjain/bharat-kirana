@@ -293,7 +293,7 @@ fun ProfileScreen(
               iconBackground = BharatPurpleContainer,
               title = "Saved Addresses",
               subtitle = when (savedAddressCount) {
-                0 -> "Add a delivery address"
+                0 -> "Add a saved address"
                 1 -> "1 address saved"
                 else -> "$savedAddressCount addresses saved"
               },

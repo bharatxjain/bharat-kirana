@@ -13,6 +13,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
+import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults
+import androidx.compose.material3.pulltorefresh.pullToRefresh
+import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -40,10 +43,13 @@ fun OrdersScreen(
   isLoading: Boolean = false,
   errorMessage: String? = null,
   onRetry: () -> Unit = {},
+  isRefreshing: Boolean = false,
+  onRefresh: (() -> Unit)? = null,
   modifier: Modifier = Modifier
 ) {
   // Full history. A previous take(10) silently hid older orders.
   val visibleOrders = orders
+  val pullState = rememberPullToRefreshState()
 
   Scaffold(
     topBar = {
@@ -65,7 +71,9 @@ fun OrdersScreen(
         colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.White)
       )
     },
-    modifier = modifier.fillMaxSize()
+    modifier = modifier
+      .fillMaxSize()
+      .pullToRefresh(isRefreshing = isRefreshing, state = pullState, enabled = onRefresh != null, onRefresh = { onRefresh?.invoke() })
   ) { paddingValues ->
     if (isLoading && visibleOrders.isEmpty()) {
       Box(
@@ -174,6 +182,12 @@ fun OrdersScreen(
         item { Spacer(modifier = Modifier.height(24.dp)) }
       }
     }
+    // Scaffold stacks body children, so this sits over the list just below the top bar.
+    if (onRefresh != null) {
+      Box(modifier = Modifier.fillMaxSize().padding(paddingValues), contentAlignment = Alignment.TopCenter) {
+        PullToRefreshDefaults.Indicator(state = pullState, isRefreshing = isRefreshing)
+      }
+    }
   }
 }
 
@@ -229,6 +243,13 @@ fun OrderCard(
                 maxLines = 1
               )
             }
+            Text(
+              text = "Order ${order.displayNumber}",
+              fontSize = 11.sp,
+              color = BharatPurplePrimary,
+              fontWeight = FontWeight.SemiBold,
+              maxLines = 1
+            )
           }
         }
         val statusColor = when (order.status) {
@@ -282,7 +303,7 @@ fun OrderCard(
       }
       if (order.items.isEmpty()) {
         Text(
-          text = "${order.items.size} items",
+          text = "Item details unavailable",
           fontSize = 12.sp,
           color = BharatTextSecondary
         )
@@ -325,10 +346,10 @@ fun OrderCard(
 }
 
 /**
- * Footer text for the past-order card. Prefers the real per-status timestamp
- * from the row so we no longer show a fake "Today, <now>" for a delivered or
- * cancelled order. Falls back to `orderDate` (the placement label) when the
- * relevant status timestamp is missing (older rows).
+ * Footer text for the past-order card, from the row's real per-status
+ * timestamp. When that stamp is missing (older rows) it falls back to the real
+ * placement time, never to the server's "Today, <time>" label, which is wrong
+ * on any later day.
  */
 private fun orderFooterLabel(order: Order): String {
   val terminalIso = when (order.status) {
@@ -348,7 +369,14 @@ private fun orderFooterLabel(order: Order): String {
     OrderStatus.CONFIRMED -> "Confirmed"
     OrderStatus.PLACED -> "Placed"
   }
-  return if (prettyTime != null) "$prefix: $prettyTime" else "$prefix: ${order.orderDate}"
+  if (prettyTime != null) return "$prefix: $prettyTime"
+  val placedAt = formatIsoPretty(order.createdAt)
+  return when {
+    placedAt != null -> "$prefix · placed $placedAt"
+    // Only a just-placed local order lacks created_at; its "Today" label is still true.
+    order.status == OrderStatus.PLACED && order.orderDate.isNotBlank() -> "$prefix: ${order.orderDate}"
+    else -> prefix
+  }
 }
 
 /** Best-effort ISO-8601 → "Sep 8, 9:57 PM" formatter. */

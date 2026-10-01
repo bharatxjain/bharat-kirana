@@ -88,21 +88,20 @@ data class Shop(
   val autoConfirm: Boolean = true,
   val packingTime: Int = 15,
   val openTime: String = "08:00", // 24-hour "HH:mm"
-  val closeTime: String = "21:00"
+  val closeTime: String = "21:00",
+  // shops.rejection_reason — only the owner (or an admin) can read a rejected shop.
+  val rejectionReason: String = ""
 ) {
   val hasRatings: Boolean get() = ratingCount > 0
 }
 
 /**
- * Returns true only if the shop is manually open (accepting_orders) AND the current
- * wall-clock time falls within [openTime, closeTime]. Uses "HH:mm" string compare,
- * which is safe because both sides are zero-padded 24-hour times.
+ * Whether the shop is taking orders right now. Only the vendor's accepting_orders
+ * switch decides this — the same rule create_order_with_items enforces. Opening
+ * hours are not vendor-editable yet (every shop carries the 08:00–21:00 defaults),
+ * so they must not turn a shop "Closed" on some screens and "Open" on others.
  */
-fun Shop.isCurrentlyOpen(): Boolean {
-  if (!isOpen) return false
-  val now = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date())
-  return now >= openTime && now < closeTime
-}
+fun Shop.isCurrentlyOpen(): Boolean = isOpen
 
 data class Product(
   val id: String,
@@ -121,8 +120,9 @@ data class Product(
   val imageUrls: List<String> = emptyList(),
   val description: String = "",
   val features: List<ProductFeature> = emptyList(),
-  val rating: Float = 4.8f,
-  val reviewCount: Int = 128,
+  // Products have no ratings yet; 0 means "none" and is never shown as a score.
+  val rating: Float = 0f,
+  val reviewCount: Int = 0,
   // null = vendor never declared a count (untracked). 0 = genuinely sold out.
   // The distinction is what separates "Call to Confirm" from "Out of Stock".
   val stockQty: Int? = null,
@@ -135,6 +135,17 @@ data class Product(
   // idx_products_shop_catalog_ref partial index (see FIX_PRODUCT_DUPLICATES.sql).
   val catalogRef: String? = null
 ) {
+  // ADD puts the first size in the cart, so cards show that size's prices and the two can't differ.
+  val defaultPrice: Int
+    get() = weightOptions.firstOrNull()?.price ?: currentPrice
+  val defaultOriginalPrice: Int
+    get() = weightOptions.firstOrNull()?.originalPrice ?: originalPrice
+
+  // Worked out from the two prices on screen, so a stale discount_percent can't contradict them.
+  val displayDiscountPercent: Int
+    get() = if (defaultOriginalPrice > defaultPrice && defaultOriginalPrice > 0)
+      (defaultOriginalPrice - defaultPrice) * 100 / defaultOriginalPrice else 0
+
   val stockStatus: String
     get() = when {
       !inStock -> "Out of Stock"
@@ -285,7 +296,15 @@ data class OrderTimelineItem(
 fun computePickupEta(packingMinutes: Int, now: Date = Date()): String {
   val clamped = packingMinutes.coerceIn(5, 180)
   val eta = Date(now.time + clamped * 60_000L)
-  return "Today by ${SimpleDateFormat("h:mm a", Locale.getDefault()).format(eta)}"
+  val dayFmt = SimpleDateFormat("yyyyMMdd", Locale.US)
+  val etaDay = dayFmt.format(eta)
+  val time = SimpleDateFormat("h:mm a", Locale.getDefault()).format(eta)
+  val today = Date()
+  return when (etaDay) {
+    dayFmt.format(today) -> "Today by $time"
+    dayFmt.format(Date(today.time + 86_400_000L)) -> "Tomorrow by $time"
+    else -> "By ${SimpleDateFormat("MMM d, h:mm a", Locale.getDefault()).format(eta)}"
+  }
 }
 
 /**
@@ -328,8 +347,14 @@ fun computePickupEtaFor(order: Order, shop: Shop?): String {
   return when (order.status) {
     OrderStatus.PLACED -> "Usually ready in ~$packing min after shop confirms"
     OrderStatus.CONFIRMED, OrderStatus.PREPARING -> {
-      val confirmedInstant = parseOrderIsoInstant(order.confirmedAt) ?: Date()
-      computePickupEta(packing, confirmedInstant)
+      // Shops on auto-accept skip Confirmed, so preparing_at is the next-best anchor.
+      val anchor = parseOrderIsoInstant(order.confirmedAt) ?: parseOrderIsoInstant(order.preparingAt)
+      when {
+        anchor == null -> "Usually ready ~$packing min after the shop accepts"
+        anchor.time + packing * 60_000L < System.currentTimeMillis() ->
+          "Taking longer than usual — you'll be notified when it's ready"
+        else -> computePickupEta(packing, anchor)
+      }
     }
     OrderStatus.READY_FOR_PICKUP -> "Ready now — head to the shop"
     OrderStatus.COMPLETED -> formatOrderTimestampPretty(order.completedAt)
@@ -452,14 +477,14 @@ data class Order(
   val items: List<CartItem>,
   val totalAmount: Int,
   val orderDate: String, // e.g. "Today, 2:30 PM"
-  val status: OrderStatus = OrderStatus.READY_FOR_PICKUP,
-  val expectedPickupTime: String = "Today by 5:00 PM",
+  val status: OrderStatus = OrderStatus.PLACED,
+  val expectedPickupTime: String = "",
   // The shop as it was when the order was placed (orders.shop_name/shop_address).
   val storeName: String = "",
   val storeAddress: String = "",
   val timeline: List<OrderTimelineItem> = emptyList(),
   val qrCodePayload: String = "",
-  val backupCode: String = "123456",
+  val backupCode: String = "",
   val customerName: String = "",
   val customerMobile: String = "",
   // ISO 8601 timestamp string from orders.created_at; used to compute the
@@ -479,11 +504,34 @@ data class Order(
   val orderNumber: Int? = null,
   // Opaque secret embedded in the customer's pickup QR. Only the vendor of
   // the matching shop can complete an order with this token.
-  val pickupToken: String? = null
+  val pickupToken: String? = null,
+  // Stamped by the database: customer / vendor / system / admin.
+  val cancelledBy: String? = null,
+  val cancelReason: String? = null,
+  // Bill as saved by the server at checkout; null on orders placed before it was stored.
+  val itemTotal: Int? = null,
+  val handlingFee: Int? = null,
+  val handlingDiscount: Int? = null,
+  val promoDiscount: Int? = null,
+  val promoCode: String? = null
 ) {
   /** Human-friendly label the customer + vendor talk about. */
   val displayNumber: String
     get() = orderNumber?.let { "#$it" } ?: "#$id"
+
+  /** Receipt lines (label to signed rupees), or null when the server didn't store a breakdown. */
+  val billLines: List<Pair<String, Int>>?
+    get() {
+      val items = itemTotal ?: return null
+      return buildList {
+        add("Items total" to items)
+        handlingFee?.takeIf { it > 0 }?.let { add("Handling fee" to it) }
+        handlingDiscount?.takeIf { it > 0 }?.let { add("Handling fee discount" to -it) }
+        promoDiscount?.takeIf { it > 0 }?.let {
+          add((promoCode?.takeIf { c -> c.isNotBlank() }?.let { c -> "Promo ($c)" } ?: "Promo discount") to -it)
+        }
+      }
+    }
 }
 
 sealed class AppScreen {
@@ -523,7 +571,12 @@ sealed class AppScreen {
   data object EditProfile : AppScreen()
   data object SavedAddresses : AppScreen()
   data object SelectLocation : AppScreen()
-  data class AddEditAddress(val addressId: String? = null) : AppScreen()
+  data class AddEditAddress(
+    val addressId: String? = null,
+    val presetLat: Double? = null,
+    val presetLng: Double? = null,
+    val locateOnOpen: Boolean = false
+  ) : AppScreen()
   data object NotificationPreferences : AppScreen()
   data object HelpSupport : AppScreen()
   data object AboutUs : AppScreen()

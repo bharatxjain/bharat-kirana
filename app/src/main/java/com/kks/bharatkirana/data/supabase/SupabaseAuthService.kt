@@ -424,27 +424,30 @@ class SupabaseAuthService(
   }
 
   /**
-   * Sign out current user
+   * Forgets the session on this device right away. Revoke it on the server with
+   * [revokeSession]; done in two steps so a slow logout can't wipe a newer sign-in.
    */
-  suspend fun signOut(): Result<Unit> = withContext(Dispatchers.IO) {
+  fun clearLocalSession() {
+    currentAccessToken = null
+    currentRefreshToken = null
+    currentUserEmail = null
+    currentUserId = null
+    accessTokenExpiresAtMillis = 0L
+  }
+
+  suspend fun revokeSession(accessToken: String?): Result<Unit> = withContext(Dispatchers.IO) {
     runCatching {
-      val token = currentAccessToken
-      if (token != null) {
+      if (accessToken != null) {
         val url = "${SupabaseConfig.authUrl}/logout"
         val request = Request.Builder()
           .url(url)
           .addHeader("apikey", SupabaseConfig.API_KEY)
-          .addHeader("Authorization", "Bearer $token")
+          .addHeader("Authorization", "Bearer $accessToken")
           .post("{}".toRequestBody(jsonMediaType))
           .build()
 
-        client.newCall(request).execute()
+        client.newCall(request).execute().close()
       }
-      currentAccessToken = null
-      currentRefreshToken = null
-      currentUserEmail = null
-      currentUserId = null
-      accessTokenExpiresAtMillis = 0L
     }
   }
 }

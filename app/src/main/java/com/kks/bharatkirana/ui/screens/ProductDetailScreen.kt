@@ -64,11 +64,9 @@ fun ProductDetailScreen(
 
   val context = LocalContext.current
 
-  val savings = if (selectedWeight.originalPrice > selectedWeight.price) {
-    selectedWeight.originalPrice - selectedWeight.price
-  } else {
-    product.originalPrice - product.currentPrice
-  }
+  // Savings and % off come only from the selected size's own prices — the ones shown on screen.
+  val savings = (selectedWeight.originalPrice - selectedWeight.price).coerceAtLeast(0)
+  val discountPercent = if (savings > 0) savings * 100 / selectedWeight.originalPrice else 0
 
   Surface(
     modifier = modifier.fillMaxSize(),
@@ -151,19 +149,19 @@ fun ProductDetailScreen(
           .verticalScroll(rememberScrollState())
           .padding(bottom = 16.dp)
       ) {
-        // Discount and Rating
+        // Discount badge. Products have no customer ratings, so no score is shown here.
         Row(
           modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
           horizontalArrangement = Arrangement.SpaceBetween,
           verticalAlignment = Alignment.CenterVertically
         ) {
-          if (product.discountPercent > 0) {
+          if (discountPercent > 0) {
             Surface(
               color = BharatRedDiscount,
               shape = RoundedCornerShape(8.dp)
             ) {
               Text(
-                text = "🏷 ${product.discountPercent}% OFF",
+                text = "🏷 $discountPercent% OFF",
                 color = Color.White,
                 fontWeight = FontWeight.Bold,
                 fontSize = 11.sp,
@@ -172,21 +170,6 @@ fun ProductDetailScreen(
             }
           } else {
             Spacer(modifier = Modifier.width(1.dp))
-          }
-
-          Surface(
-            color = Color(0xFFF3F4F6),
-            shape = RoundedCornerShape(8.dp)
-          ) {
-            Row(
-              modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
-              verticalAlignment = Alignment.CenterVertically
-            ) {
-              Icon(Icons.Default.Star, contentDescription = null, tint = Color(0xFFFFB800), modifier = Modifier.size(14.dp))
-              Spacer(modifier = Modifier.width(4.dp))
-              Text(text = product.rating.toString(), fontWeight = FontWeight.Bold, fontSize = 12.sp, color = BharatTextPrimary)
-              Text(text = " (${product.reviewCount})", fontSize = 11.sp, color = BharatTextSecondary)
-            }
           }
         }
 
@@ -253,7 +236,7 @@ fun ProductDetailScreen(
           Spacer(modifier = Modifier.height(4.dp))
 
           Text(
-            text = product.subtitle.ifEmpty { "${product.unit} • High Quality Fresh" },
+            text = product.subtitle.ifEmpty { product.unit },
             style = MaterialTheme.typography.bodyMedium,
             color = BharatTextSecondary
           )
@@ -327,6 +310,9 @@ fun ProductDetailScreen(
                 Column(modifier = Modifier.weight(1f)) {
                   Text(text = "Sold by", style = MaterialTheme.typography.labelSmall, color = BharatTextSecondary)
                   Text(text = vendor.name, style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold), color = BharatTextPrimary)
+                  if (!vendor.isOpen) {
+                    Text(text = "Not taking orders right now", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFFDC2626))
+                  }
                 }
                 Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null, tint = BharatPurplePrimary, modifier = Modifier.size(20.dp))
               }
@@ -386,7 +372,7 @@ fun ProductDetailScreen(
           )
           Spacer(modifier = Modifier.height(8.dp))
           Text(
-            text = product.description.ifEmpty { "High quality kirana grocery sourced directly from verified farms and manufacturers for daily fresh cooking." },
+            text = product.description.ifEmpty { "The shop hasn't added a description for this item." },
             style = MaterialTheme.typography.bodyMedium.copy(
               lineHeight = 22.sp
             ),
@@ -459,7 +445,10 @@ fun ProductDetailScreen(
                   val weight = recProduct.weightOptions.firstOrNull()?.label ?: recProduct.unit
                   onAddToCart(recProduct, recProduct.weightOptions.firstOrNull() ?: WeightOption(weight, recProduct.currentPrice), 1)
                 },
-                onDecrease = {}
+                onDecrease = {
+                  cartItems.lastOrNull { it.product.id == recProduct.id }
+                    ?.let { onAddToCart(recProduct, it.selectedWeight, -1) }
+                }
               )
             }
           }

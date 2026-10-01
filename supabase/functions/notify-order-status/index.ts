@@ -3,7 +3,7 @@
 // Fired by the Database Webhook "order_status_notify" (public.orders INSERT + UPDATE).
 //   INSERT → "New order received" to the shop owner
 //   UPDATE → status message to the customer (only when the status really changed)
-//            + a message to the shop owner when an admin cancels the order
+//            + a message to the shop owner when someone other than the shop cancels
 //
 // Security:
 //   - Requires header x-webhook-secret = WEBHOOK_SECRET (refuses everything if
@@ -268,6 +268,43 @@ function itemsSummary(o: Order): string {
   return first || `${count} item${count === 1 ? "" : "s"}`;
 }
 
+function cancelReason(o: Order): string {
+  return typeof o.cancel_reason === "string" ? o.cancel_reason.trim() : "";
+}
+
+function customerCancelBody(o: Order, label: string, total: string): string {
+  const reason = cancelReason(o);
+  switch (o.cancelled_by) {
+    case "admin":
+      return reason ? `${label} was cancelled by BreakQ support: ${reason}` : `${label} was cancelled by BreakQ support.`;
+    case "vendor":
+      return reason ? `${label} was cancelled by the shop: ${reason}` : `${label} was cancelled by the shop.`;
+    case "system":
+      return `${label} was cancelled because the shop didn't accept it in time.`;
+    default:
+      return `${label} was cancelled${total}.`;
+  }
+}
+
+// Sent to the shop for cancellations it didn't make itself.
+function vendorCancelMessage(o: Order): { title: string; body: string } {
+  const label = displayNumber(o);
+  const reason = cancelReason(o);
+  switch (o.cancelled_by) {
+    case "admin":
+      return {
+        title: "Order cancelled by BreakQ",
+        body: `Order ${label} was cancelled by support${reason ? `: ${reason}` : ""}.`,
+      };
+    case "customer":
+      return { title: "Order cancelled by customer", body: `Order ${label} was cancelled by the customer. No need to prepare it.` };
+    case "system":
+      return { title: "Order expired", body: `Order ${label} was cancelled automatically because it wasn't accepted in time.` };
+    default:
+      return { title: "Order cancelled", body: `Order ${label} was cancelled.` };
+  }
+}
+
 function customerMessage(status: string, o: Order): { title: string; body: string } | null {
   const label = displayNumber(o);
   const items = itemsSummary(o);
@@ -291,9 +328,7 @@ function customerMessage(status: string, o: Order): { title: string; body: strin
     },
     "Cancelled": {
       title: "Order cancelled",
-      body: o.cancelled_by === "admin" && o.cancel_reason
-        ? `${label} was cancelled by BreakQ support: ${o.cancel_reason}`
-        : `${label} was cancelled${total}.`,
+      body: customerCancelBody(o, label, total),
     },
   };
   return msgs[status] ?? null;
@@ -330,16 +365,12 @@ async function handleUpdate(o: Order, oldStatus: unknown): Promise<Response> {
   if (customer) results.push(`customer ${await notify(customer, m.title, m.body, o.id)} push`);
   else results.push("no customer profile");
 
-  // An admin cancellation is news to the shop too (a vendor cancel isn't).
-  if (status === "Cancelled" && o.cancelled_by === "admin" && o.shop_id) {
+  // The shop already knows about its own cancellations.
+  if (status === "Cancelled" && o.cancelled_by !== "vendor" && o.shop_id) {
     const owner = await shopOwnerId(o.shop_id);
     if (owner) {
-      await notify(
-        owner,
-        "Order cancelled by BreakQ",
-        `Order ${displayNumber(o)} was cancelled by support${o.cancel_reason ? `: ${o.cancel_reason}` : ""}.`,
-        o.id,
-      );
+      const v = vendorCancelMessage(o);
+      await notify(owner, v.title, v.body, o.id);
       results.push("vendor notified");
     }
   }

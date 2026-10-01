@@ -89,6 +89,7 @@ fun CartScreen(
   onApplyPromo: (String) -> Unit = {},
   onClearPromo: () -> Unit = {},
   isCheckingOut: Boolean = false,
+  pickupShop: com.kks.bharatkirana.data.model.Shop? = null,
   modifier: Modifier = Modifier
 ) {
   val itemCount = cartItems.sumOf { it.quantity }
@@ -246,15 +247,32 @@ fun CartScreen(
                     color = BharatTextSecondary
                   )
                   Text(
-                    text = userProfile.activeStoreAddress,
+                    text = pickupShop?.name ?: userProfile.activeStore.ifBlank { "Your shop" },
                     style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
                     color = BharatTextPrimary
                   )
-                  Text(
-                    text = "Ready in ~15 mins",
-                    style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold),
-                    color = BharatPurplePrimary
-                  )
+                  val pickupAddress = pickupShop?.address ?: userProfile.activeStoreAddress
+                  if (pickupAddress.isNotBlank()) {
+                    Text(
+                      text = pickupAddress,
+                      style = MaterialTheme.typography.bodySmall,
+                      color = BharatTextSecondary,
+                      maxLines = 2
+                    )
+                  }
+                  if (pickupShop != null && !pickupShop.isOpen) {
+                    Text(
+                      text = "This shop isn't taking orders right now.",
+                      style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold),
+                      color = Color(0xFFDC2626)
+                    )
+                  } else if (pickupShop != null) {
+                    Text(
+                      text = "Usually ready ~${pickupShop.packingTime.coerceIn(5, 180)} min after the shop accepts",
+                      style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold),
+                      color = BharatPurplePrimary
+                    )
+                  }
                 }
               }
             }
@@ -281,6 +299,8 @@ fun CartScreen(
                     .background(Color(0xFFF8FAFC)),
                   contentAlignment = Alignment.Center
                 ) {
+                  val photoUrl = cartItem.product.imageUrls.firstOrNull { it.isNotBlank() }
+                    ?: cartItem.product.imageUrl.takeIf { it.isNotBlank() }
                   if (cartItem.product.localImageRes != null) {
                     Image(
                       painter = painterResource(id = cartItem.product.localImageRes),
@@ -295,6 +315,15 @@ fun CartScreen(
                       tint = BharatPurpleAccent,
                       modifier = Modifier.size(28.dp)
                     )
+                    // The product's own photo; the neutral icon underneath shows if it's missing or fails.
+                    if (photoUrl != null) {
+                      coil.compose.AsyncImage(
+                        model = photoUrl,
+                        contentDescription = cartItem.product.name,
+                        modifier = Modifier.fillMaxSize(),
+                        contentScale = ContentScale.Crop
+                      )
+                    }
                   }
                 }
 
@@ -413,7 +442,7 @@ fun CartScreen(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween
                   ) {
-                    Text(text = "Store Discount Applied", color = BharatGreen, fontSize = 14.sp)
+                    Text(text = "Handling Fee Discount", color = BharatGreen, fontSize = 14.sp)
                     Text(text = "-₹$discount", color = BharatGreen, fontWeight = FontWeight.Bold, fontSize = 14.sp)
                   }
                 }
@@ -590,7 +619,7 @@ private fun PromoCodeCard(
           OutlinedTextField(
             value = input,
             onValueChange = { input = it.uppercase() },
-            placeholder = { Text("e.g. DIWALI30", color = BharatTextMuted, fontSize = 13.sp) },
+            placeholder = { Text("Enter promo code", color = BharatTextMuted, fontSize = 13.sp) },
             singleLine = true,
             modifier = Modifier.weight(1f),
             shape = RoundedCornerShape(12.dp),

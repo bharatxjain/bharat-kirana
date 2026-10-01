@@ -165,7 +165,7 @@ fun EditProfileScreen(
             Spacer(modifier = Modifier.width(12.dp))
             Column(modifier = Modifier.weight(1f)) {
               Text(
-                text = "Delivery addresses",
+                text = "Saved addresses",
                 fontWeight = FontWeight.Bold,
                 color = BharatTextPrimary,
                 fontSize = 14.sp

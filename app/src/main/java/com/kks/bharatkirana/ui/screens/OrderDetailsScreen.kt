@@ -47,7 +47,6 @@ import com.kks.bharatkirana.data.maps.MapplsConfig
 import com.kks.bharatkirana.data.model.Order
 import com.kks.bharatkirana.data.model.OrderStatus
 import com.kks.bharatkirana.data.model.Shop
-import com.kks.bharatkirana.ui.components.CustomQrCodePattern
 import com.kks.bharatkirana.ui.components.QrCode
 import com.kks.bharatkirana.ui.components.OrderTimelineView
 import com.kks.bharatkirana.ui.theme.*
@@ -64,7 +63,7 @@ fun OrderDetailsScreen(
   order: Order,
   onBackClick: () -> Unit,
   onReorder: (Order) -> Unit,
-  onRateShop: (shopId: String, orderId: String, rating: Int, review: String) -> Unit = { _, _, _, _ -> },
+  onRateShop: (shopId: String, orderId: String, rating: Int, review: String, onDone: (Boolean) -> Unit) -> Unit = { _, _, _, _, _ -> },
   onCancelOrder: (String) -> Unit = {},
   hasAlreadyRated: Boolean = false,
   shopDistanceLabel: String? = null,
@@ -82,6 +81,7 @@ fun OrderDetailsScreen(
   var reviewText by remember { mutableStateOf("") }
   val showRatingForm = order.status == OrderStatus.COMPLETED && !hasAlreadyRated
   var ratingSubmitted by remember { mutableStateOf(false) }
+  var ratingSending by remember { mutableStateOf(false) }
   var ratingDismissed by remember { mutableStateOf(false) }
   var showCancelDialog by remember { mutableStateOf(false) }
   var showQrDialog by remember { mutableStateOf(false) }
@@ -133,9 +133,13 @@ fun OrderDetailsScreen(
             if (!payload.isNullOrBlank()) {
               QrCode(content = payload, size = 216.dp)
             } else {
-              // Fallback for orders placed before ORDER_PICKUP_MIGRATION.sql
-              // was applied — no real token, so show the decorative pattern.
-              CustomQrCodePattern(tint = BharatPurpleDark)
+              // Orders from before pickup tokens existed have no scannable code; never draw a fake one.
+              Text(
+                text = order.displayNumber,
+                fontWeight = FontWeight.ExtraBold,
+                fontSize = 32.sp,
+                color = BharatPurpleDark
+              )
             }
           }
           Spacer(modifier = Modifier.height(12.dp))
@@ -215,27 +219,30 @@ fun OrderDetailsScreen(
         val shopLng = shop?.lng ?: 0.0
         val shopHasCoords = shop != null && shopLat != 0.0 && shopLng != 0.0
         if (shopHasCoords && shop != null) {
+          val mapLabel = order.storeName.ifBlank { shop.name.ifBlank { "The shop" } }
           MapCard(
-            shopName = shop.name.ifBlank { order.storeName.ifBlank { "The shop" } },
+            shopName = mapLabel,
             shopLocation = LatLng(shopLat, shopLng),
             userLocation = userLocation,
             onOpenDirections = {
-              openDirections(context, shopLat, shopLng, shop.name.ifBlank { order.storeName })
+              openDirections(context, shopLat, shopLng, mapLabel)
             }
           )
         }
-
-        // Reserved promotional area. Rendered as a subtle placeholder card so
-        // the layout ships with the right spacing / height; drop-in an ad
-        // banner (image + CTA) here later without redesigning the screen.
-        PromoAdSlot()
 
         TimelineCard(order = order)
 
         StoreDetailsCard(
           shop = shop,
-          fallbackName = order.storeName,
-          fallbackAddress = order.storeAddress,
+          orderShopName = order.storeName,
+          orderShopAddress = order.storeAddress,
+          pickupLabel = when (order.status) {
+            OrderStatus.PLACED -> "Pickup estimate"
+            OrderStatus.CONFIRMED, OrderStatus.PREPARING -> "Ready by"
+            OrderStatus.READY_FOR_PICKUP -> "Pickup"
+            OrderStatus.COMPLETED -> "Picked up"
+            OrderStatus.CANCELLED -> "Status"
+          },
           pickupWindow = com.kks.bharatkirana.data.model.computePickupEtaFor(order, shop),
           distanceLabel = shopDistanceLabel,
           onCall = { phone ->
@@ -253,9 +260,13 @@ fun OrderDetailsScreen(
             reviewText = reviewText,
             onReviewChange = { reviewText = it },
             onSubmit = {
-              onRateShop(order.shopId, order.id, ratingValue, reviewText)
-              ratingSubmitted = true
+              ratingSending = true
+              onRateShop(order.shopId, order.id, ratingValue, reviewText) { ok ->
+                ratingSending = false
+                if (ok) ratingSubmitted = true
+              }
             },
+            isSending = ratingSending,
             onDismiss = { ratingDismissed = true }
           )
         } else if (ratingSubmitted) {
@@ -310,7 +321,7 @@ fun OrderDetailsScreen(
 
 @Composable
 private fun StatusHeroCard(order: Order) {
-  val (headline, subline, tint) = statusCopy(order.status)
+  val (headline, subline, tint) = statusCopy(order)
   Card(
     shape = RoundedCornerShape(20.dp),
     colors = CardDefaults.cardColors(containerColor = Color.White),
@@ -380,7 +391,7 @@ private fun HeroTimestampRow(label: String, value: String) {
   }
 }
 
-private fun statusCopy(status: OrderStatus): Triple<String, String, Color> = when (status) {
+private fun statusCopy(order: Order): Triple<String, String, Color> = when (order.status) {
   OrderStatus.PLACED -> Triple(
     "Order placed",
     "Waiting for the shop to accept your order.",
@@ -408,9 +419,21 @@ private fun statusCopy(status: OrderStatus): Triple<String, String, Color> = whe
   )
   OrderStatus.CANCELLED -> Triple(
     "Order cancelled",
-    "This order was cancelled. No amount was charged.",
+    cancellationLine(order),
     Color(0xFFDC2626)
   )
+}
+
+private fun cancellationLine(order: Order): String {
+  val reason = order.cancelReason?.trim()?.trimEnd('.')?.takeIf { it.isNotEmpty() }
+  val who = when (order.cancelledBy) {
+    "vendor" -> if (reason != null) "The shop cancelled this order: $reason." else "The shop cancelled this order."
+    "customer" -> "You cancelled this order."
+    "system" -> "Cancelled automatically because the shop didn't accept it in time."
+    "admin" -> if (reason != null) "Cancelled by BreakQ support: $reason." else "Cancelled by BreakQ support."
+    else -> "This order was cancelled."
+  }
+  return "$who No amount was charged."
 }
 
 private fun statusProgress(status: OrderStatus): Float = when (status) {
@@ -601,14 +624,16 @@ private fun TrackerMap(
 @Composable
 private fun StoreDetailsCard(
   shop: Shop?,
-  fallbackName: String,
-  fallbackAddress: String,
+  orderShopName: String,
+  orderShopAddress: String,
+  pickupLabel: String,
   pickupWindow: String,
   distanceLabel: String?,
   onCall: (String) -> Unit
 ) {
-  val name = shop?.name?.takeIf { it.isNotBlank() } ?: fallbackName.ifBlank { "The shop" }
-  val address = shop?.address?.takeIf { it.isNotBlank() } ?: fallbackAddress
+  // The name/address saved on the order is what the customer ordered from; today's shop row only fills gaps.
+  val name = orderShopName.ifBlank { shop?.name?.takeIf { it.isNotBlank() } ?: "The shop" }
+  val address = orderShopAddress.ifBlank { shop?.address.orEmpty() }
   val phone = shop?.phone?.takeIf { it.isNotBlank() }
 
   Card(
@@ -654,7 +679,7 @@ private fun StoreDetailsCard(
           modifier = Modifier.weight(1f)
         ) {
           Column(modifier = Modifier.padding(12.dp)) {
-            Text("Pickup window", fontSize = 10.sp, color = BharatTextMuted, fontWeight = FontWeight.Bold)
+            Text(pickupLabel, fontSize = 10.sp, color = BharatTextMuted, fontWeight = FontWeight.Bold)
             Spacer(modifier = Modifier.height(2.dp))
             Text(pickupWindow, fontSize = 12.sp, color = BharatTextPrimary, fontWeight = FontWeight.SemiBold)
           }
@@ -695,7 +720,7 @@ private fun ItemsCard(order: Order, subtotal: Int, handlingFee: Int) {
 
       if (order.items.isEmpty()) {
         Text(
-          text = "Item details will appear once the shop confirms the order.",
+          text = "Item details aren't available for this order right now.",
           fontSize = 12.sp,
           color = BharatTextSecondary
         )
@@ -741,7 +766,16 @@ private fun ItemsCard(order: Order, subtotal: Int, handlingFee: Int) {
       HorizontalDivider(color = Color(0xFFF1F5F9))
       Spacer(modifier = Modifier.height(12.dp))
 
-      if (subtotal > 0) {
+      val storedBill = order.billLines
+      if (storedBill != null) {
+        storedBill.forEachIndexed { index, (label, amount) ->
+          if (index > 0) Spacer(modifier = Modifier.height(4.dp))
+          BillRow(label, if (amount < 0) "−₹${-amount}" else "₹$amount")
+        }
+        Spacer(modifier = Modifier.height(8.dp))
+        HorizontalDivider(color = Color(0xFFF1F5F9))
+        Spacer(modifier = Modifier.height(8.dp))
+      } else if (subtotal > 0) {
         BillRow("Subtotal", "\u20b9$subtotal")
         if (handlingFee > 0) {
           Spacer(modifier = Modifier.height(4.dp))
@@ -778,6 +812,7 @@ private fun RatingCard(
   reviewText: String,
   onReviewChange: (String) -> Unit,
   onSubmit: () -> Unit,
+  isSending: Boolean,
   onDismiss: () -> Unit
 ) {
   Card(
@@ -820,69 +855,11 @@ private fun RatingCard(
       Spacer(modifier = Modifier.height(12.dp))
       Button(
         onClick = onSubmit,
-        enabled = ratingValue > 0,
+        enabled = ratingValue > 0 && !isSending,
         colors = ButtonDefaults.buttonColors(containerColor = BharatPurplePrimary),
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(12.dp)
-      ) { Text("Submit Rating", fontWeight = FontWeight.Bold, color = Color.White) }
-    }
-  }
-}
-
-/**
- * Reserved area between the live-status header and the order timeline where a
- * promotional banner will render once ads ship. Kept as a neutral placeholder
- * so the layout is stable now and can be replaced without redesigning the
- * screen — swap the inner Column for the ad content.
- */
-@Composable
-private fun PromoAdSlot() {
-  Card(
-    shape = RoundedCornerShape(16.dp),
-    colors = CardDefaults.cardColors(containerColor = Color(0xFFF8F1FF)),
-    border = BorderStroke(1.dp, Color(0xFFEDE5F5)),
-    modifier = Modifier
-      .fillMaxWidth()
-      .height(96.dp)
-  ) {
-    Row(
-      modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 12.dp),
-      verticalAlignment = Alignment.CenterVertically
-    ) {
-      Box(
-        modifier = Modifier
-          .size(56.dp)
-          .clip(RoundedCornerShape(12.dp))
-          .background(BharatPurpleContainer),
-        contentAlignment = Alignment.Center
-      ) {
-        Icon(
-          imageVector = Icons.Default.Campaign,
-          contentDescription = null,
-          tint = BharatPurplePrimary
-        )
-      }
-      Spacer(modifier = Modifier.width(12.dp))
-      Column(modifier = Modifier.weight(1f)) {
-        Text(
-          text = "Sponsored",
-          fontSize = 10.sp,
-          fontWeight = FontWeight.Bold,
-          color = BharatTextSecondary
-        )
-        Text(
-          text = "Promotions from BreakQ show up here",
-          fontSize = 13.sp,
-          fontWeight = FontWeight.SemiBold,
-          color = BharatTextPrimary
-        )
-        Text(
-          text = "Discover offers while you wait for your order",
-          fontSize = 11.sp,
-          color = BharatTextSecondary,
-          maxLines = 1
-        )
-      }
+      ) { Text(if (isSending) "Sending…" else "Submit Rating", fontWeight = FontWeight.Bold, color = Color.White) }
     }
   }
 }

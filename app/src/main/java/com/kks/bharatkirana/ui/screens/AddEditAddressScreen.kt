@@ -45,6 +45,9 @@ fun AddEditAddressScreen(
   onDismissError: () -> Unit,
   onBackClick: () -> Unit,
   onSave: (CustomerAddress) -> Unit,
+  presetLat: Double? = null,
+  presetLng: Double? = null,
+  locateOnOpen: Boolean = false,
   modifier: Modifier = Modifier
 ) {
   val context = LocalContext.current
@@ -61,8 +64,28 @@ fun AddEditAddressScreen(
   var isForSelf by remember { mutableStateOf(existing?.isForSelf ?: true) }
   var recipientName by remember { mutableStateOf(existing?.recipientName ?: "") }
   var recipientPhone by remember { mutableStateOf(existing?.recipientPhone ?: "") }
-  var lat by remember { mutableStateOf(existing?.lat) }
-  var lng by remember { mutableStateOf(existing?.lng) }
+  var lat by remember { mutableStateOf(existing?.lat ?: presetLat) }
+  var lng by remember { mutableStateOf(existing?.lng ?: presetLng) }
+
+  // "Locate" waits for a fix taken just now; an older cached position is not where the customer is.
+  var awaitingFix by remember { mutableStateOf(locateOnOpen && existing == null) }
+  var locateFailed by remember { mutableStateOf(false) }
+  LaunchedEffect(userLocation, awaitingFix) {
+    val loc = userLocation
+    if (awaitingFix && loc != null && System.currentTimeMillis() - loc.time <= 2 * 60_000L) {
+      lat = loc.latitude
+      lng = loc.longitude
+      awaitingFix = false
+    }
+  }
+  LaunchedEffect(awaitingFix) {
+    if (!awaitingFix) return@LaunchedEffect
+    kotlinx.coroutines.delay(15_000)
+    if (awaitingFix) {
+      awaitingFix = false
+      locateFailed = true
+    }
+  }
 
   // Only auto-fill from a reverse geocode once, and never over typed text.
   var geocodedFor by remember { mutableStateOf<String?>(null) }
@@ -183,18 +206,21 @@ fun AddEditAddressScreen(
             Column(modifier = Modifier.weight(1f)) {
               Text("Location pin", fontWeight = FontWeight.Bold, color = BharatTextPrimary, fontSize = 13.sp)
               Text(
-                text = if (lat != null && lng != null)
-                  "%.5f, %.5f".format(lat, lng)
-                else
-                  "Tap the map or use Locate",
+                text = when {
+                  awaitingFix -> "Finding your current location…"
+                  lat != null && lng != null -> "%.5f, %.5f".format(lat, lng)
+                  locateFailed -> "Couldn't get your location. Tap the map instead."
+                  else -> "Tap the map or use Locate"
+                },
                 color = BharatTextSecondary,
                 fontSize = 12.sp
               )
             }
             Surface(
               onClick = {
+                locateFailed = false
+                awaitingFix = true
                 onRequestCurrentLocation()
-                userLocation?.let { lat = it.latitude; lng = it.longitude }
               },
               color = BharatPurpleContainer,
               shape = RoundedCornerShape(20.dp)

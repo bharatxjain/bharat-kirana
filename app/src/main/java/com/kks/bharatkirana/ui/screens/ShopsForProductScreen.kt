@@ -44,7 +44,7 @@ fun ShopsForProductScreen(
     .mapNotNull { shop ->
       val prod = products.firstOrNull {
         it.shopId == shop.id &&
-          it.inStock &&
+          it.inStock && it.stockQty != 0 &&
           it.name.equals(productName, ignoreCase = true)
       }
       if (prod != null) shop to prod else null
@@ -193,10 +193,12 @@ private fun ShopForProductCard(
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 2.dp)) {
           Icon(Icons.Default.Star, contentDescription = null, tint = Color(0xFFFFB800), modifier = Modifier.size(12.dp))
           Spacer(modifier = Modifier.width(2.dp))
-          Text("${shop.rating}", fontSize = 11.sp, color = BharatTextSecondary)
-          Spacer(modifier = Modifier.width(8.dp))
-          Icon(Icons.Default.LocationOn, contentDescription = null, tint = BharatTextSecondary, modifier = Modifier.size(12.dp))
-          Text(shop.distance, fontSize = 11.sp, color = BharatTextSecondary)
+          Text(if (shop.hasRatings) "%.1f".format(shop.rating) else "New", fontSize = 11.sp, color = BharatTextSecondary)
+          if (shop.distance.isNotBlank() && shop.distance != "---") {
+            Spacer(modifier = Modifier.width(8.dp))
+            Icon(Icons.Default.LocationOn, contentDescription = null, tint = BharatTextSecondary, modifier = Modifier.size(12.dp))
+            Text(shop.distance, fontSize = 11.sp, color = BharatTextSecondary)
+          }
         }
       }
       Spacer(modifier = Modifier.width(10.dp))

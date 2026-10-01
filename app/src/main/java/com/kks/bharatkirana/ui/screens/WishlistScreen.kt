@@ -13,6 +13,9 @@ import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.ShoppingCart
 import androidx.compose.material3.*
+import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults
+import androidx.compose.material3.pulltorefresh.pullToRefresh
+import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -41,8 +44,15 @@ fun WishlistScreen(
   onAddToCart: (Product) -> Unit,
   onRemove: (String) -> Unit,
   onExploreClick: () -> Unit,
+  unavailableCount: Int = 0,
+  isCatalogLoading: Boolean = false,
+  catalogError: String? = null,
+  onRemoveUnavailable: () -> Unit = {},
+  isRefreshing: Boolean = false,
+  onRefresh: (() -> Unit)? = null,
   modifier: Modifier = Modifier
 ) {
+  val pullState = rememberPullToRefreshState()
   Scaffold(
     topBar = {
       TopAppBar(
@@ -62,9 +72,11 @@ fun WishlistScreen(
         colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.White)
       )
     },
-    modifier = modifier.fillMaxSize()
+    modifier = modifier
+      .fillMaxSize()
+      .pullToRefresh(isRefreshing = isRefreshing, state = pullState, enabled = onRefresh != null, onRefresh = { onRefresh?.invoke() })
   ) { paddingValues ->
-    if (products.isEmpty()) {
+    if (products.isEmpty() && unavailableCount == 0) {
       Column(
         modifier = Modifier
           .fillMaxSize()
@@ -111,6 +123,39 @@ fun WishlistScreen(
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
       ) {
+        if (unavailableCount > 0) {
+          item {
+            val itemsLabel = if (unavailableCount == 1) "1 saved item" else "$unavailableCount saved items"
+            Surface(
+              shape = RoundedCornerShape(12.dp),
+              color = Color.White,
+              border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
+              modifier = Modifier.fillMaxWidth()
+            ) {
+              Row(
+                modifier = Modifier.padding(start = 14.dp, end = 4.dp, top = 8.dp, bottom = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+              ) {
+                Text(
+                  text = when {
+                    isCatalogLoading -> "Loading $itemsLabel…"
+                    catalogError != null -> "$itemsLabel couldn't be loaded. Pull down to try again."
+                    else -> "$itemsLabel no longer available."
+                  },
+                  fontSize = 12.sp,
+                  color = BharatTextSecondary,
+                  modifier = Modifier.weight(1f)
+                )
+                // Only offer removal once the catalog loaded fine — never because of a network blip.
+                if (!isCatalogLoading && catalogError == null) {
+                  TextButton(onClick = onRemoveUnavailable) {
+                    Text("Remove", color = BharatPurplePrimary, fontWeight = FontWeight.SemiBold)
+                  }
+                }
+              }
+            }
+          }
+        }
         items(products, key = { it.id }) { product ->
           WishlistRow(
             product = product,
@@ -120,6 +165,12 @@ fun WishlistScreen(
           )
         }
         item { Spacer(modifier = Modifier.height(16.dp)) }
+      }
+    }
+    // Scaffold stacks body children, so this sits over the list just below the top bar.
+    if (onRefresh != null) {
+      Box(modifier = Modifier.fillMaxSize().padding(paddingValues), contentAlignment = Alignment.TopCenter) {
+        PullToRefreshDefaults.Indicator(state = pullState, isRefreshing = isRefreshing)
       }
     }
   }
@@ -134,6 +185,7 @@ private fun WishlistRow(
 ) {
   val previewUrl = product.imageUrls.firstOrNull { it.isNotBlank() }
     ?: product.imageUrl.takeIf { it.isNotBlank() }
+  val available = product.inStock && product.stockQty != 0
   Card(
     onClick = onClick,
     shape = RoundedCornerShape(14.dp),
@@ -167,19 +219,21 @@ private fun WishlistRow(
         }
         Spacer(modifier = Modifier.height(4.dp))
         Row(verticalAlignment = Alignment.CenterVertically) {
-          Text("₹${product.currentPrice}", fontSize = 14.sp, fontWeight = FontWeight.ExtraBold, color = BharatTextPrimary)
-          if (product.originalPrice > product.currentPrice) {
+          Text("₹${product.defaultPrice}", fontSize = 14.sp, fontWeight = FontWeight.ExtraBold, color = BharatTextPrimary)
+          if (product.defaultOriginalPrice > product.defaultPrice) {
             Spacer(modifier = Modifier.width(6.dp))
             Text(
-              text = "₹${product.originalPrice}",
+              text = "₹${product.defaultOriginalPrice}",
               fontSize = 11.sp,
               color = BharatTextMuted,
               textDecoration = androidx.compose.ui.text.style.TextDecoration.LineThrough
             )
           }
-          if (product.inStock) {
-            Spacer(modifier = Modifier.width(8.dp))
+          Spacer(modifier = Modifier.width(8.dp))
+          if (available) {
             Text("In stock", fontSize = 10.sp, color = BharatGreen, fontWeight = FontWeight.SemiBold)
+          } else {
+            Text("Out of stock", fontSize = 10.sp, color = Color(0xFFDC2626), fontWeight = FontWeight.SemiBold)
           }
         }
       }
@@ -190,11 +244,12 @@ private fun WishlistRow(
         Spacer(modifier = Modifier.height(4.dp))
         OutlinedButton(
           onClick = onAddToCart,
+          enabled = available,
           shape = RoundedCornerShape(8.dp),
-          border = BorderStroke(1.dp, BharatPurplePrimary),
+          border = BorderStroke(1.dp, if (available) BharatPurplePrimary else BharatTextMuted),
           contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
         ) {
-          Text("Add", color = BharatPurplePrimary, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+          Text("Add", color = if (available) BharatPurplePrimary else BharatTextMuted, fontSize = 12.sp, fontWeight = FontWeight.Bold)
         }
       }
     }

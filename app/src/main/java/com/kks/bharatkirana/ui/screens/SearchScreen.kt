@@ -75,6 +75,9 @@ fun SearchScreen(
   onShopClick: (Shop) -> Unit = {},
   suggestions: List<SearchSuggestion> = emptyList(),
   onSuggestionClick: (SearchSuggestion) -> Unit = {},
+  isCatalogLoading: Boolean = false,
+  catalogError: String? = null,
+  onRetryCatalog: () -> Unit = {},
   cartDiscount: Int = 0,
   modifier: Modifier = Modifier
 ) {
@@ -128,14 +131,26 @@ fun SearchScreen(
         shopName.contains(q, ignoreCase = true)
     }
   }
-  // Dedupe by name+brand: tapping a card opens a "shops carrying this" list.
+  // Dedupe by name+brand+size: tapping a card opens a "shops carrying this" list.
   // Show the cart's own shop's copy when it sells the item, so the card's
   // quantity and +/- act on the product actually in the cart.
   val cartShopId = cartItems.firstOrNull()?.product?.shopId
-  val displayProducts = filteredProducts
-    .groupBy { "${it.name.trim().lowercase()}|${it.brand.trim().lowercase()}" }
+  val productGroups = filteredProducts
+    .groupBy { "${it.name.trim().lowercase()}|${it.brand.trim().lowercase()}|${it.unit.trim().lowercase()}" }
     .values
+  val displayProducts = productGroups
     .map { group -> group.firstOrNull { it.shopId == cartShopId } ?: group.first() }
+  // The card shows one shop's price; say which shop, and how many others sell it.
+  val shopLabels = productGroups.associate { group ->
+    val shown = group.firstOrNull { it.shopId == cartShopId } ?: group.first()
+    val others = group.map { it.shopId }.distinct().size - 1
+    val name = shopIdToName[shown.shopId].orEmpty()
+    shown.id to when {
+      name.isBlank() -> null
+      others > 0 -> "$name +$others more"
+      else -> name
+    }
+  }
 
   val cartItemCount = cartItems.sumOf { it.quantity }
   val cartTotal = cartItems.sumOf { it.totalPrice }
@@ -292,7 +307,27 @@ fun SearchScreen(
 
       Spacer(modifier = Modifier.height(8.dp))
 
-      if (displayProducts.isEmpty()) {
+      if (displayProducts.isEmpty() && products.isEmpty() && (isCatalogLoading || catalogError != null)) {
+        Column(
+          modifier = Modifier
+            .fillMaxWidth()
+            .weight(1f),
+          horizontalAlignment = Alignment.CenterHorizontally,
+          verticalArrangement = Arrangement.Center
+        ) {
+          Text(
+            text = if (isCatalogLoading) "Loading products…" else catalogError.orEmpty(),
+            style = MaterialTheme.typography.bodyMedium,
+            color = BharatTextSecondary,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+          )
+          if (!isCatalogLoading) {
+            TextButton(onClick = onRetryCatalog) {
+              Text("Retry", fontWeight = FontWeight.SemiBold)
+            }
+          }
+        }
+      } else if (displayProducts.isEmpty()) {
         if (filteredShops.isEmpty()) {
           Box(
             modifier = Modifier
@@ -330,6 +365,7 @@ fun SearchScreen(
             ProductGridCard(
               product = product,
               quantityInCart = qtyInCart,
+              shopName = shopLabels[product.id],
               onProductClick = { onProductClick(product) },
               onAddToCart = { onAddToCart(product) },
               onIncrease = {

@@ -6,7 +6,7 @@
 --      REAL times instead of the client's "Today, <now>" placeholder.
 --    - Trigger stamps them on every status transition (idempotent per column
 --      so restatements never overwrite earlier values).
---    - pg_cron job auto-cancels orders stuck in 'Order Placed' for > 3 hours.
+--    - pg_cron job auto-cancels orders stuck in 'Order Placed' for > 1 hour.
 --
 --  Nothing here weakens RLS, deletes data or alters existing values. Old rows
 --  simply have NULL timestamps for statuses that had already been reached
@@ -48,7 +48,7 @@ create trigger trg_stamp_order_status_at
   for each row
   execute function public.stamp_order_status_at();
 
--- ── 3. Auto-expire abandoned orders (still 'Order Placed' > 3h) ────────────
+-- ── 3. Auto-expire abandoned orders (still 'Order Placed' > 1h) ────────────
 create or replace function public.expire_pending_orders()
 returns integer
 language plpgsql
@@ -62,7 +62,7 @@ begin
      set status       = 'Cancelled',
          cancelled_at = coalesce(o.cancelled_at, now())
    where o.status = 'Order Placed'
-     and o.created_at < now() - interval '3 hours';
+     and o.created_at < now() - interval '1 hour';
   get diagnostics n = row_count;
   return n;
 end

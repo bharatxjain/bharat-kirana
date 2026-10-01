@@ -54,7 +54,7 @@ import com.kks.bharatkirana.ui.theme.*
 
 @Composable
 fun StoreLocationHeader(
-  storeName: String = "BreakQ Store",
+  storeName: String = "",
   userInitial: String = "R",
   unreadNotificationCount: Int = 0,
   onProfileClick: () -> Unit = {},
@@ -96,7 +96,7 @@ fun StoreLocationHeader(
       Column {
         Row(verticalAlignment = Alignment.CenterVertically) {
           Text(
-            text = "Delivering to",
+            text = "Your location",
             style = MaterialTheme.typography.labelSmall,
             color = BharatTextSecondary
           )
@@ -110,7 +110,7 @@ fun StoreLocationHeader(
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
           Text(
-            text = storeName.ifBlank { "Pick a delivery location" },
+            text = storeName.ifBlank { "Set your location" },
             style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
             color = BharatTextPrimary,
             maxLines = 1,
@@ -220,7 +220,7 @@ fun CustomerShellHeader(
     GrocerySearchBar(
       query = if (isSearchTab) searchQuery else "",
       onQueryChange = onSearchQueryChange,
-      placeholder = if (isSearchTab) "Search across 1000+ items..."
+      placeholder = if (isSearchTab) "Search products or shops..."
                     else "Search groceries, rice, atta...",
       autoFocus = false,
       readOnly = !isSearchTab,
@@ -362,7 +362,8 @@ fun ProductGridCard(
   onAddToCart: () -> Unit,
   onIncrease: () -> Unit,
   onDecrease: () -> Unit,
-  modifier: Modifier = Modifier
+  modifier: Modifier = Modifier,
+  shopName: String? = null
 ) {
   Card(
     modifier = modifier
@@ -409,14 +410,14 @@ fun ProductGridCard(
           }
         }
 
-        if (product.discountPercent > 0) {
+        if (product.displayDiscountPercent > 0) {
           Surface(
             color = BharatRedDiscount,
             shape = RoundedCornerShape(topStart = 12.dp, bottomEnd = 8.dp),
             modifier = Modifier.align(Alignment.TopStart)
           ) {
             Text(
-              text = "${product.discountPercent}% OFF",
+              text = "${product.displayDiscountPercent}% OFF",
               color = Color.White,
               fontSize = 10.sp,
               fontWeight = FontWeight.Bold,
@@ -442,6 +443,16 @@ fun ProductGridCard(
         style = MaterialTheme.typography.bodySmall,
         color = BharatTextMuted
       )
+
+      if (!shopName.isNullOrBlank()) {
+        Text(
+          text = shopName,
+          style = MaterialTheme.typography.bodySmall,
+          color = BharatPurplePrimary,
+          maxLines = 1,
+          overflow = TextOverflow.Ellipsis
+        )
+      }
 
       Spacer(modifier = Modifier.height(4.dp))
 
@@ -479,13 +490,13 @@ fun ProductGridCard(
       ) {
         Column {
           Text(
-            text = "₹${product.currentPrice}",
+            text = "₹${product.defaultPrice}",
             style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.ExtraBold),
             color = BharatTextPrimary
           )
-          if (product.originalPrice > product.currentPrice) {
+          if (product.defaultOriginalPrice > product.defaultPrice) {
             Text(
-              text = "₹${product.originalPrice}",
+              text = "₹${product.defaultOriginalPrice}",
               style = MaterialTheme.typography.bodySmall.copy(
                 textDecoration = TextDecoration.LineThrough
               ),
@@ -627,14 +638,14 @@ fun DailyEssentialCard(
         Spacer(modifier = Modifier.height(4.dp))
         Row(verticalAlignment = Alignment.CenterVertically) {
           Text(
-            text = "₹${product.currentPrice}",
+            text = "₹${product.defaultPrice}",
             style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.ExtraBold),
             color = BharatTextPrimary
           )
-          if (product.originalPrice > product.currentPrice) {
+          if (product.defaultOriginalPrice > product.defaultPrice) {
             Spacer(modifier = Modifier.width(6.dp))
             Text(
-              text = "₹${product.originalPrice}",
+              text = "₹${product.defaultOriginalPrice}",
               style = MaterialTheme.typography.bodySmall.copy(
                 textDecoration = TextDecoration.LineThrough
               ),
@@ -719,7 +730,7 @@ fun CartFloatingBanner(
             )
             if (discountApplied > 0) {
               Text(
-                text = "Extra ₹$discountApplied off applied",
+                text = "₹$discountApplied off the handling fee",
                 color = Color.White.copy(alpha = 0.85f),
                 fontSize = 11.sp
               )
@@ -749,9 +760,9 @@ fun CartFloatingBanner(
 
 @Composable
 fun StorePickupCard(
-  storeName: String = "BreakQ Store",
-  storeAddress: String = "Banjara Hills Rd 12, Hyderabad",
-  timeSlot: String = "Ready in ~15 mins",
+  storeName: String,
+  storeAddress: String,
+  timeSlot: String,
   modifier: Modifier = Modifier
 ) {
   Card(

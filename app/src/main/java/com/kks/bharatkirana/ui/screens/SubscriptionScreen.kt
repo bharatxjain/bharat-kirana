@@ -89,7 +89,7 @@ fun SubscriptionScreen(
               Text("$currentProductCount products listed", color = Color.White.copy(alpha = 0.9f), fontSize = 13.sp)
               if (currentSubscription?.expiresAt != null) {
                 Text(
-                  text = "Renews ${currentSubscription.expiresAt.take(10)}",
+                  text = "Valid until ${currentSubscription.expiresAt.take(10)}",
                   color = Color.White.copy(alpha = 0.75f),
                   fontSize = 11.sp,
                   modifier = Modifier.padding(top = 2.dp)

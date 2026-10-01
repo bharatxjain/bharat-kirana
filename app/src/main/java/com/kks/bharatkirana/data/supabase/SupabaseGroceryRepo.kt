@@ -64,6 +64,9 @@ class PriceChangedException(
   val promoCode: String?
 ) : Exception("The total for this order is now ₹$serverTotal.")
 
+/** The database doesn't have the RPC yet (its migration hasn't been run). */
+class MissingServerFunctionException : Exception("This feature needs a server update.")
+
 class SupabaseGroceryRepo(
   baseClient: OkHttpClient = OkHttpClient.Builder()
     .connectTimeout(15, TimeUnit.SECONDS)
@@ -190,24 +193,33 @@ class SupabaseGroceryRepo(
   }
 
   /**
+   * PATCH one product and fail when the server refused it: an RLS-hidden row
+   * returns 200 with nothing changed, and a database check returns its message.
+   */
+  private fun patchProduct(productId: String, payload: JSONObject, accessToken: String?, what: String) {
+    val url = "${SupabaseConfig.restUrl}/products?id=eq.$productId&select=id"
+    val request = baseRequestBuilder(url, accessToken)
+      .addHeader("Prefer", "return=representation")
+      .patch(payload.toString().toRequestBody(jsonMediaType))
+      .build()
+    val response = client.newCall(request).execute()
+    val body = response.body?.string() ?: ""
+    if (!response.isSuccessful) {
+      val serverMessage = runCatching { JSONObject(body).optString("message") }.getOrNull()
+      throw Exception(serverMessage?.takeIf { it.isNotBlank() } ?: "Couldn't update $what (HTTP ${response.code}).")
+    }
+    if ((runCatching { JSONArray(body).length() }.getOrNull() ?: 0) == 0) {
+      throw Exception("Couldn't update $what — your shop may not be approved for changes right now.")
+    }
+  }
+
+  /**
    * Update Product In-Stock Status in Supabase (Store Admin)
    */
   suspend fun updateProductStock(productId: String, inStock: Boolean, accessToken: String? = null): Result<Unit> =
     withContext(Dispatchers.IO) {
       runCatching {
-        val url = "${SupabaseConfig.restUrl}/products?id=eq.$productId"
-        val payload = JSONObject().apply {
-          put("in_stock", inStock)
-        }
-        val request = baseRequestBuilder(url, accessToken)
-          .addHeader("Prefer", "return=minimal")
-          .patch(payload.toString().toRequestBody(jsonMediaType))
-          .build()
-
-        val response = client.newCall(request).execute()
-        if (!response.isSuccessful) {
-          throw Exception("Failed to update stock: HTTP ${response.code}")
-        }
+        patchProduct(productId, JSONObject().put("in_stock", inStock), accessToken, "availability")
       }
     }
 
@@ -216,19 +228,11 @@ class SupabaseGroceryRepo(
   suspend fun updateProductStockQty(productId: String, stockQty: Int?, accessToken: String? = null): Result<Unit> =
     withContext(Dispatchers.IO) {
       runCatching {
-        val url = "${SupabaseConfig.restUrl}/products?id=eq.$productId"
         val payload = JSONObject().apply {
           if (stockQty == null) put("stock_qty", JSONObject.NULL)
           else put("stock_qty", stockQty.coerceAtLeast(0))
         }
-        val request = baseRequestBuilder(url, accessToken)
-          .addHeader("Prefer", "return=minimal")
-          .patch(payload.toString().toRequestBody(jsonMediaType))
-          .build()
-        val response = client.newCall(request).execute()
-        if (!response.isSuccessful) {
-          throw Exception("Failed to update stock quantity: HTTP ${response.code}")
-        }
+        patchProduct(productId, payload, accessToken, "stock")
       }
     }
 
@@ -238,19 +242,7 @@ class SupabaseGroceryRepo(
   suspend fun updateProductPrice(productId: String, newPrice: Int, accessToken: String? = null): Result<Unit> =
     withContext(Dispatchers.IO) {
       runCatching {
-        val url = "${SupabaseConfig.restUrl}/products?id=eq.$productId"
-        val payload = JSONObject().apply {
-          put("current_price", newPrice)
-        }
-        val request = baseRequestBuilder(url, accessToken)
-          .addHeader("Prefer", "return=minimal")
-          .patch(payload.toString().toRequestBody(jsonMediaType))
-          .build()
-
-        val response = client.newCall(request).execute()
-        if (!response.isSuccessful) {
-          throw Exception("Failed to update price: HTTP ${response.code}")
-        }
+        patchProduct(productId, JSONObject().put("current_price", newPrice), accessToken, "price")
       }
     }
 
@@ -321,6 +313,33 @@ class SupabaseGroceryRepo(
         val response = client.newCall(request).execute()
         if (!response.isSuccessful) {
           throw Exception("Failed to delete device token: HTTP ${response.code}")
+        }
+      }
+    }
+
+  /**
+   * Registers this phone's push token for the signed-in user and takes it away from any
+   * other account that used the phone before. Throws [MissingServerFunctionException]
+   * if STEP6_SECURITY_FIXES.sql isn't installed.
+   */
+  suspend fun registerDeviceToken(token: String, platform: String = "android", accessToken: String? = null): Result<Unit> =
+    withContext(Dispatchers.IO) {
+      runCatching {
+        if (token.isBlank()) throw Exception("device token blank")
+        val url = "${SupabaseConfig.restUrl}/rpc/register_device_token"
+        val payload = JSONObject().apply {
+          put("p_token", token)
+          put("p_platform", platform)
+        }
+        val request = baseRequestBuilder(url, accessToken)
+          .post(payload.toString().toRequestBody(jsonMediaType))
+          .build()
+        val response = client.newCall(request).execute()
+        val body = response.body?.string() ?: ""
+        if (!response.isSuccessful) {
+          val err = runCatching { JSONObject(body) }.getOrNull()
+          if (response.code == 404 || err?.optString("code") == "PGRST202") throw MissingServerFunctionException()
+          throw Exception("Failed to register device token: HTTP ${response.code} — ${body.take(200)}")
         }
       }
     }
@@ -638,34 +657,19 @@ class SupabaseGroceryRepo(
   suspend fun deleteProduct(productId: String, accessToken: String? = null): Result<Unit> =
     withContext(Dispatchers.IO) {
       runCatching {
-        val url = "${SupabaseConfig.restUrl}/products?id=eq.$productId"
+        val url = "${SupabaseConfig.restUrl}/products?id=eq.$productId&select=id"
         val request = baseRequestBuilder(url, accessToken)
+          .addHeader("Prefer", "return=representation")
           .delete()
           .build()
 
         val response = client.newCall(request).execute()
+        val body = response.body?.string() ?: ""
         if (!response.isSuccessful) {
           throw Exception("Failed to delete product: HTTP ${response.code}")
         }
-      }
-    }
-
-  /**
-   * Permanently delete the signed-in user's profile row (name, address, phone, etc.)
-   * from Supabase as part of account deletion. Order history is intentionally left
-   * in place for store accounting/tax purposes — see Privacy Policy data retention note.
-   */
-  suspend fun deleteUserProfile(userId: String, accessToken: String? = null): Result<Unit> =
-    withContext(Dispatchers.IO) {
-      runCatching {
-        val url = "${SupabaseConfig.restUrl}/profiles?id=eq.$userId"
-        val request = baseRequestBuilder(url, accessToken)
-          .delete()
-          .build()
-
-        val response = client.newCall(request).execute()
-        if (!response.isSuccessful) {
-          throw Exception("Failed to delete profile: HTTP ${response.code}")
+        if ((runCatching { JSONArray(body).length() }.getOrNull() ?: 0) == 0) {
+          throw Exception("The product wasn't deleted — your shop may not be approved for changes right now.")
         }
       }
     }
@@ -732,6 +736,8 @@ class SupabaseGroceryRepo(
   fun parseOrderRow(obj: JSONObject): Order {
     fun optNullable(key: String): String? =
       if (obj.isNull(key)) null else obj.optString(key).takeIf { it.isNotBlank() }
+    fun optIntOrNull(key: String): Int? =
+      if (obj.isNull(key)) null else obj.optInt(key)
 
     val id = obj.optString("id")
     val totalAmount = obj.optInt("total_amount", 0)
@@ -795,7 +801,14 @@ class SupabaseGroceryRepo(
       completedAt = optNullable("completed_at"),
       cancelledAt = optNullable("cancelled_at"),
       orderNumber = orderNumber,
-      pickupToken = pickupToken
+      pickupToken = pickupToken,
+      cancelledBy = optNullable("cancelled_by"),
+      cancelReason = optNullable("cancel_reason"),
+      itemTotal = optIntOrNull("item_total"),
+      handlingFee = optIntOrNull("handling_fee"),
+      handlingDiscount = optIntOrNull("handling_discount"),
+      promoDiscount = optIntOrNull("promo_discount"),
+      promoCode = optNullable("promo_code")
     )
   }
 
@@ -999,11 +1012,37 @@ class SupabaseGroceryRepo(
         val response = client.newCall(request).execute()
         val body = response.body?.string() ?: ""
         if (!response.isSuccessful) {
-          throw Exception("Failed to update order status: HTTP ${response.code} — ${body.take(200)}")
+          val serverMessage = runCatching { JSONObject(body).optString("message") }.getOrNull()
+          throw Exception(serverMessage?.takeIf { it.isNotBlank() } ?: "Couldn't update the order (HTTP ${response.code}).")
         }
         val updatedCount = try { JSONArray(body).length() } catch (_: Exception) { 0 }
         if (updatedCount == 0) {
-          throw Exception("Order not updated — server refused the change (row not visible or status transition blocked).")
+          throw Exception("This order can't be changed any more. Pull down to refresh.")
+        }
+      }
+    }
+
+  /**
+   * The shop cancels one of its orders with a reason the customer can see.
+   * Throws [MissingServerFunctionException] if STEP4_VENDOR_OPERATIONS.sql isn't installed.
+   */
+  suspend fun vendorCancelOrder(orderId: String, reason: String, accessToken: String? = null): Result<Unit> =
+    withContext(Dispatchers.IO) {
+      runCatching {
+        val url = "${SupabaseConfig.restUrl}/rpc/vendor_cancel_order"
+        val payload = JSONObject().apply {
+          put("p_order_id", orderId)
+          put("p_reason", reason)
+        }
+        val request = baseRequestBuilder(url, accessToken)
+          .post(payload.toString().toRequestBody(jsonMediaType))
+          .build()
+        val response = client.newCall(request).execute()
+        val body = response.body?.string() ?: ""
+        if (!response.isSuccessful) {
+          val err = runCatching { JSONObject(body) }.getOrNull()
+          if (response.code == 404 || err?.optString("code") == "PGRST202") throw MissingServerFunctionException()
+          throw Exception(err?.optString("message")?.takeIf { it.isNotBlank() } ?: "Couldn't cancel the order (HTTP ${response.code}).")
         }
       }
     }
@@ -1140,41 +1179,25 @@ class SupabaseGroceryRepo(
     }
 
   /**
-   * Update Shop Details in Supabase
+   * PATCHes only the given shop columns, so a stale cached Shop can't overwrite
+   * newer values. Fails if no row was changed (not the owner, or not allowed).
    */
-  suspend fun updateShop(shopId: String, shop: com.kks.bharatkirana.data.model.Shop, accessToken: String? = null): Result<Unit> =
+  suspend fun updateShopFields(shopId: String, fields: JSONObject, accessToken: String? = null): Result<Unit> =
     withContext(Dispatchers.IO) {
       runCatching {
-        val url = "${SupabaseConfig.restUrl}/shops?id=eq.$shopId"
-        val payload = JSONObject().apply {
-          put("name", shop.name)
-          put("owner_name", shop.ownerName)
-          put("address", shop.address)
-          put("phone", shop.phone)
-          put("lat", shop.lat)
-          put("lng", shop.lng)
-          put("accepting_orders", shop.isOpen)
-          put("open_time", shop.openTime)
-          put("close_time", shop.closeTime)
-          put("is_partner", shop.isPartner)
-          put("packing_time", shop.packingTime.coerceIn(5, 180))
-          put("auto_confirm", shop.autoConfirm)
-          // Persist the shop hero image URL so a vendor edit that includes a
-          // new photo actually reaches the DB. Skip when blank so we don't
-          // accidentally wipe an existing image with an empty string.
-          if (shop.imageUrl.isNotBlank() && shop.imageUrl != "null") {
-            put("image_url", shop.imageUrl)
-          }
-        }
-
+        val url = "${SupabaseConfig.restUrl}/shops?id=eq.$shopId&select=id"
         val request = baseRequestBuilder(url, accessToken)
-          .addHeader("Prefer", "return=minimal")
-          .patch(payload.toString().toRequestBody(jsonMediaType))
+          .addHeader("Prefer", "return=representation")
+          .patch(fields.toString().toRequestBody(jsonMediaType))
           .build()
 
         val response = client.newCall(request).execute()
+        val body = response.body?.string() ?: ""
         if (!response.isSuccessful) {
           throw Exception("Failed to update shop: HTTP ${response.code}")
+        }
+        if ((runCatching { JSONArray(body).length() }.getOrNull() ?: 0) == 0) {
+          throw Exception("The shop wasn't updated.")
         }
       }
     }
@@ -1360,7 +1383,8 @@ class SupabaseGroceryRepo(
               autoConfirm = obj.optBoolean("auto_confirm", true),
               packingTime = obj.optInt("packing_time", 15).coerceIn(5, 180),
               openTime = obj.optString("open_time", "08:00"),
-              closeTime = obj.optString("close_time", "21:00")
+              closeTime = obj.optString("close_time", "21:00"),
+              rejectionReason = if (obj.isNull("rejection_reason")) "" else obj.optString("rejection_reason", "")
             )
           )
         }

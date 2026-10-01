@@ -127,7 +127,7 @@ fun AboutUsScreen(
           fontSize = 14.sp
         )
         Text(
-          text = "Owners can join BreakQ from within the app in a few minutes and start taking online orders the same day.",
+          text = "Owners can join BreakQ from within the app in a few minutes and start taking online orders once their shop is approved.",
           color = BharatTextSecondary,
           fontSize = 14.sp
         )

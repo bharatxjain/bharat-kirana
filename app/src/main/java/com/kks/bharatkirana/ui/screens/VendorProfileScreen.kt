@@ -242,12 +242,7 @@ fun VendorProfileScreen(
               onCheckedChange = { onToggleStoreStatus() }
             )
             Spacer(modifier = Modifier.height(6.dp))
-            SettingSwitchRow(
-              title = "Auto-confirm orders",
-              subtitle = if (autoConfirmOrders) "New orders skip manual accept" else "You'll accept each order manually",
-              checked = autoConfirmOrders,
-              onCheckedChange = { onToggleAutoConfirm() }
-            )
+            // Auto-confirm is hidden until the server actually confirms orders for shops that turn it on.
             Spacer(modifier = Modifier.height(10.dp))
             Text(
               "Packing time",

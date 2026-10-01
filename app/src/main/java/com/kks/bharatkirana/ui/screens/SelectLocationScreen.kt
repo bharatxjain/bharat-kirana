@@ -48,6 +48,8 @@ fun SelectLocationScreen(
   onAddNewAddress: (lat: Double?, lng: Double?) -> Unit,
   onSelectAddress: (CustomerAddress) -> Unit,
   onEditAddress: (CustomerAddress) -> Unit,
+  errorMessage: String? = null,
+  onRetry: () -> Unit = {},
   modifier: Modifier = Modifier
 ) {
   val context = LocalContext.current
@@ -184,6 +186,25 @@ fun SelectLocationScreen(
               modifier = Modifier.fillMaxWidth().padding(32.dp),
               contentAlignment = Alignment.Center
             ) { CircularProgressIndicator(color = BharatPurplePrimary, strokeWidth = 3.dp) }
+          }
+
+          addresses.isEmpty() && !errorMessage.isNullOrBlank() -> item {
+            Card(
+              shape = RoundedCornerShape(16.dp),
+              colors = CardDefaults.cardColors(containerColor = Color.White),
+              border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
+              modifier = Modifier.fillMaxWidth()
+            ) {
+              Column(
+                modifier = Modifier.fillMaxWidth().padding(24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+              ) {
+                Text(errorMessage, color = BharatTextSecondary, fontSize = 13.sp)
+                TextButton(onClick = onRetry) {
+                  Text("Retry", color = BharatPurplePrimary, fontWeight = FontWeight.Bold)
+                }
+              }
+            }
           }
 
           addresses.isEmpty() -> item {
